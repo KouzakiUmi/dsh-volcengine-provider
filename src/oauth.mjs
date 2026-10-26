@@ -7,7 +7,7 @@ export function approvedLoginUrl(raw) {
   try {
     const url = new URL(raw);
     if (url.protocol !== 'https:' || url.username || url.password || url.port) return undefined;
-    if (url.hostname === 'ark.volcengine.com' && /\/arkcli\/login\/?$/.test(url.pathname)) return raw;
+    if (url.hostname === 'ark.volcengine.com' && /^\/(?:region:cn-beijing\/)?arkcli\/login\/?$/.test(url.pathname)) return raw;
     if (url.hostname === 'signin.volcengine.com' && url.pathname.startsWith('/authorize/')) return raw;
   } catch { /* Not a URL. */ }
   return undefined;
@@ -19,10 +19,10 @@ export class ArkOAuth {
     this.current = null; this.disposed = false;
   }
   status() { return this.current ? structuredClone(this.current.public) : { jobId: null, state: 'idle', message: '' }; }
-  start({ accountId, executable, home, revision }) {
+  start({ accountId, executable, home, homeId, revision }) {
     if (this.disposed) throw new Error('插件已卸载');
     if (this.current && ACTIVE.has(this.current.public.state)) throw new Error('已有登录正在进行，请先完成或取消');
-    const job = { public: { jobId: randomUUID(), accountId, state: 'launching', message: '正在启动 ArkCli 官方 OAuth 登录窗口' }, home, revision, controller: new AbortController(), bytes: 0, tail: '' };
+    const job = { public: { jobId: randomUUID(), accountId, state: 'launching', message: '正在启动 ArkCli 官方 OAuth 登录窗口' }, home, homeId, revision, controller: new AbortController(), bytes: 0, tail: '' };
     this.current = job;
     job.timer = setTimeout(() => this.finish(job, 'error', '登录超时，请重新开始'), this.timeoutMs);
     void this.run(job, executable);
@@ -69,7 +69,7 @@ export class ArkOAuth {
           if (code !== 0) { this.finish(job, 'error', 'ArkCli 登录未完成；未读取或显示其原始输出'); return; }
           job.public.state = 'verifying'; job.public.message = '正在核验登录身份与双订阅 profile';
           try {
-            await this.onSuccess(job.public.accountId, job.revision, job.controller.signal);
+            await this.onSuccess(job.public.accountId, job.revision, job.controller.signal, job.homeId);
             if (this.alive(job)) this.finish(job, 'success', 'OAuth 登录已完成；两套订阅分别绑定，额度状态请单独刷新');
           } catch { this.finish(job, 'error', 'OAuth 已结束，但订阅身份核验失败或账号设置已改变；请刷新后重试'); }
         })();

@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, readFile, writeFile, rename, rm, open } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 export const STATE_VERSION = 2;
@@ -188,7 +188,9 @@ export function validateState(value) {
 			if (profile !== undefined && (typeof profile !== 'string' || profile.length > 200 || /[\x00-\x1f]/.test(profile))) throw new Error('OAuth profile 绑定格式错误');
 			if (profile) profiles[plan] = profile;
 		}
-		oauth[owner.id] = { profiles, loggedAt: typeof binding.loggedAt === 'string' ? binding.loggedAt : '' };
+		const identity = normalizeIdentity(binding.identity);
+		if (binding.homeId !== undefined && (typeof binding.homeId !== 'string' || !/^[a-f0-9-]{36}$/.test(binding.homeId))) throw new Error('OAuth 隔离目录标识错误');
+		oauth[owner.id] = { profiles, loggedAt: typeof binding.loggedAt === 'string' ? binding.loggedAt : '', ...(Object.keys(identity).length ? { identity } : {}), ...(binding.homeId ? { homeId: binding.homeId } : {}) };
 	}
 	// 版本 1 没有 enabled：有所选账号的套餐视为启用，原来未选择账号的套餐视为停用。
 	const enabled = {};
@@ -200,13 +202,36 @@ export function validateState(value) {
 	const modelSettings = normalizeModelSettingsMap(value.modelSettings, accounts);
 	return { version: STATE_VERSION, accounts, active, enabled, catalogs, oauth, modelSettings };
 }
+/** Only explicitly supported, non-secret identity fields may enter metadata or RPC. */
+export function normalizeIdentity(value) {
+	const identity = {};
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return identity;
+	for (const key of ['name', 'userId', 'accountId']) {
+		const text = value[key];
+		if (typeof text === 'string' && text.trim() && text.length <= 200 && !/[\x00-\x1f\x7f]/.test(text)) identity[key] = text.trim();
+	}
+	return identity;
+}
 export const revision = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export class StateStore {
-	constructor(path) { this.path = path; this.current = null; this.queue = Promise.resolve(); }
+	constructor(path) { this.path = path; this.current = null; this.diskRevision = null; this.queue = Promise.resolve(); }
 	async load() {
-		try { this.current = validateState(JSON.parse(await readFile(this.path, 'utf8'))); }
-		catch (error) { if (error.code !== 'ENOENT') throw new Error('无法读取方舟账号状态；原文件未被覆盖'); this.current = initialState(); }
+		try { this.current = validateState(JSON.parse(await readFile(this.path, 'utf8'))); this.diskRevision = revision(this.current); }
+		catch (error) { if (error.code !== 'ENOENT') throw new Error('无法读取方舟账号状态；原文件未被覆盖'); this.current = initialState(); this.diskRevision = null; }
 		return this.current;
+	}
+	refresh() {
+		const operation = this.queue.then(async () => {
+			let disk = null;
+			try { disk = validateState(JSON.parse(await readFile(this.path, 'utf8'))); }
+			catch (error) { if (error.code !== 'ENOENT') throw new Error('无法读取方舟账号状态；原文件未被覆盖'); }
+			const diskRevision = disk ? revision(disk) : null;
+			if (diskRevision === this.diskRevision) return false;
+			this.current = disk ?? initialState(); this.diskRevision = diskRevision;
+			return true;
+		});
+		this.queue = operation.catch(() => {});
+		return operation;
 	}
 	mutate(expectedRevision, change, { signal } = {}) {
 		const operation = this.queue.then(async () => {
@@ -215,14 +240,32 @@ export class StateStore {
 			const next = validateState(change(structuredClone(this.current)));
 			await mkdir(dirname(this.path), { recursive: true });
 			signal?.throwIfAborted();
-			const temp = `${this.path}.${process.pid}.tmp`;
+			const lockPath = `${this.path}.lock`;
+			let lock;
+			try { lock = await open(lockPath, 'wx', 0o600); }
+			catch (error) {
+				if (error.code === 'EEXIST') throw new Error('其他实例正在写入账号设置，请稍后刷新重试；若进程异常退出，请确认无写入进程后清理状态文件旁的 .lock 文件');
+				throw error;
+			}
+			const temp = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
 			try {
+				signal?.throwIfAborted();
+				let disk = null;
+				try { disk = validateState(JSON.parse(await readFile(this.path, 'utf8'))); }
+				catch (error) { if (error.code !== 'ENOENT') throw new Error('无法读取方舟账号状态；原文件未被覆盖'); }
+				if ((disk ? revision(disk) : null) !== this.diskRevision) {
+					throw new Error('设置已改变，请刷新后重试');
+				}
 				await writeFile(temp, JSON.stringify(next, null, 2) + '\n', { mode: 0o600, signal });
 				signal?.throwIfAborted();
 				await rename(temp, this.path);
+				this.diskRevision = revision(next);
 			} catch (error) {
 				await rm(temp, { force: true }).catch(() => {});
 				throw error;
+			} finally {
+				await lock.close();
+				await rm(lockPath, { force: true });
 			}
 			this.current = next;
 			return next;

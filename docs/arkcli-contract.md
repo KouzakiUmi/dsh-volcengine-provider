@@ -35,6 +35,10 @@ arkcli auth status --format json
 
 要求 `logged_in=true`，再按 `profiles_summary[].type` 分别绑定 `agent-plan` 与 `coding-plan` 的 `name`。没有个人套餐或同类多 profile 时拒绝猜选。两类 profile 不交叉借用。
 
+`1.0.37` 随包官方 `arkcli-auth-whoami.md` 明确身份为扁平字段：`name`、`user_id`、`account_id`。插件仅保存这三个字段的白名单摘要（内部为 name/userId/accountId），不持久化完整 CLI 响应；`user_id` 是 IAM 用户 ID，不能与账号 ID 混同。显示时官方名称优先，本地备注独立。旧绑定缺少摘要时尝试只读查询，查询失败不阻止编辑设置。
+
+每次登录使用新的 `accounts/<id>/sessions/<homeId>`；成功核验后原子保存绑定，旧版无 homeId 的绑定继续使用 `accounts/<id>`。已经准备的模型调用保留其原绑定对应的目录，重登不修改该目录。
+
 推理时通过下列接口在 Host 进程内临时读取指定 profile 的默认 Key，直接交给 Core 适配器，不写进插件元数据、不发给浏览器、不输出日志：
 
 ```sh

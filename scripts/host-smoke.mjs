@@ -56,6 +56,8 @@ try {
   assert.equal((await ctx.llm.listModels('volcengine-agent-plan')).length, 10);
   const failed = await service.invoke({ op: 'read' });
   assert.match(failed.routingError, /校验失败|更新失败/);
+  assert.equal(failed.active['agent-plan'], 'broken', 'Requested settings remain visible after routing failure');
+  assert.equal(failed.appliedAccounts['agent-plan'].id, 'default', 'UI must identify the still-active account rather than the failed selection');
   const recovered = await service.invoke({ op: 'select', revision: failed.revision, plan: 'agent-plan', accountId: 'default' });
   assert.equal(recovered.routingError, undefined);
   await service.invoke({ op: 'select', revision: recovered.revision, plan: 'coding-plan', accountId: null });

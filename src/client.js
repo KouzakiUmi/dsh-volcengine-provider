@@ -16,7 +16,13 @@
 
 // DSH 的 ModuleLoader 在工厂里注入 require；构建产物即浏览器端 CommonJS 工厂。
 const react = typeof require === "function" ? require("react") : globalThis.React;
-const h = (...args) => react.createElement(...args);
+const h = (type, props, ...children) => {
+  // Inline theme styles must not hide the native disabled state.
+  const control = ['button', 'input', 'select', 'textarea'].includes(type);
+  const visibleProps = control && props?.disabled
+    ? { ...props, style: { ...props.style, opacity: 0.5, cursor: 'not-allowed' } } : props;
+  return react.createElement(type, visibleProps, ...children);
+};
 
 // ── 常量 ─────────────────────────────────────────────────────────────────────
 
@@ -45,6 +51,8 @@ const WINDOW_GROUP_LABELS = {
 
 /** 处于这三个状态时登录流程仍在进行，页面按秒轮询进度。 */
 const LOGIN_ACTIVE_STATES = ['launching', 'waiting', 'verifying'];
+// UI-only sentinel: never sent as an account ID to the host.
+const NEW_LOGIN_ACCOUNT = '__new__';
 
 const LOGIN_STATE_LABELS = {
   idle: '尚未开始登录。',
@@ -62,7 +70,7 @@ const LOGIN_STATE_LABELS = {
  * 用 Map 而不是普通对象，避免原型链上的键被误当成白名单。
  */
 const SAFE_LOGIN_PATHS = new Map([
-  ['ark.volcengine.com', /^\/arkcli\/login\/?$/],
+  ['ark.volcengine.com', /^(?:\/region:cn-beijing)?\/arkcli\/login\/?$/],
   ['signin.volcengine.com', /^\/authorize\//]
 ]);
 
@@ -139,7 +147,7 @@ const LOGIN_CONFIRM_NOTES = [
   '登录会走官方 CLI 的 volc-sso 授权流程，在系统默认浏览器中打开官方登录页；本插件不读取浏览器 Cookie，只接收官方回调的结果。',
   '登录得到的凭据保存在本插件为该账号准备的隔离目录里，不会改变你原有 CLI 的默认身份。',
   '取消登录或删除账号元数据都不会删除已经保存的凭据；需要清理时请自行处理该账号的隔离目录。',
-  '额度查询需要的 AK/SK 与登录互不影响：即使还没有 AK/SK，也可以完成 OAuth 登录。'
+  'OAuth 登录会绑定该账号可用的个人套餐，模型调用与额度查询使用对应套餐的登录身份，无需另外填写 AK/SK。'
 ];
 
 /** 账号 ID、凭据引用名、Profile 名的取值规则（与 Host 端 state.mjs 保持一致）。 */
@@ -192,7 +200,7 @@ const style = {
     color: 'var(--dsw-alias-state-error-primary, #dc2626)',
     cursor: 'pointer', font: 'inherit'
   },
-  muted: { fontSize: 12, color: 'var(--dsw-alias-label-secondary, inherit)' },
+  muted: { margin: 0, lineHeight: 1.5, fontSize: 12, color: 'var(--dsw-alias-label-secondary, inherit)', overflowWrap: 'anywhere' },
   error: { fontSize: 12, color: 'var(--dsw-alias-state-error-primary, #dc2626)', overflowWrap: 'anywhere' },
   warn: { fontSize: 12, color: 'var(--dsw-alias-state-warn-primary, #b45309)', overflowWrap: 'anywhere' },
   success: { fontSize: 12, color: 'var(--dsw-alias-state-success-primary, #16a34a)', overflowWrap: 'anywhere' },
@@ -413,6 +421,45 @@ function draftFromAccount(account) {
   };
 }
 
+// 身份只消费后端给出的安全摘要，不枚举或回显未知字段。
+function accountName(account) {
+  return account?.displayName || account?.label || account?.id || '未知账号';
+}
+
+function isOAuth(account) {
+  return ['oauth', 'sso', 'arkcli-oauth', 'arkcli-sso'].includes(account?.authMode);
+}
+
+function planAuth(account, plan) {
+  const oauth = isOAuth(account);
+  const bound = Boolean(account?.oauthProfiles?.[plan]);
+  const inference = oauth ? bound : Boolean(account?.hasApiKeys?.[plan]);
+  const quota = typeof account?.hasQuotaAccess?.[plan] === 'boolean'
+    ? account.hasQuotaAccess[plan]
+    : oauth ? bound : Boolean(account?.hasQuotaKeys);
+  return { oauth, bound, inference, quota };
+}
+
+function finiteQuotaNumber(value) {
+  if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function busyMessage(key) {
+  if (!key) return '';
+  const [operation, plan, model] = key.split(':');
+  const target = PLAN_TITLES[plan] || '';
+  const messages = {
+    use: `正在为${target}启用所选账号…`, select: `正在切换${target}的账号…`, models: `正在拉取${target}的模型目录…`,
+    quota: `正在查询${target}的额度…`, provider: `正在更新${target}的启用状态…`,
+    model: `正在更新模型 ${model} 的启用状态…`, settings: `正在保存模型 ${model} 的参数…`,
+    reset: `正在恢复模型 ${model} 的默认参数…`, login: '正在启动官方网页登录…',
+    'cancel-login': '正在取消登录…', save: '正在保存账号…', delete: '正在删除账号…'
+  };
+  return messages[operation] || '正在处理…';
+}
+
 // ── 模型管理（客户端侧校验与载荷组装） ────────────────────────────────────────
 
 /**
@@ -523,11 +570,8 @@ function modelDraftFrom(model) {
  * @returns {unknown} 档位映射、false 或 undefined
  */
 function inheritedEfforts(model) {
-  const effective = model?.effective?.reasoningEfforts;
-  if (effective !== undefined) return effective;
-  const defaults = model?.defaults?.reasoningEfforts;
-  if (defaults !== undefined) return defaults;
-  return undefined;
+  // Inheriting removes saved overrides: the effective object still contains those overrides.
+  return model?.defaults?.reasoningEfforts;
 }
 
 /**
@@ -552,7 +596,7 @@ function draftTiers(draft, model) {
   }
   const inherited = inheritedEfforts(model);
   if (inherited && typeof inherited === 'object') return Object.keys(inherited);
-  return [...KNOWN_EFFORTS];
+  return [];
 }
 
 /**
@@ -667,20 +711,20 @@ function parseModelSettings(draft, model) {
 function windowSummary(window) {
   const parts = [];
   let tone = 'muted';
-  const used = Number(window?.percent);
-  if (Number.isFinite(used)) {
-    const remaining = Math.max(0, 100 - used);
+  const used = finiteQuotaNumber(window?.percent);
+  if (used !== null) {
+    const remaining = Math.max(0, Math.min(100, 100 - used));
     parts.push(`剩余 ${formatPercent(remaining)}%`);
     if (remaining <= 0) tone = 'error';
     else if (remaining <= 10) tone = 'warn';
   }
   const detail = window?.detail;
-  if (detail && Number.isFinite(Number(detail.used)) && Number.isFinite(Number(detail.limit))) {
+  if (detail && finiteQuotaNumber(detail.used) !== null && finiteQuotaNumber(detail.limit) !== null) {
     parts.push(`已用 ${detail.used} / ${detail.limit} ${detail.unit ?? ''}`.trim());
   }
   if (window?.resetsAt) parts.push(`重置于 ${formatTime(window.resetsAt)}`);
   if (detail?.scope) parts.push(`范围 ${detail.scope}`);
-  return { text: parts.join(' · '), tone };
+  return { text: parts.join(' · ') || '额度数据暂不可用', tone };
 }
 
 /**
@@ -690,7 +734,7 @@ function windowSummary(window) {
  * @returns {object} 元素树
  */
 function QuotaWindows({ quota }) {
-  if (!quota) return h('p', { style: style.muted }, '尚未查询额度。');
+  if (!quota) return h('p', { style: style.muted }, '尚未查询额度，点击「刷新额度」获取当前账号的数据。');
   if (quota.state === 'no-key') {
     // no-key 有两种成因：OAuth 账号没绑定该套餐，或引用名账号缺 AK/SK。
     // 先显示后端给的原因，再补一条网页登录的出路。
@@ -718,9 +762,17 @@ function QuotaWindows({ quota }) {
       group.label ? h('div', { style: { fontSize: 12, fontWeight: 600 } }, group.label) : null,
       group.windows.map((item, position) => {
         const summary = windowSummary(item);
-        return h('div', { key: `${item?.kind ?? 'w'}-${position}`, style: { display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12 } },
-          h('span', null, WINDOW_KIND_LABELS[item?.kind] ?? item?.kind ?? '窗口'),
-          h('span', { style: { textAlign: 'right', ...style[summary.tone] } }, summary.text));
+        const percent = finiteQuotaNumber(item?.percent);
+        const label = WINDOW_KIND_LABELS[item?.kind] ?? item?.kind ?? '窗口';
+        return h('div', { key: `${item?.kind ?? 'w'}-${position}`, style: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 } },
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: 12 } },
+            h('span', { style: { flexShrink: 0, whiteSpace: 'nowrap' } }, label),
+            h('span', { style: { textAlign: 'right', minWidth: 0, ...style[summary.tone] } }, summary.text)),
+          percent !== null ? h('progress', {
+            max: 100, value: Math.max(0, Math.min(100, 100 - percent)),
+            'aria-label': `${label}剩余额度`, 'aria-valuetext': `剩余 ${formatPercent(Math.max(0, Math.min(100, 100 - percent)))}%`,
+            style: { width: '100%', height: 8, accentColor: summary.tone === 'error' ? 'var(--dsw-alias-state-error-primary, #dc2626)' : summary.tone === 'warn' ? 'var(--dsw-alias-state-warn-primary, #b45309)' : 'var(--dsw-alias-brand-primary, #3b82f6)' }
+          }) : null);
       })
     ))
   );
@@ -809,7 +861,7 @@ function ModelSettingsEditor({ model, draft, error, disabled, onChange, onSave, 
  * @param {object} props 组件属性
  * @returns {object} 元素树
  */
-function ModelRow({ model, disabled, editor, draftError, onToggle, onOpenEditor, onCloseEditor, onChangeDraft, onSave, onReset }) {
+function ModelRow({ model, disabled, routingError, editor, draftError, onToggle, onOpenEditor, onCloseEditor, onChangeDraft, onSave, onReset }) {
   const enabled = model?.enabled !== false;
   const editing = editor?.modelId === model?.id;
   const effective = describeEffective(model);
@@ -825,9 +877,9 @@ function ModelRow({ model, disabled, editor, draftError, onToggle, onOpenEditor,
       model?.capabilityUnverified ? h('span', { style: style.chip }, '能力未核实') : null,
       enabled ? null : h('span', { style: style.chip }, '已停用'),
       h('button', { type: 'button', style: style.btn, disabled, 'aria-label': `模型参数 ${model?.id ?? ''}`, onClick: () => (editing ? onCloseEditor() : onOpenEditor(model)) }, editing ? '收起参数' : '参数'),
-      h('button', { type: 'button', style: style.btn, disabled, 'aria-label': `恢复默认 ${model?.id ?? ''}`, onClick: () => onReset(model) }, '恢复默认')),
+      h('button', { type: 'button', style: style.btn, disabled, 'aria-label': `恢复默认 ${model?.id ?? ''}`, title: '清除全部参数覆盖并恢复模型启用状态', onClick: () => onReset(model) }, enabled ? '恢复默认' : '恢复默认并启用')),
     h('p', { style: style.muted }, `当前参数：${describeModelSettings(model)}`),
-    effective ? h('p', { style: style.muted }, `生效值：${effective}`) : null,
+    effective ? h('p', { style: routingError ? style.warn : style.muted }, `${routingError ? '已保存配置（路由尚未生效）' : '生效值'}：${effective}`) : null,
     editing
       ? h(ModelSettingsEditor, {
         model, draft: editor.draft, error: draftError, disabled,
@@ -846,18 +898,19 @@ function ModelRow({ model, disabled, editor, draftError, onToggle, onOpenEditor,
  * @param {object} props 组件属性
  * @returns {object} 元素树
  */
-function PlanCard({ plan, snapshot, rawQuota, busy, onSelect, onModels, onQuota, onToggleProvider, onToggleModel, onSaveModelSettings, onResetModelSettings }) {
+function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModels, onQuota, onToggleProvider, onToggleModel, onSaveModelSettings, onResetModelSettings }) {
   const accounts = Array.isArray(snapshot?.accounts) ? snapshot.accounts : [];
   const activeId = snapshot?.active?.[plan] ?? null;
   const account = accounts.find((item) => item?.id === activeId) ?? null;
   const catalog = (Array.isArray(snapshot?.catalogs) ? snapshot.catalogs : [])
     .find((item) => item?.plan === plan && item?.accountId === activeId) ?? null;
   const route = snapshot?.routes?.[plan] ?? null;
+  const appliedAccount = snapshot?.appliedAccounts?.[plan];
   // 额度是按账号查的：账号换了就不要再展示上一个账号的窗口。
   const quota = rawQuota && rawQuota.accountId === activeId ? rawQuota : null;
   const disabled = busy !== null;
-  const hasInference = !!(account && account?.hasApiKeys?.[plan]);
-  const hasQuotaKeys = !!(account && account?.hasQuotaKeys);
+  const auth = planAuth(account, plan);
+  const canPullModels = Boolean(account && (auth.oauth ? auth.bound : account.cliProfile));
   // 旧快照没有 enabled 字段时按启用处理。
   const providerEnabled = providerEnabledOf(snapshot, plan);
   // 旧快照的目录没有 models 明细：安全地当作「没有列表」展示。
@@ -867,9 +920,16 @@ function PlanCard({ plan, snapshot, rawQuota, busy, onSelect, onModels, onQuota,
     : models.filter((item) => item?.enabled !== false).length;
 
   // 参数编辑状态：同一时刻只展开一个模型，避免把卡片撑得过长。
-  const [editor, setEditor] = react.useState(null);
+  const [storedEditor, setEditor] = react.useState(null);
   const [modelsOpen, setModelsOpen] = react.useState(false);
   const [draftError, setDraftError] = react.useState(null);
+  // 渲染与提交时立即隔离旧账号草稿，effect 再清掉本地状态。
+  const editor = storedEditor?.accountId === activeId ? storedEditor : null;
+  react.useEffect(() => {
+    setEditor(null);
+    setDraftError(null);
+    setModelsOpen(false);
+  }, [activeId]);
 
   const editedModel = editor ? models.find((item) => item?.id === editor.modelId) ?? null : null;
   const editedSignature = JSON.stringify(editedModel?.settings ?? null);
@@ -882,10 +942,10 @@ function PlanCard({ plan, snapshot, rawQuota, busy, onSelect, onModels, onQuota,
       if (previous.synced === editedSignature) return previous;
       return { ...previous, draft: modelDraftFrom(editedModel), synced: editedSignature };
     });
-  }, [editor?.modelId, editedSignature]);
+  }, [editor?.modelId, editedModel, editedSignature]);
 
   const openEditor = (model) => {
-    setEditor({ modelId: model.id, draft: modelDraftFrom(model), synced: JSON.stringify(model?.settings ?? null) });
+    setEditor({ accountId: activeId, modelId: model.id, draft: modelDraftFrom(model), synced: JSON.stringify(model?.settings ?? null) });
     setDraftError(null);
   };
 
@@ -895,7 +955,14 @@ function PlanCard({ plan, snapshot, rawQuota, busy, onSelect, onModels, onQuota,
   };
 
   const changeDraft = (patch) => {
-    setEditor((previous) => (previous ? { ...previous, draft: { ...previous.draft, ...patch } } : previous));
+    setEditor((previous) => {
+      if (!previous) return previous;
+      const draft = { ...previous.draft, ...patch };
+      if (patch.effortsMode !== undefined && !['inherit', 'none'].includes(draft.defaultReasoning)
+        && !draftTiers(draft, editedModel).includes(draft.defaultReasoning)) draft.defaultReasoning = 'inherit';
+      return { ...previous, draft };
+    });
+    setDraftError(null);
   };
 
   // 校验不通过时不发 RPC：只在界面上说明原因。
@@ -917,7 +984,10 @@ function PlanCard({ plan, snapshot, rawQuota, busy, onSelect, onModels, onQuota,
 
   return h('section', { style: style.card },
     h('h3', { style: style.cardTitle }, PLAN_TITLES[plan]),
-    h('p', { style: style.muted }, PLAN_HINTS[plan]),
+    account ? h('p', { style: { margin: 0, fontSize: 13 } }, `${snapshot?.routingError ? '所选账号' : '当前账号'}：${accountName(account)}`) : null,
+    snapshot?.routingError ? h('p', { style: style.warn }, appliedAccount === undefined
+      ? '实际生效账号暂不可确认，请排除路由错误后重试。'
+      : appliedAccount ? `实际生效账号：${accountName(appliedAccount)}（${appliedAccount.id}），路由更新尚未完成。` : '该套餐当前没有已生效的模型路由。') : null,
     h('div', { style: style.row },
       h('label', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 } },
         h('input', {
@@ -927,38 +997,44 @@ function PlanCard({ plan, snapshot, rawQuota, busy, onSelect, onModels, onQuota,
         }),
         h('span', null, '启用该套餐')),
       providerEnabled
-        ? h('span', { style: style.chip }, '套餐已启用')
+        ? h('span', { style: style.chip }, !account ? '待选择账号' : !auth.inference ? '待完成鉴权' : '套餐已启用')
         : h('span', { style: style.chip }, '已停用：不注册模型路由（账号选择与模型参数保留）')),
     h('div', { style: style.row },
       h('label', { style: style.label }, '使用账号'),
       h('select', {
         style: { ...style.input, width: 'auto', minWidth: 160 },
         value: activeId ?? '',
+        'aria-label': `${PLAN_TITLES[plan]}使用账号`,
         disabled: disabled,
         onChange: (event) => onSelect(plan, event.target.value || null)
       },
         h('option', { value: '' }, '未选择'),
-        accounts.map((item) => h('option', { key: item.id, value: item.id }, `${item.label}（${item.id}）`)))),
+        accounts.map((item) => h('option', { key: item.id, value: item.id }, `${accountName(item)}${item.label && item.label !== accountName(item) ? ` · 备注：${item.label}` : ''}（${item.id}）`)))),
     h('div', { style: style.row },
-      h('button', { type: 'button', style: style.btn, disabled: disabled || !activeId, onClick: () => onModels(plan) }, '拉取模型'),
-      h('button', { type: 'button', style: style.btn, disabled: disabled || !activeId, onClick: () => onQuota(plan) }, '刷新额度')),
-    h('div', { style: style.row },
-      h('span', { style: style.chip }, `推理凭据：${hasInference ? '已配置' : '未配置'}`),
-      // OAuth 账号的额度鉴权来自登录绑定，不是 AK/SK，所以这里按鉴权来源说。
-      h('span', { style: style.chip }, `额度鉴权：${account?.authMode === 'oauth' ? 'OAuth' : hasQuotaKeys ? 'AK/SK 已配置' : '未配置'}`),
-      route ? h('span', { style: style.chip }, `模型路由：${route}`) : null),
-    !account ? h('p', { style: style.muted }, '该套餐尚未选择账号。') : null,
-    account && !hasInference
-      ? h('p', { style: style.warn }, `该账号没有为${PLAN_TITLES[plan]}配置推理凭据引用，模型调用会失败。`)
+      h('button', { type: 'button', style: style.btn, disabled: disabled || !canPullModels, onClick: () => onModels(plan) }, busy === `models:${plan}` ? '正在拉取模型…' : '拉取模型'),
+      h('button', { type: 'button', style: style.btn, disabled: disabled || quotaBusy || !auth.quota, onClick: () => onQuota(plan) }, quotaBusy ? '正在刷新额度…' : quota?.state === 'error' ? '重试额度查询' : '刷新额度')),
+    account ? h('div', { style: style.row },
+      h('span', { style: style.chip }, `鉴权来源：${auth.oauth ? '官方网页登录（OAuth）' : '凭据引用'}`),
+      h('span', { style: style.chip }, auth.oauth ? `套餐绑定：${auth.bound ? '已绑定' : '未绑定'}` : `推理凭据：${auth.inference ? '已配置' : '未配置'}`),
+      h('span', { style: style.chip }, `额度鉴权：${auth.oauth ? (auth.quota ? 'OAuth 已就绪' : 'OAuth 未就绪') : auth.quota ? 'AK/SK 已配置' : '未配置'}`)) : null,
+    !account ? h('p', { style: style.muted }, '该套餐尚未选择账号，请选择已登录的账号。') : null,
+    account && auth.oauth && !auth.bound
+      ? h('p', { style: style.warn }, '此账号尚未绑定该套餐，暂不能拉取模型或查询额度。请先确认已订阅此个人套餐，再到上方账号区重新网页登录更新绑定。')
       : null,
-    account && !hasQuotaKeys
-      ? h('p', { style: style.warn }, account.authMode === 'oauth'
-        ? '该账号走 OAuth 登录，但当前没有可用的额度鉴权；请先完成网页登录并绑定对应套餐。'
-        : '该账号缺少 AK/SK 凭据引用，额度窗口无法查询。')
+    account && !auth.oauth && !canPullModels
+      ? h('p', { style: style.muted }, '当前可使用本地模型快照；远端目录需要官方网页登录或该账号隔离目录内的 CLI Profile，配置前无法拉取。') : null,
+    account && !auth.oauth && !auth.inference
+      ? h('p', { style: style.warn }, '该账号尚未配置此套餐的推理凭据，请在账号高级配置中填写引用名，或使用网页登录。')
       : null,
-    catalog
-      ? h('p', { style: style.muted }, `模型目录：${catalog.count} 个模型（来源 ${CATALOG_SOURCE_LABELS[catalog.source] ?? catalog.source}${catalog.updatedAt ? `，更新于 ${formatTime(catalog.updatedAt)}` : ''}）。`)
-      : h('p', { style: style.muted }, '模型目录：尚未拉取。'),
+    account && !auth.quota && (!auth.oauth || auth.bound)
+      ? h('p', { style: style.warn }, auth.oauth ? '该套餐的登录身份暂不可查询额度，请重新登录后重试。' : '该账号缺少 AK/SK 凭据引用，额度窗口无法查询。')
+      : null,
+    h('details', null,
+      h('summary', { style: style.muted }, '套餐高级信息'),
+      h('p', { style: style.muted }, PLAN_HINTS[plan]),
+      account ? h('p', { style: style.muted }, `本地账号 ID：${account.id}${auth.oauth && auth.bound ? ` · 套餐 Profile：${account.oauthProfiles[plan]}` : ''}`) : null,
+      route ? h('p', { style: style.muted }, `模型路由：${route}`) : null,
+      catalog ? h('p', { style: style.muted }, `模型目录：${catalog.count} 个模型（来源 ${CATALOG_SOURCE_LABELS[catalog.source] ?? catalog.source}${catalog.updatedAt ? `，更新于 ${formatTime(catalog.updatedAt)}` : ''}）。`) : null),
     catalog?.error ? h('p', { role: 'alert', style: style.error }, describeError(catalog.error)) : null,
     models.length
       ? h('details', { open: modelsOpen },
@@ -973,7 +1049,7 @@ function PlanCard({ plan, snapshot, rawQuota, busy, onSelect, onModels, onQuota,
         h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 } },
           models.map((model, index) => h(ModelRow, {
             key: model?.id ?? `model-${index}`,
-            model, disabled, editor, draftError,
+            model, disabled, routingError: snapshot?.routingError, editor, draftError,
             onToggle: (item, enabled) => onToggleModel(plan, activeId, item.id, enabled),
             onOpenEditor: openEditor,
             onCloseEditor: closeEditor,
@@ -983,8 +1059,14 @@ function PlanCard({ plan, snapshot, rawQuota, busy, onSelect, onModels, onQuota,
           }))))
       : h('p', { style: style.muted }, catalog
         ? '该目录暂无模型明细（旧缓存可能没有模型列表，重新拉取模型后可用）。'
-        : '模型目录：尚未拉取。'),
-    h(QuotaWindows, { quota })
+        : !account ? '选择账号后显示该套餐的模型目录。' : '模型目录：尚未拉取。'),
+    h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 }, 'aria-busy': Boolean(quotaBusy) },
+      h('h4', { style: { margin: 0, fontSize: 13 } }, '套餐额度'),
+      quotaBusy ? h('p', { role: 'status', style: style.muted }, `正在查询${PLAN_TITLES[plan]}的额度…`) : null,
+      quota?.updatedAt ? h('p', { style: style.muted }, `额度更新时间：${formatTime(quota.updatedAt)}`) : null,
+      !account ? h('p', { style: style.muted }, '请先登录或添加账号，再为此套餐选择账号。')
+        : !quota && !auth.quota ? h('p', { style: style.muted }, '完成此套餐的登录绑定或额度鉴权配置后，即可查询额度。')
+        : h(QuotaWindows, { quota }))
   );
 }
 
@@ -994,63 +1076,97 @@ function PlanCard({ plan, snapshot, rawQuota, busy, onSelect, onModels, onQuota,
  * @param {object} props 组件属性
  * @returns {object} 元素树
  */
-function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, busy, onNew, onEdit, onCancelEdit, onChangeDraft, onSave, onRequestDelete, onConfirmDelete, onCancelDelete, onRequestLogin, onConfirmLogin, onCancelLoginConfirm, onCancelLogin }) {
+function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, busy, onNew, onEdit, onCancelEdit, onChangeDraft, onSave, onRequestDelete, onConfirmDelete, onCancelDelete, onRequestLogin, onConfirmLogin, onCancelLoginConfirm, onCancelLogin, onUsePlan }) {
   const accounts = Array.isArray(snapshot?.accounts) ? snapshot.accounts : [];
   const disabled = busy !== null;
   const loginActive = LOGIN_ACTIVE_STATES.includes(login.state);
   const loginUrl = safeLoginUrl(login.url);
   // 登录方式挂在账号上（OAuth 绑定 / 凭据引用名），不是整个设置的属性。
   const loginAccount = accounts.find((item) => item?.id === login.accountId) ?? null;
-  const authMode = loginAccount?.authMode ?? accounts[0]?.authMode ?? snapshot?.authMode ?? login.authMode ?? null;
+  const authMode = loginAccount?.authMode ?? login.authMode ?? null;
 
   return h('section', { style: style.card },
-    h('h3', { style: style.cardTitle }, '账号与凭据引用'),
-    h('p', { style: style.muted }, '这里只保存凭据在凭据服务里的「引用名」，不保存也不回显任何密钥本体。'),
+    h('h3', { style: style.cardTitle }, '账号管理'),
+    h('p', { style: style.muted }, '账号以官方登录身份区分，本地备注仅用于帮助识别。每个套餐可独立选择账号。'),
     accounts.length
       ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
         accounts.map((account) => h('div', { key: account.id, style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', border: '1px solid var(--dsw-alias-border-l1, rgba(128,128,128,.22))', borderRadius: 'var(--dsw-radius-sm, 6px)' } },
           h('div', { style: style.row },
-            h('strong', { style: { fontWeight: 600 } }, account.label),
-            h('span', { style: style.chip }, account.id),
-            account.authMode ? h('span', { style: style.chip }, `凭据来源：${AUTH_MODE_LABELS[account.authMode] ?? account.authMode}`) : null,
-            account.cliProfile ? h('span', { style: style.chip }, `ArkCli Profile：${account.cliProfile}`) : null),
-          h('div', { style: style.row },
-            h('span', { style: style.muted }, `Agent 套餐推理引用：${account.apiKeyRefs?.['agent-plan'] ?? '未配置'}`),
-            h('span', { style: style.muted }, `编程套餐推理引用：${account.apiKeyRefs?.['coding-plan'] ?? '未配置'}`)),
-          h('div', { style: style.row },
-            h('span', { style: style.muted }, `AK 引用：${account.accessKeyRef || '未配置'}`),
-            h('span', { style: style.muted }, `SK 引用：${account.secretKeyRef || '未配置'}`)),
+            h('strong', { style: { fontWeight: 600 } }, accountName(account)),
+            account.authMode ? h('span', { style: style.chip }, `凭据来源：${AUTH_MODE_LABELS[account.authMode] ?? account.authMode}`) : null),
+          account.label ? h('p', { style: style.muted }, `本地备注：${account.label}`) : null,
+          account.identity?.accountId ? h('p', { style: style.muted }, `官方账号 ID：${account.identity.accountId}`) : null,
+          account.identity?.userId ? h('p', { style: style.muted }, `官方用户 ID：${account.identity.userId}`) : null,
+          isOAuth(account) && !account.identity ? h('p', { style: style.muted }, '官方身份摘要暂不可用，完成网页登录后更新。') : null,
+          account.loggedAt ? h('p', { style: style.muted }, `最近登录：${formatTime(account.loggedAt)}`) : null,
+          account.credentialError ? h('p', { role: 'alert', style: style.error }, `凭据状态：${describeError(account.credentialError)}`) : null,
+          h('div', { style: style.row }, PLANS.map((plan) => h('span', { key: plan, style: style.chip },
+            `${plan === 'agent-plan' ? 'Agent' : '编程'}套餐：${snapshot?.active?.[plan] === account.id ? (providerEnabledOf(snapshot, plan) ? '当前使用' : '已选择 · 已停用') : '未选用'}${isOAuth(account) ? ` · ${account.oauthProfiles?.[plan] ? '已绑定' : '未绑定'}` : ''}`))),
+          h('div', { style: style.row }, PLANS.map(plan => {
+            const selected = snapshot?.active?.[plan] === account.id;
+            if (!planAuth(account, plan).inference || (selected && providerEnabledOf(snapshot, plan))) return null;
+            return h('button', { key: plan, type: 'button', style: style.primary, disabled: disabled || loginActive,
+              onClick: () => onUsePlan(plan, account.id) }, `${selected ? '启用' : '用于'} ${plan === 'agent-plan' ? 'Agent' : '编程'}套餐`);
+          })),
+          h('details', null,
+            h('summary', { style: style.muted }, '账号高级配置与标识'),
+            h('p', { style: style.muted }, `本地账号 ID：${account.id}`),
+            isOAuth(account)
+              ? PLANS.map((plan) => account.oauthProfiles?.[plan] ? h('p', { key: plan, style: style.muted }, `${plan === 'agent-plan' ? 'Agent' : '编程'}套餐 Profile：${account.oauthProfiles[plan]}`) : null)
+              : h('div', null,
+                h('p', { style: style.muted }, `Agent 套餐推理引用：${account.apiKeyRefs?.['agent-plan'] || '未配置'}`),
+                h('p', { style: style.muted }, `编程套餐推理引用：${account.apiKeyRefs?.['coding-plan'] || '未配置'}`),
+                h('p', { style: style.muted }, `AK 引用：${account.accessKeyRef || '未配置'} · SK 引用：${account.secretKeyRef || '未配置'}`)),
+            account.cliProfile ? h('p', { style: style.muted }, `ArkCli Profile：${account.cliProfile}`) : null),
           h('div', { style: style.row },
             h('button', { type: 'button', style: style.btn, disabled: disabled || loginActive, onClick: () => onRequestLogin(account.id) }, loginActive ? '登录进行中…' : '网页登录'),
-            h('button', { type: 'button', style: style.btn, disabled: disabled, onClick: () => onEdit(account) }, '编辑'),
+            h('button', { type: 'button', style: style.btn, disabled: disabled || loginActive, onClick: () => onEdit(account) }, '编辑'),
             confirmDelete === account.id
-              ? h('button', { type: 'button', style: style.danger, disabled: disabled, onClick: () => onConfirmDelete(account.id) }, '确认删除')
-              : h('button', { type: 'button', style: style.btn, disabled: disabled, onClick: () => onRequestDelete(account.id) }, '删除'),
+              ? h('button', { type: 'button', style: style.danger, disabled: disabled || loginActive, onClick: () => onConfirmDelete(account.id) }, '确认删除')
+              : h('button', { type: 'button', style: style.btn, disabled: disabled || loginActive, onClick: () => onRequestDelete(account.id) }, '删除'),
             confirmDelete === account.id
               ? h('button', { type: 'button', style: style.btn, disabled: disabled, onClick: onCancelDelete }, '取消')
               : null),
           loginConfirm === account.id
             ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', border: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.3))', borderRadius: 'var(--dsw-radius-sm, 6px)' } },
-              h('div', { style: { fontWeight: 600, fontSize: 13 } }, `开始网页登录：${account.label}`),
+              h('div', { style: { fontWeight: 600, fontSize: 13 } }, `开始网页登录：${accountName(account)}`),
               h('ul', { style: { margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 } },
                 LOGIN_CONFIRM_NOTES.map((note, index) => h('li', { key: index, style: style.muted }, note))),
               h('div', { style: style.row },
                 h('button', { type: 'button', style: style.primary, disabled: disabled, onClick: () => onConfirmLogin(account.id) }, '确认并打开官方登录页'),
                 h('button', { type: 'button', style: style.btn, disabled: disabled, onClick: onCancelLoginConfirm }, '取消')))
             : null)))
-      : h('p', { style: style.muted }, '还没有账号，请先新增一个。'),
+      : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+        h('p', { style: style.muted }, '还没有账号。可直接网页登录，确认后会自动创建本地账号，无需填写账号 ID 或密钥引用。'),
+        h('div', { style: style.row },
+          h('button', { type: 'button', style: style.primary, disabled: disabled || loginActive, onClick: () => onRequestLogin(NEW_LOGIN_ACCOUNT) }, '网页登录')),
+        loginConfirm === NEW_LOGIN_ACCOUNT ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+          h('strong', null, '创建账号并开始网页登录'),
+          h('ul', { style: { margin: 0, paddingLeft: 18 } },
+            LOGIN_CONFIRM_NOTES.map((note, index) => h('li', { key: index, style: style.muted }, note))),
+          h('div', { style: style.row },
+            h('button', { type: 'button', style: style.primary, disabled: disabled || loginActive, onClick: () => onConfirmLogin(NEW_LOGIN_ACCOUNT) }, '确认并打开官方登录页'),
+            h('button', { type: 'button', style: style.btn, disabled, onClick: onCancelLoginConfirm }, '取消'))) : null),
     h('div', { style: style.row },
-      h('button', { type: 'button', style: style.btn, disabled: disabled || editor !== null, onClick: onNew }, '新增账号')),
-    editor ? h(AccountForm, { editor, busy, onChangeDraft, onSave, onCancel: onCancelEdit }) : null,
+      accounts.length ? h('button', { type: 'button', style: style.primary, disabled: disabled || loginActive, onClick: () => onRequestLogin(NEW_LOGIN_ACCOUNT) }, '登录其他账号') : null,
+      h('button', { type: 'button', style: style.btn, disabled: disabled || loginActive || editor !== null, onClick: onNew }, '新增账号')),
+    accounts.length > 0 && loginConfirm === NEW_LOGIN_ACCOUNT ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+      h('strong', null, '创建独立账号并网页登录'),
+      h('p', { style: style.muted }, '使用新的本地账号保存登录结果，不覆盖已有账号或更改当前套餐选择。请在普通浏览器的官方页面确认实际授权身份。'),
+      h('ul', { style: { margin: 0, paddingLeft: 18 } }, LOGIN_CONFIRM_NOTES.map((note, index) => h('li', { key: index, style: style.muted }, note))),
+      h('div', { style: style.row },
+        h('button', { type: 'button', style: style.primary, disabled: disabled || loginActive, onClick: () => onConfirmLogin(NEW_LOGIN_ACCOUNT) }, '确认并打开官方登录页'),
+        h('button', { type: 'button', style: style.btn, disabled, onClick: onCancelLoginConfirm }, '取消'))) : null,
+    editor ? h(AccountForm, { editor, busy: busy ?? (loginActive ? 'login-active' : null), onChangeDraft, onSave, onCancel: onCancelEdit }) : null,
     h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 } },
       h('div', { style: { fontWeight: 600, fontSize: 13 } }, '网页登录'),
-      loginAccount ? h('p', { style: style.muted }, `当前登录账号：${loginAccount.label}（${loginAccount.id}）`) : null,
+      loginAccount ? h('p', { style: style.muted }, `当前登录账号：${accountName(loginAccount)}（${loginAccount.id}）`) : null,
       authMode ? h('p', { style: style.muted }, `凭据来源：${AUTH_MODE_LABELS[authMode] ?? authMode}`) : null,
       h('p', { style: style.muted }, LOGIN_STATE_LABELS[login.state] ?? login.state),
       login.message ? h('p', { style: style.muted }, login.message) : null,
       loginUrl ? h('a', { href: loginUrl, target: '_blank', rel: 'noopener noreferrer', style: { fontSize: 12, color: 'var(--dsw-alias-link, inherit)' } }, '打开官方授权页面') : null,
       loginActive
-        ? h('button', { type: 'button', style: style.btn, disabled: disabled || !login.jobId, onClick: onCancelLogin }, '取消登录')
+        ? h('button', { type: 'button', style: style.btn, disabled: disabled || !login.jobId, onClick: onCancelLogin }, login.jobId ? '取消登录' : '同步状态后可取消登录')
         : null)
   );
 }
@@ -1084,8 +1200,12 @@ function AccountForm({ editor, busy, onChangeDraft, onSave, onCancel }) {
     h('div', { style: { fontWeight: 600, fontSize: 13 } }, editor.mode === 'edit' ? `编辑账号：${editor.id}` : '新增账号'),
     h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 10 } },
       field('账号 ID（小写字母开头）', 'id', 'default'),
-      field('账号名称', 'label', '例如：团队账号')),
-    h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 10 } },
+      field('本地备注', 'label', '例如：个人账号')),
+    h('p', { style: style.muted }, '保存后点击「网页登录」绑定官方账号；使用 OAuth 时无需填写下方的凭据引用。'),
+    h('details', null,
+      h('summary', { style: style.muted }, '高级配置：凭据引用与 CLI Profile'),
+      isOAuth(editor) ? h('p', { style: style.warn }, '此账号当前使用 OAuth，编辑引用不会切换鉴权方式。模型调用与额度查询仍使用已绑定的套餐身份。') : null,
+      h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 10 } },
       apiKeyField('agent-plan', 'Agent 套餐推理凭据引用名', '例如：ARKCLI_AGENT_PLAN_API_KEY'),
       apiKeyField('coding-plan', '编程套餐推理凭据引用名', '例如：ARKCLI_CODING_PLAN_API_KEY')),
     h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 10 } },
@@ -1093,7 +1213,7 @@ function AccountForm({ editor, busy, onChangeDraft, onSave, onCancel }) {
       field('SecretKey 引用名（可选）', 'secretKeyRef', '例如：VOLC_SECRETKEY')),
     h('p', { style: style.muted }, 'AK/SK 引用名只用于查询管控面额度；用「网页登录」完成 OAuth 的账号不需要填写这两项。'),
     h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 10 } },
-      field('ArkCli Profile（可选）', 'cliProfile', '留空表示不使用')),
+      field('ArkCli Profile（可选）', 'cliProfile', '留空表示不使用'))),
     h('div', { style: style.row },
       h('button', { type: 'button', style: style.primary, disabled: disabled, onClick: onSave }, busy === 'save' ? '保存中…' : '保存'),
       h('button', { type: 'button', style: style.btn, disabled: disabled, onClick: onCancel }, '取消'))
@@ -1109,9 +1229,12 @@ function AccountForm({ editor, busy, onChangeDraft, onSave, onCancel }) {
 function VolcengineProviderSection({ client }) {
   const [snapshot, setSnapshot] = react.useState(null);
   const [loadError, setLoadError] = react.useState(null);
+  const [loading, setLoading] = react.useState(true);
   const [busy, setBusy] = react.useState(null);
   const [notice, setNotice] = react.useState(null);
   const [quotas, setQuotas] = react.useState({});
+  const [quotaBusy, setQuotaBusy] = react.useState({});
+  const quotaPendingRef = react.useRef(new Map());
   const [editor, setEditor] = react.useState(null);
   const [confirmDelete, setConfirmDelete] = react.useState(null);
   const [loginConfirm, setLoginConfirm] = react.useState(null);
@@ -1120,6 +1243,9 @@ function VolcengineProviderSection({ client }) {
   const aliveRef = react.useRef(true);
   const busyRef = react.useRef(null);
   const handledLoginRef = react.useRef(null);
+  const readSequenceRef = react.useRef(0);
+  const quotaEpochRef = react.useRef(0);
+  const accountFingerprintRef = react.useRef(null);
 
   react.useEffect(() => {
     aliveRef.current = true;
@@ -1129,23 +1255,41 @@ function VolcengineProviderSection({ client }) {
   /** 把一次 read 返回的整份快照落到状态里。 */
   const applySnapshot = react.useCallback((value) => {
     if (!aliveRef.current || !value) return;
-    setSnapshot(value);
-    const incoming = value.login ? normalizeLogin(value.login) : null;
-    if (incoming) {
-      setLogin((previous) => (previous.jobId === incoming.jobId ? previous : incoming));
+    // 写操作的新快照使更早发起的 read 失效，避免迟到响应覆盖新状态。
+    readSequenceRef.current += 1;
+    const fingerprint = JSON.stringify({ active: value.active, accounts: (value.accounts ?? []).map(account => ({
+      id: account.id, authMode: account.authMode, loggedAt: account.loggedAt, identity: account.identity,
+      profiles: account.oauthProfiles, apiKeyRefs: account.apiKeyRefs, accessKeyRef: account.accessKeyRef,
+      secretKeyRef: account.secretKeyRef, hasApiKeys: account.hasApiKeys, hasQuotaAccess: account.hasQuotaAccess
+    })) });
+    if (accountFingerprintRef.current !== fingerprint) {
+      accountFingerprintRef.current = fingerprint;
+      quotaEpochRef.current += 1;
+      setQuotaBusy({});
+      setQuotas({});
     }
+    setSnapshot(value);
+    setEditor(previous => previous?.mode === 'edit' && !(value.accounts ?? []).some(account => account.id === previous.id) ? null : previous);
+    setLoading(false);
+    const incoming = value.login ? normalizeLogin(value.login) : null;
+    if (incoming) setLogin(incoming);
   }, []);
 
   /** 重新读取全部状态。 */
   const refresh = react.useCallback(async () => {
+    const sequence = ++readSequenceRef.current;
+    setLoading(true);
+    setLoadError(null);
     try {
       const value = await client.invoke({ op: 'read' });
-      if (!aliveRef.current) return;
+      if (!aliveRef.current || sequence !== readSequenceRef.current) return;
       applySnapshot(value);
-      setLoadError(null);
+      setLoading(false);
+      return value;
     } catch (error) {
-      if (!aliveRef.current) return;
+      if (!aliveRef.current || sequence !== readSequenceRef.current) return;
       setLoadError(describeError(error));
+      setLoading(false);
     }
   }, [client, applySnapshot]);
 
@@ -1171,7 +1315,8 @@ function VolcengineProviderSection({ client }) {
       await refresh();
       return;
     }
-    setNotice({ ok: false, text: `${prefix}：${describeError(error)}` });
+    setNotice({ ok: false, text: `${prefix}：${describeError(error)}。正在重新读取已保存状态，请核对实际生效账号。`, refresh: true });
+    await refresh();
   };
 
   const selectAccount = (plan, accountId) => run(`select:${plan}`, async () => {
@@ -1179,10 +1324,28 @@ function VolcengineProviderSection({ client }) {
     try {
       const value = await client.invoke({ op: 'select', revision: snapshot.revision, plan, accountId });
       applySnapshot(value);
+      setQuotas((previous) => ({ ...previous, [plan]: null }));
       setNotice({ ok: true, text: `已切换${PLAN_TITLES[plan]}的账号。` });
     } catch (error) {
       await reportSaveError(error, '切换账号失败');
     }
+  });
+
+  // Explicit onboarding action: use the verified account and enable only the requested plan.
+  const usePlan = (plan, accountId) => run(`use:${plan}`, async () => {
+    let current = snapshot;
+    if (!current?.revision) return;
+    try {
+      if (current.active?.[plan] !== accountId) {
+        current = await client.invoke({ op: 'select', revision: current.revision, plan, accountId });
+        applySnapshot(current);
+      }
+      if (!providerEnabledOf(current, plan)) {
+        current = await client.invoke({ op: 'setProviderEnabled', revision: current.revision, plan, enabled: true });
+        applySnapshot(current);
+      }
+      setNotice({ ok: true, text: `已为${PLAN_TITLES[plan]}启用此账号，可在套餐卡片查看模型与额度。` });
+    } catch (error) { await reportSaveError(error, '启用套餐失败'); }
   });
 
   const pullModels = (plan) => run(`models:${plan}`, async () => {
@@ -1197,18 +1360,26 @@ function VolcengineProviderSection({ client }) {
     }
   });
 
-  const pullQuota = (plan) => run(`quota:${plan}`, async () => {
+  const pullQuota = async (plan) => {
     const accountId = snapshot?.active?.[plan] ?? null;
-    if (!accountId) return;
+    const epoch = quotaEpochRef.current;
+    if (!accountId || quotaPendingRef.current.get(plan) === epoch) return;
+    quotaPendingRef.current.set(plan, epoch);
+    setQuotaBusy(previous => ({ ...previous, [plan]: true }));
     try {
       const value = await client.invoke({ op: 'quota', plan, accountId, force: true });
-      if (!aliveRef.current) return;
+      if (!aliveRef.current || epoch !== quotaEpochRef.current) return;
       setQuotas((previous) => ({ ...previous, [plan]: value }));
     } catch (error) {
-      if (!aliveRef.current) return;
-      setQuotas((previous) => ({ ...previous, [plan]: { accountId, plan, state: 'error', windows: [], error: describeError(error) } }));
+      if (!aliveRef.current || epoch !== quotaEpochRef.current) return;
+      setQuotas((previous) => ({ ...previous, [plan]: { accountId, plan, state: 'error', windows: [], error: describeError(error), updatedAt: new Date().toISOString() } }));
+    } finally {
+      if (quotaPendingRef.current.get(plan) === epoch) {
+        quotaPendingRef.current.delete(plan);
+        if (aliveRef.current) setQuotaBusy(previous => ({ ...previous, [plan]: false }));
+      }
     }
-  });
+  };
 
   // 套餐启停：只改启用状态，不动账号选择，也不动模型参数。
   const toggleProvider = (plan, enabled) => run(`provider:${plan}`, async () => {
@@ -1252,7 +1423,7 @@ function VolcengineProviderSection({ client }) {
     try {
       const value = await client.invoke({ op: 'resetModelSettings', accountId, plan, modelId, revision: snapshot.revision });
       applySnapshot(value);
-      setNotice({ ok: true, text: `模型 ${modelId} 的参数已恢复默认。` });
+      setNotice({ ok: true, text: `模型 ${modelId} 的参数与启用状态已恢复目录默认。` });
     } catch (error) {
       await reportSaveError(error, `恢复模型 ${modelId} 的默认参数失败`);
     }
@@ -1261,11 +1432,31 @@ function VolcengineProviderSection({ client }) {
   const startLogin = (accountId) => run('login', async () => {
     if (!snapshot?.revision) return;
     try {
-      const value = await client.invoke({ op: 'startLogin', revision: snapshot.revision, accountId });
+      let revision = snapshot.revision;
+      if (accountId === NEW_LOGIN_ACCOUNT) {
+        const accounts = snapshot.accounts ?? [];
+        let index = 1;
+        while (accounts.some(account => account.id === `account-${index}`)) index++;
+        accountId = `account-${index}`;
+        const saved = await client.invoke({ op: 'saveAccount', revision, account: { id: accountId, label: '方舟账号', apiKeyRefs: {}, accessKeyRef: '', secretKeyRef: '' } });
+        applySnapshot(saved);
+        revision = saved.revision;
+        setEditor(null);
+      }
+      const value = await client.invoke({ op: 'startLogin', revision, accountId });
       if (aliveRef.current) setLogin(normalizeLogin(value));
     } catch (error) {
-      if (aliveRef.current) {
-        setNotice({ ok: false, text: `启动登录失败：${describeError(error)}` });
+      if (!aliveRef.current) return;
+      const latest = await refresh();
+      if (!latest) {
+        setLogin({ jobId: null, accountId, state: 'launching', message: '启动结果暂无法确认，正在自动同步登录状态；确认前请勿重复登录或修改账号。' });
+        setNotice(null);
+      } else if (LOGIN_ACTIVE_STATES.includes(latest?.login?.state)) {
+        setNotice({ ok: true, text: '检测到登录仍在进行，已恢复进度；请继续官方授权或取消登录。' });
+      } else if (isRevisionConflict(error)) {
+        setNotice({ ok: false, text: '设置已在别处被改动，已刷新；请重新确认登录。', refresh: true });
+      } else {
+        setNotice({ ok: false, text: `启动登录失败：${describeError(error)}。已创建的本地账号会保留，可在该账号上重试。`, refresh: true });
       }
     }
   });
@@ -1302,6 +1493,9 @@ function VolcengineProviderSection({ client }) {
     try {
       const value = await client.invoke({ op: 'saveAccount', revision: snapshot.revision, account: accountPayload(editor.draft) });
       applySnapshot(value);
+      quotaEpochRef.current += 1;
+      setQuotaBusy({});
+      setQuotas({});
       setEditor(null);
       setNotice({ ok: true, text: '账号已保存。' });
     } catch (error) {
@@ -1313,8 +1507,10 @@ function VolcengineProviderSection({ client }) {
     try {
       const value = await client.invoke({ op: 'removeAccount', revision: snapshot.revision, accountId });
       applySnapshot(value);
+      setEditor(previous => previous?.id === accountId ? null : previous);
+      setLoginConfirm(previous => previous === accountId ? null : previous);
       setConfirmDelete(null);
-      setNotice({ ok: true, text: '账号已删除。' });
+      setNotice({ ok: true, text: '账号已删除；官方 CLI 凭据目录仍保留。' });
     } catch (error) {
       await reportSaveError(error, '删除账号失败');
     }
@@ -1322,32 +1518,46 @@ function VolcengineProviderSection({ client }) {
 
   // 登录进行中：每秒轮询一次状态；流程结束即停止轮询。
   react.useEffect(() => {
-    if (!LOGIN_ACTIVE_STATES.includes(login.state) || !login.jobId) return undefined;
+    if (!LOGIN_ACTIVE_STATES.includes(login.state)) return undefined;
     let alive = true;
     let timer = null;
+    let failures = 0;
     const poll = async () => {
       try {
-        const value = await client.invoke({ op: 'loginStatus' });
+        // If the start response was lost, recover the host job and account snapshot together.
+        const value = await client.invoke({ op: login.jobId ? 'loginStatus' : 'read' });
         if (!alive) return;
-        const next = normalizeLogin(value);
+        const next = normalizeLogin(login.jobId ? value : value.login);
+        if (!login.jobId) {
+          applySnapshot(value);
+          if (next.state === 'idle') setNotice({ ok: false, text: '连接已恢复，未检测到进行中的登录，请重新发起。' });
+        }
+        failures = 0;
         setLogin(next);
         if (LOGIN_ACTIVE_STATES.includes(next.state)) timer = setTimeout(poll, LOGIN_POLL_MS);
       } catch (error) {
         if (!alive) return;
-        setLogin((previous) => ({ ...previous, state: 'error', message: describeError(error) }));
+        // A transport failure does not mean the host login stopped: retain cancellation and the write lock.
+        setLogin((previous) => ({ ...previous, message: `暂时无法查询登录进度：${describeError(error)}。将自动重试，${previous.jobId ? '仍可取消登录' : '同步状态后可取消登录'}。` }));
+        timer = setTimeout(poll, Math.min(10000, ++failures * 2000));
       }
     };
     timer = setTimeout(poll, LOGIN_POLL_MS);
     return () => { alive = false; if (timer) clearTimeout(timer); };
-  }, [client, login.jobId, login.state]);
+  }, [client, login.jobId, login.state, applySnapshot]);
 
   // 登录成功后刷新一次整页状态。
   react.useEffect(() => {
     if (login.state !== 'success') return;
-    if (handledLoginRef.current === login.jobId) return;
-    handledLoginRef.current = login.jobId;
+    const identity = `${login.accountId ?? ''}:${login.jobId ?? ''}`;
+    if (handledLoginRef.current === identity) return;
+    handledLoginRef.current = identity;
+    // 同一账号重新登录也可能换了官方身份；失效所有额度及在途旧响应。
+    quotaEpochRef.current += 1;
+    setQuotaBusy({});
+    setQuotas({});
     void refresh();
-  }, [login.state, login.jobId, refresh]);
+  }, [login.state, login.accountId, login.jobId, refresh]);
 
   const openNew = () => {
     setEditor({ mode: 'new', id: null, draft: emptyDraft() });
@@ -1355,7 +1565,7 @@ function VolcengineProviderSection({ client }) {
   };
 
   const openEdit = (account) => {
-    setEditor({ mode: 'edit', id: account.id, draft: draftFromAccount(account) });
+    setEditor({ mode: 'edit', id: account.id, authMode: account.authMode, draft: draftFromAccount(account) });
     setNotice(null);
   };
 
@@ -1369,12 +1579,21 @@ function VolcengineProviderSection({ client }) {
   };
 
   const busyAccount = busy !== null;
+  const loginActive = LOGIN_ACTIVE_STATES.includes(login.state);
+  const planBusy = busy ?? (loginActive ? 'login-active' : null);
 
   return h('div', { style: style.root },
     h('header', null,
-      h('h2', { style: style.title }, '火山方舟 Provider'),
-      h('p', { style: style.muted }, '管理火山方舟 Agent 套餐与编程套餐的账号、模型目录与额度。页面只保存凭据引用名。')),
-    loadError ? h('p', { role: 'alert', style: style.error }, `读取状态失败：${loadError}`) : null,
+      h('div', { style: { ...style.row, justifyContent: 'space-between' } },
+        h('h2', { style: style.title }, '火山方舟 Provider'),
+        h('button', { type: 'button', style: style.btn, disabled: busyAccount || loading, onClick: () => { void refresh(); } }, loading ? '正在刷新状态…' : '刷新状态')),
+      h('p', { style: style.muted }, '登录或添加账号，再为 Agent 套餐与编程套餐分别选择账号、管理模型并查看额度。')),
+    loading && snapshot ? h('p', { role: 'status', style: style.muted }, '正在更新账号与套餐状态…') : null,
+    busy ? h('p', { role: 'status', 'aria-live': 'polite', style: style.muted }, busyMessage(busy)) : null,
+    loginActive ? h('p', { role: 'status', style: style.muted }, '登录期间暂不能修改账号与套餐，请完成登录或取消后继续。') : null,
+    loadError ? h('div', null,
+      h('p', { role: 'alert', style: style.error }, `读取状态失败：${loadError}`),
+      h('button', { type: 'button', style: style.btn, disabled: busyAccount || loading, onClick: () => { void refresh(); } }, '重试读取状态')) : null,
     snapshot?.routingError ? h('p', { role: 'alert', style: style.error }, describeError(snapshot.routingError)) : null,
     notice
       ? h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
@@ -1384,20 +1603,8 @@ function VolcengineProviderSection({ client }) {
           : null)
       : null,
     !snapshot
-      ? h('p', { style: style.muted }, '正在读取方舟账号状态…')
+      ? (loading ? h('p', { role: 'status', style: style.muted }, '正在读取方舟账号状态…') : null)
       : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 16 } },
-        h(PlanCard, {
-          plan: 'agent-plan', snapshot, rawQuota: quotas['agent-plan'], busy,
-          onSelect: selectAccount, onModels: pullModels, onQuota: pullQuota,
-          onToggleProvider: toggleProvider, onToggleModel: toggleModel,
-          onSaveModelSettings: saveModelSettings, onResetModelSettings: resetModelSettings
-        }),
-        h(PlanCard, {
-          plan: 'coding-plan', snapshot, rawQuota: quotas['coding-plan'], busy,
-          onSelect: selectAccount, onModels: pullModels, onQuota: pullQuota,
-          onToggleProvider: toggleProvider, onToggleModel: toggleModel,
-          onSaveModelSettings: saveModelSettings, onResetModelSettings: resetModelSettings
-        }),
         h(AccountPanel, {
           snapshot, editor, confirmDelete, loginConfirm, login, busy,
           onNew: openNew, onEdit: openEdit, onCancelEdit: () => setEditor(null),
@@ -1406,9 +1613,22 @@ function VolcengineProviderSection({ client }) {
           onConfirmDelete: (accountId) => { void removeAccount(accountId); },
           onCancelDelete: () => setConfirmDelete(null),
           onRequestLogin: requestLogin,
+          onUsePlan: usePlan,
           onConfirmLogin: confirmLogin,
           onCancelLoginConfirm: () => setLoginConfirm(null),
           onCancelLogin: () => { void cancelLogin(); }
+        }),
+        h(PlanCard, {
+          plan: 'agent-plan', snapshot, rawQuota: quotas['agent-plan'], busy: planBusy, quotaBusy: Boolean(quotaBusy['agent-plan']),
+          onSelect: selectAccount, onModels: pullModels, onQuota: pullQuota,
+          onToggleProvider: toggleProvider, onToggleModel: toggleModel,
+          onSaveModelSettings: saveModelSettings, onResetModelSettings: resetModelSettings
+        }),
+        h(PlanCard, {
+          plan: 'coding-plan', snapshot, rawQuota: quotas['coding-plan'], busy: planBusy, quotaBusy: Boolean(quotaBusy['coding-plan']),
+          onSelect: selectAccount, onModels: pullModels, onQuota: pullQuota,
+          onToggleProvider: toggleProvider, onToggleModel: toggleModel,
+          onSaveModelSettings: saveModelSettings, onResetModelSettings: resetModelSettings
         })));
 }
 

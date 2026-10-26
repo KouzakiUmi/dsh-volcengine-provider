@@ -100,6 +100,7 @@ async function setup({
 		{ type: 'coding-plan', name: 'coding-profile' }
 	],
 	models = () => ({ plan: 'agent-plan', models: [{ model_id: 'agent-model', output_name: 'agent-model' }] }),
+	identity = { logged_in: true },
 	apiKey = () => 'FAKE-INFERENCE-KEY',
 	responder = defaultResponder
 } = {}) {
@@ -116,7 +117,7 @@ async function setup({
 		home,
 		async whoami() {
 			cliCalls.push(['whoami', owner.id]);
-			return { logged_in: true };
+			return identity;
 		},
 		async status() {
 			cliCalls.push(['status', owner.id]);
@@ -349,6 +350,19 @@ test('quota 缓存命中，force 才重新请求', async () => {
 	assert.equal(fetchCalls.length, 1, '第二次应命中缓存');
 	await controller.invoke({ op: 'quota', plan: 'coding-plan', accountId: 'default', force: true });
 	assert.equal(fetchCalls.length, 2, 'force 应重新请求');
+});
+
+test('force 额度刷新失败后不得回退到此前成功缓存', async () => {
+	let broken = false;
+	const { controller, fetchCalls } = await setup({ responder: url => {
+		if (broken) throw new Error('network');
+		return defaultResponder(url);
+	} });
+	assert.equal((await controller.quota('coding-plan', 'default', false)).state, 'ok');
+	broken = true;
+	assert.equal((await controller.quota('coding-plan', 'default', true)).state, 'error');
+	assert.equal((await controller.quota('coding-plan', 'default', false)).state, 'error');
+	assert.equal(fetchCalls.length, 3);
 });
 
 test('quota 缓存按账号与订阅隔离', async () => {

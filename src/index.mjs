@@ -152,6 +152,13 @@ export function apply(ctx, config) {
         if (registration) registration.replace(staged.routes);
         else if (staged.routes.length) registration = ctx.llm.registerAdapter(staged.routes, managedAdapter);
       } catch (error) { currentGeneration = previous; throw error; }
+      controller.appliedAccounts = Object.fromEntries(PLANS.map(plan => {
+        const owner = state.accounts.find(a => a.id === state.active[plan]);
+        const identity = owner && state.oauth[owner.id]?.identity;
+        return [plan, owner && staged.routes.includes(ROUTES[plan])
+          ? { id: owner.id, displayName: identity?.name || (identity?.accountId ? `方舟账号 ${identity.accountId}` : owner.label) }
+          : null];
+      }));
       controller.routingError = undefined;
     } catch {
       if (nextGeneration) await nextGeneration.lease.dispose(); else await nextFork.dispose();

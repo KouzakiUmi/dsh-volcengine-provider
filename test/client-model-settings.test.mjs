@@ -68,6 +68,7 @@ function createMiniReact() {
     const instance = current;
     const index = instance.index++;
     if (depsChanged(instance, index, deps)) instance.callbacks[index] = fn;
+    instance.deps[index] = deps ? [...deps] : undefined;
     return instance.callbacks[index];
   }
 
@@ -75,6 +76,7 @@ function createMiniReact() {
     const instance = current;
     const index = instance.index++;
     if (!depsChanged(instance, index, deps)) return;
+    instance.deps[index] = deps ? [...deps] : undefined;
     const previous = instance.cleanups[index];
     if (typeof previous === 'function') previous();
     pendingEffects.push(() => { instance.cleanups[index] = fn(); });
@@ -580,11 +582,11 @@ test('旧目录没有 models 明细时安全降级，不报错也没有模型开
 test('模型列表可折叠，展开后仍可操作单个模型', async () => {
   const harness = createHarness();
   await harness.flush();
-  const details = harness.find(harness.tree, (node) => node.type === 'details')[0];
+  const details = harness.find(harness.tree, (node) => node.type === 'details' && String(node.props.children?.[0]?.props.children).startsWith('模型列表'))[0];
   assert.ok(details, '缺少模型列表容器');
   assert.equal(details.props.open, false, '默认折叠');
   await harness.clicks(details.props.children[0]);
-  const opened = harness.find(harness.tree, (node) => node.type === 'details')[0];
+  const opened = harness.find(harness.tree, (node) => node.type === 'details' && String(node.props.children?.[0]?.props.children).startsWith('模型列表'))[0];
   assert.equal(opened.props.open, true, '展开后应处于展开状态');
   assert.ok(harness.byLabel('button', '模型参数 doubao-seed-2-1-pro-260915'), '展开后应有参数入口');
   harness.dispose();
@@ -614,6 +616,30 @@ test('预算模式下 off 只能是 null，非法值不发 RPC', async () => {
   assert.ok(!harness.backend.calls.some((item) => item.op === 'saveModelSettings'), '非法 off 映射不应发起 saveModelSettings');
   assert.match(harness.joined(), /预算模式下 off 档位只能为空值/);
   harness.dispose();
+});
+
+test('自定义思考映射切回继承时只显示目录档位并清除不兼容默认档位', async t => {
+  const backend = new FakeBackend();
+  backend.modelSettings['default:agent-plan:ark-code-latest'] = { reasoningEfforts: { high: 'high' }, defaultReasoning: 'high' };
+  const harness = createHarness({ backend }); t.after(() => harness.dispose()); await harness.flush();
+  await harness.clicks(harness.byLabel('button', '模型参数 ark-code-latest'));
+  await harness.change(harness.byLabel('select', '思考档位映射 reasoningEfforts'), 'inherit');
+  const select = harness.byLabel('select', '默认思考档位 defaultReasoning');
+  assert.equal(select.props.value, 'inherit');
+  const options = harness.find(select, node => node.type === 'option').map(node => node.props.value);
+  assert.ok(options.includes('low')); assert.ok(!options.includes('high'));
+  await harness.clicks(harness.find(harness.tree, node => node.type === 'button' && node.props.children === '保存参数')[0]);
+  assert.deepEqual(backend.calls.find(call => call.op === 'saveModelSettings').settings, {});
+});
+
+test('路由失败时保存的模型配置不得称为生效值，恢复停用模型明确会启用', async t => {
+  const backend = new FakeBackend(); const read = backend.readShape.bind(backend);
+  backend.readShape = () => ({ ...read(), routingError: '模型路由更新失败' });
+  backend.modelEnabled['default:agent-plan:ark-code-latest'] = false;
+  const harness = createHarness({ backend }); t.after(() => harness.dispose()); await harness.flush();
+  assert.match(harness.joined(), /已保存配置（路由尚未生效）/);
+  assert.doesNotMatch(harness.joined(), /生效值：/);
+  assert.match(harness.joined(), /恢复默认并启用/);
 });
 
 test('停用的模型仍可编辑参数，且参数负载不改动启用状态', async () => {

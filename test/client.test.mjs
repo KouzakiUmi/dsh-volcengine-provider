@@ -69,6 +69,7 @@ function createMiniReact() {
     const instance = current;
     const index = instance.index++;
     if (depsChanged(instance, index, deps)) instance.callbacks[index] = fn;
+    instance.deps[index] = deps ? [...deps] : undefined;
     return instance.callbacks[index];
   }
 
@@ -76,6 +77,7 @@ function createMiniReact() {
     const instance = current;
     const index = instance.index++;
     if (!depsChanged(instance, index, deps)) return;
+    instance.deps[index] = deps ? [...deps] : undefined;
     const previous = instance.cleanups[index];
     if (typeof previous === 'function') previous();
     pendingEffects.push(() => { instance.cleanups[index] = fn(); });
@@ -171,12 +173,13 @@ class FakeBackend {
     this.calls = [];
     this.revision = 'rev-1';
     this.accounts = [{
-      id: 'default', label: '现有方舟账号',
+      id: 'default', label: '现有方舟账号', cliProfile: 'fixture-profile',
       apiKeyRefs: { 'agent-plan': 'ARKCLI_AGENT_PLAN_API_KEY', 'coding-plan': 'ARKCLI_CODING_PLAN_API_KEY' },
       accessKeyRef: 'VOLC_ACCESSKEY', secretKeyRef: 'VOLC_SECRETKEY',
       hasApiKeys: { 'agent-plan': true, 'coding-plan': true }, hasQuotaKeys: true, authMode: 'references'
     }];
     this.active = { 'agent-plan': 'default', 'coding-plan': 'default' };
+    this.enabled = { 'agent-plan': true, 'coding-plan': true };
     this.catalogs = [];
     this.login = { jobId: null, state: 'idle', message: '' };
     this.quotaMode = 'ok';
@@ -191,6 +194,7 @@ class FakeBackend {
       revision: this.revision,
       accounts: this.accounts.map((account) => ({ ...account })),
       active: { ...this.active },
+      enabled: { ...this.enabled },
       catalogs: this.accounts.flatMap((account) => ['agent-plan', 'coding-plan'].map((plan) => {
         const cached = this.catalogs.find((entry) => entry.accountId === account.id && entry.plan === plan);
         return {
@@ -231,6 +235,7 @@ class FakeBackend {
           }
         };
       case 'startLogin':
+        if (request.revision !== this.revision) return { ok: false, error: new Error('设置已改变，请刷新后重试') };
         this.login = { jobId: 'job-1', accountId: request.accountId, state: 'launching', message: '正在启动 ArkCli 官方 OAuth 登录窗口' };
         return { ok: true, value: { ...this.login } };
       case 'models':
@@ -244,7 +249,7 @@ class FakeBackend {
         this.accounts = [...this.accounts.filter((account) => account.id !== owner.id), {
           ...owner,
           hasApiKeys: { 'agent-plan': !!owner.apiKeyRefs['agent-plan'], 'coding-plan': !!owner.apiKeyRefs['coding-plan'] },
-          hasQuotaKeys: true, authMode: 'oauth'
+          hasQuotaKeys: Boolean(owner.accessKeyRef && owner.secretKeyRef), authMode: 'references'
         }];
         this.bump();
         return { ok: true, value: this.readShape() };
@@ -252,6 +257,11 @@ class FakeBackend {
       case 'removeAccount':
         if (request.revision !== this.revision) return { ok: false, error: new Error('设置已改变，请刷新后重试') };
         this.accounts = this.accounts.filter((account) => account.id !== request.accountId);
+        this.bump();
+        return { ok: true, value: this.readShape() };
+      case 'setProviderEnabled':
+        if (request.revision !== this.revision) return { ok: false, error: new Error('设置已改变，请刷新后重试') };
+        this.enabled[request.plan] = request.enabled;
         this.bump();
         return { ok: true, value: this.readShape() };
       case 'select':
@@ -342,6 +352,7 @@ function createHarness(options = {}) {
   const click = async (text) => {
     const button = buttonByText(text);
     assert.ok(button, `找不到按钮：${text}`);
+    assert.ok(!button.props.disabled, `按钮已禁用，真实用户不能点击：${text}`);
     button.props.onClick();
     await flush();
   };
@@ -453,17 +464,24 @@ test('额度 no-key：先显示后端原因，并提示网页登录出路', asyn
 test('网页登录：确认前不发起、确认后发起、轮询进度、成功后刷新', async () => {
   const harness = createHarness();
   await harness.flush();
+  await harness.click('刷新额度');
+  assert.match(harness.joined(), /剩余 87\.5%/);
   await harness.click('网页登录');
   const text = harness.joined();
   assert.match(text, /本插件为该账号准备的隔离目录/);
   assert.match(text, /不会改变你原有 CLI 的默认身份/);
   assert.match(text, /不会删除已经保存的凭据/);
-  assert.match(text, /即使还没有 AK\/SK/);
+  assert.match(text, /无需另外填写 AK\/SK/);
   assert.ok(!harness.backend.calls.some((call) => call.op === 'startLogin'), '确认前不应发起 startLogin');
 
   await harness.click('确认并打开官方登录页');
   assert.ok(harness.backend.calls.some((call) => call.op === 'startLogin'));
   assert.match(harness.joined(), /正在启动官方登录窗口/);
+  assert.match(harness.joined(), /登录期间暂不能修改账号与套餐/);
+  assert.equal(harness.buttonByText('编辑').props.disabled, true);
+  assert.equal(harness.buttonByText('删除').props.disabled, true);
+  assert.equal(harness.selects()[0].props.disabled, true);
+  assert.equal(harness.buttonByText('取消登录').props.disabled, false, '取消入口必须保持可用');
 
   harness.backend.login = { jobId: 'job-1', accountId: 'default', state: 'waiting', message: '请在 ArkCli 打开的官方网页完成授权' };
   await tick(1200);
@@ -474,10 +492,17 @@ test('网页登录：确认前不发起、确认后发起、轮询进度、成�
 
   const readsBefore = harness.backend.calls.filter((call) => call.op === 'read').length;
   harness.backend.login = { jobId: 'job-1', accountId: 'default', state: 'success', message: 'OAuth 登录已完成' };
+  harness.backend.accounts[0] = { ...harness.backend.accounts[0], displayName: '刚登录的官方账号', authMode: 'oauth',
+    identity: { name: '刚登录的官方账号', accountId: 'official-new' },
+    oauthProfiles: { 'agent-plan': 'agent-new' }, hasQuotaAccess: { 'agent-plan': true, 'coding-plan': false } };
   await tick(1200);
   await harness.flush();
   assert.match(harness.joined(), /登录成功，凭据已保存。/);
-  assert.ok(harness.backend.calls.filter((call) => call.op === 'read').length > readsBefore, '登录成功后未刷新 read');
+  assert.equal(harness.backend.calls.filter((call) => call.op === 'read').length, readsBefore + 1, '登录成功后应刷新一次 read');
+  assert.match(harness.joined(), /当前账号：刚登录的官方账号/);
+  assert.doesNotMatch(harness.joined(), /剩余 87\.5%/, '同账号重新登录必须清理旧身份的额度');
+  await harness.flush();
+  assert.equal(harness.backend.calls.filter((call) => call.op === 'read').length, readsBefore + 1, '成功后的普通渲染不能反复 read');
   harness.dispose();
 });
 
@@ -512,6 +537,24 @@ test('授权链接安全：白名单原样透传，其余一律不渲染，消�
     assert.equal(harness.anchors().length, 0, `不合规链接不应渲染：${bad}`);
   }
   harness.dispose();
+});
+
+test('官方登录地址允许精确北京 region 前缀，拒绝其他区域或附加路径', async () => {
+  for (const [url, allowed] of [
+    ['https://ark.volcengine.com/arkcli/login?state=abc', true],
+    ['https://ark.volcengine.com/region:cn-beijing/arkcli/login?state=abc', true],
+    ['https://ark.volcengine.com/region:other/arkcli/login', false],
+    ['https://ark.volcengine.com/region:cn-beijing/arkcli/login/other', false],
+    ['https://ark.volcengine.com/region:cn-beijing/evil', false]
+  ]) {
+    const backend = new FakeBackend();
+    backend.login = { jobId: null, accountId: 'default', state: 'idle', url };
+    const harness = createHarness({ backend });
+    await harness.flush();
+    assert.equal(harness.anchors().length, allowed ? 1 : 0, url);
+    if (allowed) assert.equal(harness.anchors()[0].props.href, url, '放行的地址必须原样透传');
+    harness.dispose();
+  }
 });
 
 test('账号新增：AK/SK 可留空；删除需要二次确认', async () => {
@@ -576,6 +619,297 @@ test('构建脚本漂移守卫：测试用的文本变换必须与 scripts/build
   assert.match(build, /replace\(\/\^export \/gm, ''\)/, '构建的去 export 变换变了，测试需同步');
   assert.match(build, /return \{name,inject,apply\};/, '构建的导出形状变了，测试需同步');
   assert.match(build, /src\/remote\.mjs[\s\S]*src\/client\.js/, '构建的内联顺序变了，测试需同步');
+});
+
+test('官方身份优先、本地备注独立，OAuth 按套餐展示绑定与额度访问能力', async () => {
+  const backend = new FakeBackend();
+  backend.accounts = [{
+    id: 'default', label: '默认账号', displayName: '官方小明', authMode: 'oauth',
+    identity: { name: '官方小明', userId: 'user-123', accountId: 'account-456' },
+    loggedAt: '2026-10-26T12:00:00Z', oauthProfiles: { 'agent-plan': 'agent-personal' },
+    hasApiKeys: {}, hasQuotaKeys: false, credentialError: '凭据服务不可用 token=hidden-secret',
+    hasQuotaAccess: { 'agent-plan': true, 'coding-plan': false }
+  }];
+  const harness = createHarness({ backend });
+  await harness.flush();
+  const text = harness.joined();
+  assert.match(text, /当前账号：官方小明/);
+  assert.match(text, /本地备注：默认账号/);
+  assert.match(text, /官方账号 ID：account-456/);
+  assert.match(text, /官方用户 ID：user-123/);
+  assert.match(text, /最近登录：/);
+  assert.match(text, /Agent套餐：当前使用 · 已绑定/);
+  assert.match(text, /编程套餐：当前使用 · 未绑定/);
+  assert.match(text, /额度鉴权：OAuth 已就绪/);
+  assert.match(text, /套餐绑定：未绑定/);
+  assert.doesNotMatch(text, /AK 引用：|SK 引用：|推理引用：|缺少 AK\/SK|模型调用会失败|没有可用的额度鉴权/);
+  assert.match(String(harness.selects()[0].props.children[1][0].props.children), /官方小明 · 备注：默认账号/);
+  assert.match(text, /凭据状态：凭据服务不可用 token=\[REDACTED\]/);
+  assert.doesNotMatch(text, /hidden-secret/);
+  await harness.click('编辑');
+  assert.match(harness.joined(), /此账号当前使用 OAuth，编辑引用不会切换鉴权方式/);
+  harness.dispose();
+});
+
+test('额度空值不伪造 100%，仅有效百分比提供可访问进度与更新时间', async () => {
+  const backend = new FakeBackend();
+  const original = backend.handle.bind(backend);
+  backend.handle = (request) => request.op === 'quota' ? { ok: true, value: {
+    accountId: request.accountId, plan: request.plan, state: 'ok', updatedAt: '2026-10-26T12:00:00Z',
+    windows: [
+      { kind: '5h', percent: null, detail: { used: null, limit: 100, unit: 'AFP' } },
+      { kind: 'week' }, { kind: 'month', percent: '', detail: { used: 0, limit: 10, unit: 'AFP' } },
+      { kind: 'day', percent: 0 }
+    ]
+  } } : original(request);
+  const harness = createHarness({ backend });
+  await harness.flush();
+  await harness.click('刷新额度');
+  const text = harness.joined();
+  assert.equal((text.match(/剩余 100%/g) || []).length, 1, '只有真实的零用量可显示剩余100%');
+  assert.doesNotMatch(text, /已用 null/);
+  assert.match(text, /已用 0 \/ 10 AFP/);
+  assert.match(text, /额度数据暂不可用/);
+  assert.match(text, /额度更新时间：/);
+  const progress = harness.find(harness.tree, (node) => node.type === 'progress');
+  assert.equal(progress.length, 1);
+  assert.equal(progress[0].props.value, 100);
+  assert.equal(progress[0].props['aria-label'], '每日剩余额度');
+  assert.equal(progress[0].props['aria-valuetext'], '剩余 100%');
+  harness.dispose();
+});
+
+test('首次读取失败停止加载提示，重试可恢复且普通重渲染不重复 read', async () => {
+  const backend = new FakeBackend();
+  const original = backend.handle.bind(backend);
+  let fail = true;
+  backend.handle = (request) => {
+    if (request.op === 'read' && fail) return { ok: false, error: '读取暂不可用' };
+    return original(request);
+  };
+  const harness = createHarness({ backend });
+  await harness.flush();
+  assert.match(harness.joined(), /读取状态失败：读取暂不可用/);
+  assert.doesNotMatch(harness.joined(), /正在读取方舟账号状态/);
+  fail = false;
+  await harness.click('重试读取状态');
+  assert.match(harness.joined(), /现有方舟账号/);
+  assert.doesNotMatch(harness.joined(), /读取状态失败/);
+  const reads = backend.calls.filter((request) => request.op === 'read').length;
+  await harness.flush();
+  await harness.flush();
+  assert.equal(backend.calls.filter((request) => request.op === 'read').length, reads);
+  harness.dispose();
+});
+
+test('额度请求展示具体忙态，失败后可直接重试', async () => {
+  const backend = new FakeBackend();
+  const original = backend.handle.bind(backend);
+  let resolveQuota;
+  let delayed = true;
+  backend.handle = (request) => request.op === 'quota' && delayed
+    ? new Promise((resolve) => { resolveQuota = resolve; }) : original(request);
+  const harness = createHarness({ backend });
+  await harness.flush();
+  await harness.click('刷新额度');
+  assert.match(harness.joined(), /正在查询火山方舟 · Agent 套餐的额度/);
+  assert.match(harness.joined(), /正在刷新额度/);
+  assert.equal(harness.buttonByText('正在刷新额度').props.disabled, true);
+  assert.equal(harness.buttonByText('编辑').props.disabled, false, '只读额度请求不能锁住账号管理');
+  assert.equal(harness.selects()[0].props.disabled, false, '额度请求期间仍可切换账号');
+  resolveQuota({ ok: false, error: '暂时不可用' });
+  await harness.flush();
+  assert.match(harness.joined(), /额度查询失败：暂时不可用/);
+  assert.ok(harness.buttonByText('重试额度查询'));
+  delayed = false;
+  await harness.click('重试额度查询');
+  assert.match(harness.joined(), /剩余 87\.5%/);
+  assert.doesNotMatch(harness.joined(), /额度查询失败/);
+  harness.dispose();
+});
+
+test('保存已落盘但路由失败后重新读取，区分所选与实际生效账号', async () => {
+  const backend = new FakeBackend();
+  const original = backend.handle.bind(backend);
+  let routingError = null;
+  backend.handle = (request) => {
+    if (request.op === 'saveAccount') {
+      original(request);
+      routingError = '路由校验失败';
+      return { ok: false, error: routingError };
+    }
+    const response = original(request);
+    if (request.op === 'read' && routingError) {
+      response.value.routingError = routingError;
+      response.value.appliedAccounts = {
+        'agent-plan': { id: 'previous', displayName: '原官方账号' }, 'coding-plan': null
+      };
+    }
+    return response;
+  };
+  const harness = createHarness({ backend });
+  await harness.flush();
+  await harness.click('编辑');
+  harness.textInputs()[1].props.onChange({ target: { value: '已保存的新备注' } });
+  await harness.flush();
+  const reads = backend.calls.filter((request) => request.op === 'read').length;
+  await harness.click('保存');
+  assert.ok(backend.calls.filter((request) => request.op === 'read').length > reads);
+  assert.match(harness.joined(), /所选账号：已保存的新备注/);
+  assert.match(harness.joined(), /实际生效账号：原官方账号（previous）/);
+  assert.match(harness.joined(), /该套餐当前没有已生效的模型路由/);
+  assert.doesNotMatch(harness.joined(), /本次操作没有生效/);
+  harness.dispose();
+});
+
+test('空账号可直接网页登录，确认前不写入，确认后自动创建且使用新 revision', async t => {
+  const backend = new FakeBackend(); backend.accounts = []; backend.active = { 'agent-plan': null, 'coding-plan': null };
+  const h = createHarness({ backend }); t.after(() => h.dispose()); await h.flush();
+  assert.ok(h.buttonByText('网页登录'));
+  await h.click('网页登录');
+  assert.equal(backend.calls.some(c => ['saveAccount', 'startLogin'].includes(c.op)), false);
+  await h.click('取消');
+  assert.equal(backend.accounts.length, 0);
+  await h.click('网页登录'); await h.click('确认并打开官方登录页');
+  assert.equal(backend.accounts.length, 1);
+  const start = backend.calls.find(c => c.op === 'startLogin');
+  assert.equal(start.accountId, backend.accounts[0].id);
+  assert.equal(start.revision, backend.revision);
+  assert.deepEqual(backend.accounts[0].apiKeyRefs, {});
+  assert.ok(h.buttonByText('取消登录'));
+});
+
+test('额度请求期间切换账号立即解锁查询且迟到响应不会覆盖新账号', async t => {
+  const backend = new FakeBackend(); backend.accounts.push({ ...backend.accounts[0], id: 'second', label: '第二账号' });
+  const handle = backend.handle.bind(backend); const pending = new Map();
+  backend.handle = request => request.op === 'quota' ? new Promise(resolve => pending.set(request.accountId, resolve)) : handle(request);
+  const h = createHarness({ backend }); t.after(() => h.dispose()); await h.flush();
+  await h.click('刷新额度');
+  h.selects()[0].props.onChange({ target: { value: 'second' } }); await h.flush();
+  await h.click('刷新额度');
+  pending.get('second')({ ok: true, value: { plan: 'agent-plan', accountId: 'second', state: 'ok', windows: [{ kind: '5h', percent: 60 }] } }); await h.flush();
+  pending.get('default')({ ok: true, value: { plan: 'agent-plan', accountId: 'default', state: 'ok', windows: [{ kind: '5h', percent: 99 }] } }); await h.flush();
+  assert.match(h.joined(), /剩余 40%/); assert.doesNotMatch(h.joined(), /剩余 1%/);
+});
+
+test('已有账号可登录其他身份，不覆盖原账号或套餐选择', async t => {
+  const h = createHarness(); t.after(() => h.dispose()); await h.flush();
+  const old = JSON.stringify(h.backend.accounts[0]);
+  await h.click('登录其他账号'); await h.click('确认并打开官方登录页');
+  assert.equal(h.backend.accounts.length, 2);
+  assert.equal(JSON.stringify(h.backend.accounts[0]), old);
+  assert.equal(h.backend.active['agent-plan'], 'default');
+  assert.equal(h.backend.calls.find(c => c.op === 'startLogin').accountId, 'account-1');
+});
+
+test('登录启动冲突会同步状态，下一次登录使用最新 revision', async t => {
+  const h = createHarness(); t.after(() => h.dispose()); await h.flush(); h.backend.bump();
+  await h.click('网页登录'); await h.click('确认并打开官方登录页');
+  assert.equal(h.backend.login.state, 'idle');
+  assert.match(h.joined(), /别处被改动/);
+  await h.click('网页登录'); await h.click('确认并打开官方登录页');
+  assert.equal(h.backend.login.state, 'launching');
+});
+
+test('登录启动响应丢失时读回正在运行的任务，不误报失败或重复启动', async t => {
+  const backend = new FakeBackend(); const handle = backend.handle.bind(backend);
+  backend.handle = request => {
+    const result = handle(request);
+    if (request.op === 'startLogin') return { ok: false, error: new Error('响应丢失') };
+    return result;
+  };
+  const h = createHarness({ backend }); t.after(() => h.dispose()); await h.flush();
+  await h.click('网页登录'); await h.click('确认并打开官方登录页');
+  assert.match(h.joined(), /检测到登录仍在进行/);
+  assert.doesNotMatch(h.joined(), /启动登录失败/);
+  assert.ok(h.buttonByText('取消登录'));
+  assert.equal(backend.calls.filter(c => c.op === 'startLogin').length, 1);
+});
+
+for (const hostStarted of [true, false]) {
+  test(`启动及补读同时断网时保护状态，恢复后收敛到 Host ${hostStarted ? '进行中' : '无任务'}`, async t => {
+    const backend = new FakeBackend(); const handle = backend.handle.bind(backend);
+    let disconnected = false;
+    backend.handle = request => {
+      if (request.op === 'startLogin') {
+        if (hostStarted) handle(request);
+        disconnected = true;
+        return { ok: false, error: new Error('连接中断') };
+      }
+      if (disconnected && request.op === 'read') return { ok: false, error: new Error('连接仍中断') };
+      return handle(request);
+    };
+    const h = createHarness({ backend }); t.after(() => h.dispose()); await h.flush();
+    await h.click('网页登录'); await h.click('确认并打开官方登录页');
+    assert.match(h.joined(), /启动结果暂无法确认/);
+    assert.doesNotMatch(h.joined(), /启动登录失败/);
+    assert.equal(h.buttonByText('编辑').props.disabled, true);
+    assert.equal(h.buttonByText('同步状态后可取消登录').props.disabled, true);
+    await tick(1100); await h.flush();
+    assert.equal(h.buttonByText('编辑').props.disabled, true, '补读再次失败仍须保持保护');
+    disconnected = false;
+    await tick(2100); await h.flush();
+    if (hostStarted) {
+      assert.equal(h.buttonByText('取消登录').props.disabled, false);
+      assert.equal(h.buttonByText('编辑').props.disabled, true);
+      await h.click('取消登录');
+      assert.equal(backend.login.state, 'cancelled');
+    } else assert.match(h.joined(), /未检测到进行中的登录/);
+    assert.equal(h.buttonByText('编辑').props.disabled, false);
+  });
+}
+
+test('登录状态查询短暂失败保留取消入口与写锁，恢复后可完成', async t => {
+  const backend = new FakeBackend();
+  backend.login = { jobId: 'ongoing', accountId: 'default', state: 'waiting', message: '等待授权' };
+  const handle = backend.handle.bind(backend); let polls = 0;
+  backend.handle = request => {
+    if (request.op === 'loginStatus' && ++polls === 1) return { ok: false, error: new Error('临时网络错误') };
+    return handle(request);
+  };
+  const h = createHarness({ backend }); t.after(() => h.dispose()); await h.flush();
+  await new Promise(r => setTimeout(r, 1100)); await h.flush();
+  assert.match(h.joined(), /自动重试/);
+  assert.equal(h.buttonByText('取消登录').props.disabled, false);
+  assert.equal(h.buttonByText('编辑').props.disabled, true);
+  backend.login = { ...backend.login, state: 'success', message: '官方授权已完成' };
+  await new Promise(r => setTimeout(r, 2100)); await h.flush();
+  assert.match(h.joined(), /官方授权已完成/);
+  assert.equal(h.buttonByText('编辑').props.disabled, false);
+});
+
+test('删除正在编辑的账号会关闭旧表单，不留下可复活账号的保存入口', async t => {
+  const h = createHarness(); t.after(() => h.dispose()); await h.flush();
+  await h.click('编辑'); assert.ok(h.buttonByText('保存'));
+  await h.click('删除'); await h.click('确认删除');
+  assert.equal(h.backend.accounts.length, 0);
+  assert.equal(h.buttonByText('保存'), undefined);
+  assert.ok(h.buttonByText('网页登录'));
+});
+
+test('已绑定账号可显式用于套餐，同时启用且不改变另一套餐', async t => {
+  const backend = new FakeBackend(); backend.active['agent-plan'] = null; backend.enabled['agent-plan'] = false;
+  backend.accounts[0] = { ...backend.accounts[0], authMode: 'oauth', oauthProfiles: { 'agent-plan': 'agent' }, hasQuotaAccess: { 'agent-plan': true, 'coding-plan': false } };
+  const h = createHarness({ backend }); t.after(() => h.dispose()); await h.flush();
+  await h.click('用于 Agent套餐');
+  assert.equal(backend.active['agent-plan'], 'default'); assert.equal(backend.enabled['agent-plan'], true);
+  assert.equal(backend.active['coding-plan'], 'default');
+  assert.deepEqual(backend.calls.filter(c => ['select', 'setProviderEnabled'].includes(c.op)).map(c => c.op), ['select', 'setProviderEnabled']);
+});
+
+test('未绑定套餐和缺少隔离 Profile 不提供必失败的目录或额度操作', async t => {
+  const backend = new FakeBackend();
+  backend.accounts[0] = { ...backend.accounts[0], authMode: 'oauth', oauthProfiles: { 'agent-plan': 'agent' }, hasQuotaAccess: { 'agent-plan': true, 'coding-plan': false } };
+  const h = createHarness({ backend }); t.after(() => h.dispose()); await h.flush();
+  const buttons = name => h.buttons().filter(b => b.props.children === name);
+  assert.equal(buttons('拉取模型')[0].props.disabled, false);
+  assert.equal(buttons('拉取模型')[1].props.disabled, true);
+  assert.equal(buttons('刷新额度')[1].props.disabled, true);
+  assert.match(h.joined(), /确认已订阅此个人套餐/);
+  backend.accounts[0] = { ...backend.accounts[0], authMode: 'references', cliProfile: '' };
+  await h.click('刷新状态');
+  assert.equal(buttons('拉取模型')[0].props.disabled, true);
+  assert.match(h.joined(), /可使用本地模型快照/);
 });
 
 test('真实构建产物通过宿主的单参数工厂返回插件导出', () => {

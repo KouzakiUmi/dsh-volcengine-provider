@@ -1,6 +1,7 @@
 import { dirname, join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { StateStore, account, assertBudgetCompatibleEfforts, assertModelId, assertPlan, normalizeModelSettings, PLANS, ROUTES, revision } from './state.mjs';
+import { StateStore, account, assertBudgetCompatibleEfforts, assertModelId, assertPlan, normalizeModelSettings, normalizeIdentity, PLANS, ROUTES, revision } from './state.mjs';
 import { catalogStatus, effectiveModel, getModelRows, normalizeCatalog } from './catalog.mjs';
 import { ArkCli, locateCli } from './cli.mjs';
 import { ArkOAuth } from './oauth.mjs';
@@ -33,7 +34,8 @@ export class ArkController {
     this.resolveRef = resolveRef; this.cliFactory = cliFactory; this.fetchImpl = fetchImpl;
     this.life = new AbortController(); this.disposed = false; this.cache = new Map(); this.inflight = new Map();
     this.inferenceCache = new Map(); this.inferenceInflight = new Map(); this.cacheGeneration = 0;
-    this.oauth = new ArkOAuth({ spawn: spawnImpl, onSuccess: (id, rev, signal) => this.bindLogin(id, rev, signal) });
+    this.identityCache = new Map(); this.identityInflight = new Map();
+    this.oauth = new ArkOAuth({ spawn: spawnImpl, onSuccess: (id, rev, signal, homeId) => this.bindLogin(id, rev, signal, homeId) });
     this.onChange = async () => {}; this.operations = Promise.resolve();
   }
   owner(id) {
@@ -42,14 +44,16 @@ export class ArkController {
     if (!owner) throw new Error('账号不存在');
     return owner;
   }
-  async cli(owner) {
-    const home = join(dirname(this.store.path), 'accounts', owner.id);
+  async cli(owner, binding = this.store.current.oauth?.[owner.id]) {
+    const root = join(dirname(this.store.path), 'accounts', owner.id);
+    const home = binding?.homeId ? join(root, 'sessions', binding.homeId) : root;
     if (this.cliFactory) return this.cliFactory(owner, home);
     return new ArkCli({ executable: await locateCli(this.arkCliPath), home });
   }
   clearCaches() {
     this.cacheGeneration++;
     this.cache.clear(); this.inflight.clear(); this.inferenceCache.clear(); this.inferenceInflight.clear();
+    this.identityCache.clear(); this.identityInflight.clear();
   }
   async inferenceKey(owner, plan, selection = { binding: this.store.current.oauth?.[owner.id] }) {
     if (this.disposed) throw new Error('插件已卸载');
@@ -57,14 +61,14 @@ export class ArkController {
     if (binding) {
       const profile = binding.profiles[plan];
       if (!profile) return undefined; // Never borrow a different identity/key pool after OAuth binding.
-      const cacheKey = revision({ accountId: owner.id, plan, profile, loggedAt: binding.loggedAt });
+      const cacheKey = revision({ accountId: owner.id, plan, profile, loggedAt: binding.loggedAt, homeId: binding.homeId });
       const cached = this.inferenceCache.get(cacheKey);
       if (cached && Date.now() - cached.at < 30000) return cached.value;
       if (this.inferenceInflight.has(cacheKey)) return this.inferenceInflight.get(cacheKey);
       const generation = this.cacheGeneration;
       const task = (async () => {
         try {
-          const key = await (await this.cli(owner)).apiKey(profile, this.life.signal);
+          const key = await (await this.cli(owner, binding)).apiKey(profile, this.life.signal);
           if (typeof key !== 'string' || !key || /\s/.test(key) || key.length > 4096) throw new Error('ArkCli 未返回有效推理凭据');
           if (this.disposed || this.life.signal.aborted) throw new Error('插件已卸载');
           if (generation === this.cacheGeneration) this.inferenceCache.set(cacheKey, { at: Date.now(), value: key });
@@ -77,19 +81,54 @@ export class ArkController {
     const ref = owner.apiKeyRefs[plan];
     return ref ? await this.resolveRef(ref) : undefined;
   }
+  async identityFor(owner, binding) {
+    if (!binding) return undefined;
+    if (binding.identity) return normalizeIdentity(binding.identity);
+    // Older metadata discarded whoami. Recover only the public identity, without rewriting credentials.
+    const key = revision({ id: owner.id, binding });
+    if (this.identityCache.has(key)) return this.identityCache.get(key);
+    if (this.identityInflight.has(key)) return this.identityInflight.get(key);
+    const generation = this.cacheGeneration;
+    const task = (async () => {
+      await Promise.resolve();
+      try {
+        const signal = AbortSignal.any([this.life.signal, AbortSignal.timeout(3000)]);
+        const raw = await (await this.cli(owner, binding)).whoami(signal);
+        if (raw?.logged_in !== true) return undefined;
+        const identity = normalizeIdentity({ name: raw.name, userId: raw.user_id, accountId: raw.account_id });
+        if (!this.disposed && generation === this.cacheGeneration) this.identityCache.set(key, identity);
+        return identity;
+      } catch { return undefined; }
+      finally { if (this.identityInflight.get(key) === task) this.identityInflight.delete(key); }
+    })();
+    this.identityInflight.set(key, task);
+    return task;
+  }
   async read() {
     const state = this.store.current;
     if (!state) throw new Error(this.routingError || '无法读取账号元数据；原文件未覆盖');
     const accounts = await Promise.all(state.accounts.map(async owner => {
       const oauth = state.oauth[owner.id];
       const hasApiKeys = {};
-      for (const plan of PLANS) hasApiKeys[plan] = oauth ? Boolean(oauth.profiles[plan]) : Boolean(owner.apiKeyRefs[plan] && await this.resolveRef(owner.apiKeyRefs[plan]));
-      const hasQuotaKeys = oauth ? true : Boolean(owner.accessKeyRef && owner.secretKeyRef && await this.resolveRef(owner.accessKeyRef) && await this.resolveRef(owner.secretKeyRef));
-      return { ...owner, hasApiKeys, hasQuotaKeys, authMode: oauth ? 'oauth' : 'references' };
+      let credentialError = false;
+      const available = async ref => {
+        if (!ref) return false;
+        try { return Boolean(await this.resolveRef(ref)); }
+        catch { credentialError = true; return false; }
+      };
+      for (const plan of PLANS) hasApiKeys[plan] = oauth ? Boolean(oauth.profiles[plan]) : await available(owner.apiKeyRefs[plan]);
+      const hasQuotaKeys = oauth ? Object.keys(oauth.profiles).length > 0 : Boolean(await available(owner.accessKeyRef) && await available(owner.secretKeyRef));
+      const identity = await this.identityFor(owner, oauth);
+      const hasQuotaAccess = Object.fromEntries(PLANS.map(plan => [plan, oauth ? Boolean(oauth.profiles[plan]) : hasQuotaKeys]));
+      return { ...owner, displayName: identity?.name || (identity?.accountId ? `方舟账号 ${identity.accountId}` : owner.label),
+        ...(identity ? { identity } : {}), ...(oauth ? { oauthProfiles: { ...oauth.profiles }, loggedAt: oauth.loggedAt } : {}),
+        ...(credentialError ? { credentialError: '凭据服务检查失败；可编辑引用或稍后刷新重试。' } : {}),
+        hasApiKeys, hasQuotaKeys, hasQuotaAccess, authMode: oauth ? 'oauth' : 'references' };
     }));
     return {
       revision: revision(state), accounts, active: { ...state.active }, enabled: { ...state.enabled }, routes: ROUTES,
       ...(this.routingError ? { routingError: this.routingError } : {}),
+      ...(this.appliedAccounts ? { appliedAccounts: structuredClone(this.appliedAccounts) } : {}),
       catalogs: state.accounts.flatMap(a => PLANS.map(plan => {
         const status = catalogStatus(state, a.id, plan);
         const models = getModelRows(state, a.id, plan);
@@ -105,21 +144,31 @@ export class ArkController {
       })), login: this.oauth.status()
     };
   }
-  async bindLogin(id, rev, signal) {
+  async bindLogin(id, rev, signal, homeId) {
     const owner = this.owner(id);
-    const cli = await this.cli(owner);
+    const cli = await this.cli(owner, homeId ? { homeId } : undefined);
     const identity = await cli.whoami(signal);
     if (identity?.logged_in !== true) throw new Error('CLI 未确认 OAuth 登录身份');
     const profiles = planProfiles(await cli.status(signal));
     if (signal.aborted || this.disposed) throw new Error('登录已取消');
-    await this.store.mutate(rev, next => { next.oauth[id] = { profiles, loggedAt: new Date().toISOString() }; return next; }, { signal });
+    const summary = normalizeIdentity({ name: identity.name, userId: identity.user_id, accountId: identity.account_id });
+    await this.store.mutate(rev, next => {
+      next.oauth[id] = { profiles, loggedAt: new Date().toISOString(), identity: summary, ...(homeId ? { homeId } : {}) };
+      // A new login may be a different cloud identity; its old remote catalog is no longer authoritative.
+      for (const plan of PLANS) delete next.catalogs[`${id}:${plan}`];
+      return next;
+    }, { signal });
     this.clearCaches();
-    await this.onChange();
+    // Identity was already verified and committed. A routing failure is a separate, visible state.
+    try { await this.onChange(); }
+    catch { this.routingError ??= '登录身份已保存，但模型路由更新失败；此前可用路由仍保留。'; }
   }
   async quota(plan, id, force) {
     assertPlan(plan); const owner = this.owner(id);
-    const fingerprint = revision({ owner, binding: this.store.current.oauth[id] });
+    const binding = this.store.current.oauth[id];
+    const fingerprint = revision({ owner, binding });
     const key = `${id}:${plan}:${fingerprint}`;
+    if (force) this.cache.delete(key);
     const cached = this.cache.get(key);
     if (!force && cached && Date.now() - cached.at < 60000) return structuredClone(cached.value);
     if (this.inflight.has(key)) return this.inflight.get(key);
@@ -129,11 +178,10 @@ export class ArkController {
       const base = { accountId: id, plan, updatedAt: new Date().toISOString() };
       try {
         let parsed;
-        const binding = this.store.current.oauth[id];
         if (binding) {
           const profile = binding.profiles[plan];
           if (!profile) return { ...base, state: 'no-key', windows: [], error: '此 OAuth 账号未绑定该订阅' };
-          const cli = await this.cli(owner);
+          const cli = await this.cli(owner, binding);
           const action = plan === 'agent-plan' ? 'usage.get_afp_usage' : 'usage.get_coding_plan_usage';
           const raw = await cli.run(['api', action, '--params', '{}', '--profile', profile], { signal: this.life.signal });
           // Raw OpenAPI owns the AFP daily window; usage plan intentionally omits it.
@@ -159,7 +207,18 @@ export class ArkController {
     if (this.disposed) throw new Error('插件已卸载');
     if (!request || typeof request !== 'object') throw new Error('请求格式错误');
     const { op } = request;
-    if (op === 'read') return this.read();
+    if (op === 'read') {
+      const read = this.operations.then(async () => {
+        if (await this.store.refresh()) {
+          this.clearCaches();
+          try { await this.onChange(); }
+          catch { this.routingError ??= '模型路由更新失败；设置已同步，实际路由仍为此前账号。'; }
+        }
+        return this.read();
+      });
+      this.operations = read.catch(() => {});
+      return read;
+    }
     if (op === 'loginStatus') return this.oauth.status();
     if (op === 'cancelLogin') return this.oauth.cancel(request.jobId);
     if (op === 'quota') return this.quota(request.plan, request.accountId, request.force === true);
@@ -174,14 +233,18 @@ export class ArkController {
     const { op, accountId, plan } = request;
     if (op === 'startLogin') {
       this.owner(accountId);
-      const cli = await this.cli(this.owner(accountId));
-      return this.oauth.start({ accountId, executable: cli.executable, home: cli.home, revision: request.revision });
+      const homeId = randomUUID();
+      const cli = await this.cli(this.owner(accountId), { homeId });
+      return this.oauth.start({ accountId, executable: cli.executable, home: cli.home, homeId, revision: request.revision });
     }
     let catalog;
     if (op === 'models') {
       assertPlan(plan); const owner = this.owner(accountId);
-      const profile = this.store.current.oauth[accountId]?.profiles[plan] ?? owner.cliProfile;
-      if (!profile) throw new Error('请先为此账号网页登录，或填写其隔离 ArkCli profile 名称');
+      const binding = this.store.current.oauth[accountId];
+      const profile = binding ? binding.profiles[plan] : owner.cliProfile;
+      if (!profile) throw new Error(binding
+        ? '此 OAuth 账号未绑定该套餐；请确认个人套餐订阅后重新网页登录，填写其他 profile 不会切换身份'
+        : '请先为此账号网页登录，或填写其隔离 ArkCli profile 名称；也可继续使用本地模型快照');
       const cli = await this.cli(owner);
       catalog = normalizeCatalog(plan, await cli.models(plan, profile, this.life.signal));
     }

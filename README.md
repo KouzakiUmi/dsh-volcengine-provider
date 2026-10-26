@@ -24,16 +24,16 @@ dsh plugin --profile web add dsh-volcengine-provider
 
 `web` 是示例 Profile，请替换为实际目标；Desktop 使用桌面壳集成的 DSH CLI。也可从 [GitHub Actions](https://github.com/KouzakiUmi/dsh-volcengine-provider/actions/workflows/ci.yml) 或 [Releases](https://github.com/KouzakiUmi/dsh-volcengine-provider/releases) 下载插件包安装。
 
-1. 打开 **设置 → 火山方舟 Provider**，新增账号。
-2. 点击 **网页登录**，在官方 ArkCli 页面完成授权；也可填写已有凭据的引用名。
-3. 分别为 **Agent 套餐** 和 **编程套餐** 选择账号，点击 **拉取模型**、**刷新额度**。
+1. 打开 **设置 → 火山方舟 Provider**，直接点击 **网页登录**；添加另一个登录身份时点击 **登录其他账号**。
+2. 确认后在普通系统浏览器完成官方 OAuth 授权，可正常使用密码管理器。凭据引用接入则使用 **新增账号**。
+3. 在账号卡片点击 **用于 Agent套餐 / 用于 编程套餐**，或在套餐卡片分别选择账号与启停。查看模型列表，按需拉取官方目录、刷新额度。
 4. 在 DSH 模型选择器中选择对应路由，开始使用。
 
 网页登录需安装官方 [ArkCli](https://github.com/volcengine/ark-cli)。详细配置见[使用说明](docs/usage.md)。
 
 ## 功能介绍
 
-<img src="docs/client-preview.png" width="1000" alt="火山方舟 Provider 的双套餐、额度分组、账号管理和网页登录设置页">
+<img src="docs/client-journey-preview.png" width="1000" alt="火山方舟 Provider 的双套餐、额度分组、账号管理和网页登录设置页">
 
 <sub>真实组件离线预览，账号与额度为示例数据。</sub>
 

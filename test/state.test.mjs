@@ -476,6 +476,30 @@ test('mutate 丢弃闭包以外的意外改动并落盘', async () => {
 	assert.equal(store.current.accounts[0].label, '现有方舟账号');
 });
 
+test('独立 Store 不能用旧磁盘快照覆盖另一实例，刷新后可继续', async () => {
+	const dir = await tempDir();
+	const path = join(dir, 'state.json');
+	const a = new StateStore(path), b = new StateStore(path);
+	await a.load(); await b.load();
+	await a.mutate(revision(a.current), draft => { draft.accounts[0].label = '实例 A'; return draft; });
+	await assert.rejects(b.mutate(revision(b.current), draft => { draft.accounts[0].label = '过期 B'; return draft; }), /设置已改变/);
+	assert.equal((await new StateStore(path).load()).accounts[0].label, '实例 A');
+	assert.equal(await b.refresh(), true);
+	await b.mutate(revision(b.current), draft => { draft.accounts[0].label = '已同步 B'; return draft; });
+	assert.equal((await new StateStore(path).load()).accounts[0].label, '已同步 B');
+});
+
+test('独立 Store 同时写入至多一个成功且不残留锁和临时文件', async () => {
+	const dir = await tempDir();
+	const path = join(dir, 'state.json');
+	const stores = [new StateStore(path), new StateStore(path)];
+	await Promise.all(stores.map(store => store.load()));
+	const results = await Promise.allSettled(stores.map((store, index) => store.mutate(revision(store.current), draft => { draft.accounts[0].label = `实例 ${index}`; return draft; })));
+	assert.equal(results.filter(item => item.status === 'fulfilled').length, 1);
+	const { readdir } = await import('node:fs/promises');
+	assert.deepEqual((await readdir(dir)).sort(), ['state.json']);
+});
+
 // ── revision 本身的性质 ─────────────────────────────────────────────────────────
 
 test('revision 对相同内容稳定、对内容变化敏感', () => {

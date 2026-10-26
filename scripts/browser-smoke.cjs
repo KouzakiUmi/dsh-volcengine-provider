@@ -49,7 +49,14 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
       const service = { async invoke(request) {
         window.fixtureCalls.push(request.op);
         window.fixtureRequests.push(structuredClone(request));
-        if (request.op === 'setProviderEnabled') state.enabled[request.plan] = request.enabled;
+        if (request.op === 'saveAccount') {
+          if (request.revision !== state.revision) throw new Error('设置已改变，请刷新后重试');
+          state.accounts.push({ ...request.account, authMode: 'references', hasApiKeys: {}, hasQuotaAccess: {} });
+          state.catalogs = state.catalogs.map(catalog => ({ ...catalog, accountId: request.account.id }));
+          state.revision += '-a';
+        }
+        if (request.op === 'select') { state.active[request.plan] = request.accountId; state.revision += '-s'; }
+        if (request.op === 'setProviderEnabled') { state.enabled[request.plan] = request.enabled; state.revision += '-p'; }
         if (['setModelEnabled', 'saveModelSettings', 'resetModelSettings'].includes(request.op)) {
           const catalog = state.catalogs.find(row => row.plan === request.plan && row.accountId === request.accountId);
           const model = catalog.models.find(row => row.id === request.modelId);
@@ -65,11 +72,21 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
           catalog.enabledCount = catalog.models.filter(row => row.enabled).length;
         }
         let value = state;
-        if (request.op === 'quota') value = { plan: request.plan, accountId: request.accountId, state: 'ok', windows: [
+        if (request.op === 'quota') value = { plan: request.plan, accountId: request.accountId, state: 'ok', updatedAt: '2026-10-26T14:00:00Z', windows: request.plan === 'coding-plan' ? [{ kind: '5h', percent: 12.5 }, { kind: 'week', percent: 39 }, { kind: 'month', percent: 68 }] : [
           { kind: '5h', percent: 25, group: 'text', detail: { used: 250, limit: 1000, unit: 'AFP' } },
           { kind: 'month', percent: 90, group: 'all', resetsAt: '2026-11-09T15:59:59Z', detail: { used: 9000, limit: 10000, unit: 'AFP' } }
         ] };
-        if (['startLogin', 'loginStatus'].includes(request.op)) value = { jobId: 'fixture-job', state: 'waiting', accountId: 'default', message: '测试状态：未执行真实登录' };
+        if (request.op === 'startLogin') {
+          if (request.revision !== state.revision) throw new Error('设置已改变，请刷新后重试');
+          state.login = { jobId: `fixture-job-${window.fixtureCalls.length}`, state: 'waiting', accountId: request.accountId, message: '测试状态：未执行真实登录' };
+          value = state.login;
+        }
+        if (request.op === 'loginStatus') {
+          Object.assign(state.accounts.find(account => account.id === state.login.accountId), { displayName: '方舟体验账号（假数据）', identity: { name: '方舟体验账号（假数据）', accountId: 'demo-account', userId: 'demo-user' },
+            authMode: 'oauth', oauthProfiles: { 'agent-plan': 'demo-agent', 'coding-plan': 'demo-coding' }, hasQuotaAccess: { 'agent-plan': true, 'coding-plan': true }, loggedAt: '2026-10-26T14:00:00Z' });
+          state.login = { ...state.login, state: 'success', message: '身份与套餐已更新（离线测试）' };
+          value = state.login;
+        }
         return { ok: true, value: structuredClone(value) };
       } };
       const disposers = [];
@@ -99,7 +116,7 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     await providerToggle.uncheck();
     assert.equal(await page.evaluate(() => window.fixtureState.active['agent-plan']), 'default');
     await providerToggle.check();
-    await page.locator('details summary').first().click();
+    await page.getByText('模型列表（已启用 1 / 共 1）', { exact: true }).first().click();
     const modelToggle = page.getByRole('checkbox', { name: '启用模型 demo-reasoning-model', exact: true }).first();
     await modelToggle.uncheck();
     await page.getByRole('button', { name: '模型参数 demo-reasoning-model', exact: true }).first().click();
@@ -121,11 +138,42 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     await page.getByRole('button', { name: '网页登录', exact: true }).click();
     await page.getByRole('button', { name: '确认并打开官方登录页', exact: true }).waitFor();
     assert.equal((await page.evaluate(() => window.fixtureCalls)).includes('startLogin'), false);
-    fs.mkdirSync(path.dirname(screenshot), { recursive: true });
-    await page.screenshot({ path: screenshot, fullPage: true });
     await page.getByRole('button', { name: '确认并打开官方登录页', exact: true }).click();
     await page.getByText('测试状态：未执行真实登录').waitFor();
     assert.equal((await page.evaluate(() => window.fixtureCalls)).includes('startLogin'), true);
+    await page.getByText('身份与套餐已更新（离线测试）').waitFor();
+    await page.getByText('当前账号：方舟体验账号（假数据）', { exact: true }).first().waitFor();
+    assert.equal(await page.getByText('剩余 75%', { exact: true }).count(), 0, 'Login invalidates previous identity quota');
+    await page.getByRole('button', { name: '刷新额度', exact: true }).first().click();
+    await page.getByRole('button', { name: '刷新额度', exact: true }).nth(1).click();
+    await page.getByText('剩余 87.5%', { exact: true }).waitFor();
+    // Keep the preview focused on account → plan → quota rather than an open parameter form.
+    await page.getByText('模型列表（已启用 1 / 共 1）', { exact: true }).first().click();
+    fs.mkdirSync(path.dirname(screenshot), { recursive: true });
+    await page.screenshot({ path: screenshot, fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Settings must fit a narrow viewport');
+    await page.screenshot({ path: screenshot.replace(/\.png$/, '-mobile.png'), fullPage: true });
+    // Empty-account onboarding must work without a technical ID form or any official browser page.
+    await page.evaluate(() => {
+      window.fixtureState.accounts = [];
+      window.fixtureState.active = { 'agent-plan': null, 'coding-plan': null };
+      window.fixtureState.enabled = { 'agent-plan': false, 'coding-plan': false };
+      window.fixtureState.login = { jobId: null, state: 'idle', message: '' };
+    });
+    await page.getByRole('button', { name: '刷新状态', exact: true }).click();
+    await page.getByText('还没有账号。', { exact: false }).waitFor();
+    await page.screenshot({ path: screenshot.replace(/\.png$/, '-empty.png'), fullPage: true });
+    await page.getByRole('button', { name: '网页登录', exact: true }).click();
+    assert.equal(await page.evaluate(() => window.fixtureState.accounts.length), 0);
+    await page.getByRole('button', { name: '确认并打开官方登录页', exact: true }).click();
+    await page.getByText('身份与套餐已更新（离线测试）').waitFor();
+    await page.getByRole('button', { name: '用于 Agent套餐', exact: true }).click();
+    assert.equal(await page.evaluate(() => window.fixtureState.active['agent-plan']), 'account-1');
+    assert.equal(await page.evaluate(() => window.fixtureState.enabled['agent-plan']), true);
+    assert.equal(await page.evaluate(() => window.fixtureState.active['coding-plan']), null);
+    await page.getByRole('button', { name: '刷新额度', exact: true }).first().click();
+    await page.getByText('剩余 75%').waitFor();
     await page.evaluate(() => window.fixtureDispose());
     assert.deepEqual(errors, []);
     console.log('Browser smoke passed: real React/Chrome, provider/model toggles, model parameters/reset, quota grouping, login confirmation and dispose; fake RPC, HTTP(S) blocked.');
