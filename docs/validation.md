@@ -12,16 +12,16 @@
 
 ```sh
 node scripts/check.mjs
-node --test test/*.test.mjs
 node scripts/build.mjs
+node --test test/*.test.mjs
 ```
 
 - JavaScript 语法、manifest 基本字段和前后端依赖边界检查。
 - 账号、双订阅隔离、revision 冲突、目录字段/能力、缓存、签名向量、额度错误/单位、OAuth 生命周期、设置页交互及授权 URL 白名单。
 - HMAC 签名测试使用独立 OpenSSL 推导的固定向量，不只比较实现自身的两次输出。
-- 构建生成 Host 模块与惰性 CommonJS Client 工厂；不新增安装构建依赖。
+- 构建生成 Host 模块与返回导出对象的惰性 Client 工厂；不新增安装构建依赖。
 
-当前结果：**206 项 JavaScript 单元测试、7 项归档测试全部通过**，31 个 JavaScript 源文件语法/边界检查通过，构建生成 12 个运行产物。模型管理测试覆盖旧状态迁移、套餐/模型开关、逐模型参数、请求默认值及适配器生命周期；发布测试覆盖 OIDC 身份、版本与渠道、归档校验、registry 错误分类及发布后完整性检查。
+当前结果：**210 项 JavaScript 单元测试、7 项归档测试全部通过**，31 个 JavaScript 源文件语法/边界检查通过，构建生成 12 个运行产物。模型管理测试覆盖旧状态迁移、套餐/模型开关、逐模型参数、请求默认值及适配器生命周期；发布测试覆盖 OIDC 身份、版本与渠道、归档校验、registry 错误分类及发布后完整性检查。
 
 ### 实际 Core 隔离加载
 
@@ -73,3 +73,11 @@ node scripts/build.mjs
 4. 实际 OAuth 页面与回调地址由官方 CLI 生成，随 CLI 版本而定。
 
 具体命令依据见[接口文档](arkcli-contract.md)。
+
+## 0.2.1 修复验证
+
+- 单参数 factory(require) 加载实际构建产物，未提供虚假的 CommonJS 参数。
+- 覆盖空模型行、非法/重复 ID 和保留名称；坏缓存返回 invalid-cache，正常套餐不受影响。
+- 取消排队中的状态写入与登录绑定后，元数据未落盘、模型路由未更新，后续保存仍可执行。
+- 临时写入接受 AbortSignal，并在原子替换前再次检查取消状态；已完成的原子提交不会因后续取消而回滚。
+- 本机 DSH Desktop 0.2.1-rc.3 已在安装入口修复后实际启动到主界面。

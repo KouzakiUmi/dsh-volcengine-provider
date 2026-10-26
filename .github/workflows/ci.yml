@@ -33,10 +33,10 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Check JavaScript and plugin boundaries
         run: node scripts/check.mjs
-      - name: Run isolated tests
-        run: node --test test/*.test.mjs
       - name: Build plugin
         run: node scripts/build.mjs
+      - name: Run isolated tests
+        run: node --test test/*.test.mjs
 
   package:
     name: Verify plugin package

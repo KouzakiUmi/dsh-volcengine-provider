@@ -8,9 +8,9 @@ Node.js >=22.19.0；打包使用 Python >=3.9 标准库。
 
 ```sh
 node scripts/check.mjs
+node scripts/build.mjs
 node --test test/*.test.mjs
 python -m unittest discover -s test -p 'test_*.py'
-node scripts/build.mjs
 python scripts/pack.py --output-dir test-output/local-package
 python scripts/verify-package.py test-output/local-package
 ```

@@ -1,7 +1,7 @@
 {
   "name": "dsh-volcengine-provider",
   "displayName": "火山方舟 Provider",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "火山方舟 Agent Plan 与 Coding Plan：OAuth 登录、账号、模型与额度管理。",
   "repository": {"type": "git", "url": "git+https://github.com/KouzakiUmi/dsh-volcengine-provider.git"},
   "homepage": "https://github.com/KouzakiUmi/dsh-volcengine-provider#readme",
@@ -14,7 +14,7 @@
   "license": "MIT",
   "publishConfig": {"access": "public", "registry": "https://registry.npmjs.org/"},
   "engines": {"node": ">=22.19.0"},
-  "scripts": {"build": "node scripts/build.mjs", "test": "node --test test/*.test.mjs", "check": "node scripts/check.mjs && node --test test/*.test.mjs && node scripts/build.mjs"},
+  "scripts": {"build": "node scripts/build.mjs", "test": "node scripts/build.mjs && node --test test/*.test.mjs", "check": "node scripts/check.mjs && node scripts/build.mjs && node --test test/*.test.mjs"},
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.5",
     "@deepseek-ai/schemastery": "^3.18.4",

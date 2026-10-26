@@ -7,6 +7,6 @@ const modules = ['index.mjs', 'state.mjs', 'catalog.mjs', 'catalog-snapshot.json
 for (const name of modules) await copyFile(new URL(`src/${name}`, root), new URL(name, target));
 const remote = (await readFile(new URL('src/remote.mjs', root), 'utf8')).replace(/^export /gm, '');
 const client = (await readFile(new URL('src/client.js', root), 'utf8')).replace(/^export /gm, '');
-const bundle = `window.__ModuleLoader__.load({id:'dsh-volcengine-provider',factory:(require,exports,module)=>{\n'use strict';\n${remote}\n${client}\nmodule.exports={name,inject,apply};\n}});\n`;
+const bundle = `window.__ModuleLoader__.load({id:'dsh-volcengine-provider',factory:(require)=>{\n'use strict';\n${remote}\n${client}\nreturn {name,inject,apply};\n}});\n`;
 await writeFile(new URL('client.js', target), bundle);
 console.log(`Built ${modules.length + 1} files in ${fileURLToPath(target)}`);

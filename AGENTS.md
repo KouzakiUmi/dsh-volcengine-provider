@@ -19,9 +19,11 @@
 
 ## 采用方案与关键取舍
 
+- Client 构建产物注册懒加载工厂 `factory(require)`，直接返回 `{ name, inject, apply }`；宿主不传入 CommonJS 的 `module` 或 `exports`。隔离和浏览器测试使用相同的单参数调用契约。
 - Host 使用目标 Core 的 pi-ai 传输能力；Client 通过统一 RPC 调用 Host。源代码分别位于 [Host 入口](src/index.mjs) 和 [设置页](src/client.js)，共享契约位于 [RPC 定义](src/remote.mjs)。
 - 两套套餐分别保存启用状态与所选账号，关闭套餐保留账号选择；逐模型开关和参数按账号、套餐、模型隔离。账号元数据与凭据引用由 [状态模块](src/state.mjs) 管理；版本 1 状态兼容迁移为版本 2，修改采用 revision 校验与原子写入。
 - 网页登录交给官方 `arkcli auth login volc-sso`。每个账号使用隔离的 CLI home，登录完成后核验身份并绑定对应个人套餐 profile。
+- 登录绑定写入遵循取消信号，取消检查覆盖排队、临时写入及原子替换前；坏模型目录保持设置页可读，路由更新仍显式拒绝损坏数据。
 - 凭据引用模式分别使用推理 Key 与 IAM AK/SK；OAuth 模式使用隔离 CLI 身份。账号切换后清除相应缓存，防止身份串用。
 - 模型目录优先采用官方返回的 `output_name`。本地快照作为起点，未知模型使用保守能力；空目录、损坏缓存和读取错误分别处理。
 - Coding 额度沿用上游百分比单位；Agent 额度保留 AFP 绝对量并按能力范围分组。缺数据或请求失败时报告状态。
@@ -40,9 +42,9 @@
 
 ```sh
 node scripts/check.mjs
+node scripts/build.mjs
 node --test test/*.test.mjs
 python -m unittest discover -s test -p 'test_*.py'
-node scripts/build.mjs
 ```
 
 构建生成 `lib/`，源码与生成产物分开维护。归档包含运行入口、必要模型快照、用户文档与许可证。额外 Core / 浏览器验证入口见 [开发文档](docs/development.md)。

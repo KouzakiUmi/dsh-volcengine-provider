@@ -1,15 +1,28 @@
 import { readFile } from 'node:fs/promises';
-import { assertPlan, LABELS, ROUTES } from './state.mjs';
+import { assertModelId, assertPlan, LABELS, ROUTES } from './state.mjs';
 export const snapshot = JSON.parse(await readFile(new URL('./catalog-snapshot.json', import.meta.url), 'utf8'));
 const modelId = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,199}$/;
+function validateModelRows(rows) {
+	if (!Array.isArray(rows) || rows.length > 1000) throw new Error('本地模型缓存格式错误');
+	const seen = new Set();
+	for (const row of rows) {
+		if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error('本地模型缓存格式错误');
+		try { assertModelId(row.id); } catch { throw new Error('本地模型缓存包含非法 ID'); }
+		if (seen.has(row.id)) throw new Error('本地模型缓存包含重复 ID');
+		seen.add(row.id);
+	}
+	return rows;
+}
 export function normalizeCatalog(plan, response) {
 	assertPlan(plan);
 	if (response?.plan !== plan || !Array.isArray(response.models)) throw new Error('模型目录响应与所选订阅不匹配');
 	if (response.models.length > 1000) throw new Error('模型目录过大');
 	const seen = new Set();
 	const models = response.models.map(row => {
+		if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error('模型目录包含非法或重复 ID');
 		const id = row.output_name || row.model_id;
 		if (typeof id !== 'string' || !modelId.test(id) || seen.has(id)) throw new Error('模型目录包含非法或重复 ID');
+		try { assertModelId(id); } catch { throw new Error('模型目录包含非法或重复 ID'); }
 		seen.add(id);
 		const known = snapshot[plan].models.find(m => m.id === id || m.id === row.model_id);
 		return {
@@ -21,10 +34,9 @@ export function normalizeCatalog(plan, response) {
 	return { models, source: 'arkcli', updatedAt: new Date().toISOString() };
 }
 export function usableModels(catalog, plan) {
+	assertPlan(plan);
 	const rows = catalog === undefined || catalog === null ? snapshot[plan].models : catalog.models;
-	if (!Array.isArray(rows)) throw new Error('本地模型缓存格式错误');
-	return rows.map(row => {
-		if (!modelId.test(row.id)) throw new Error('本地模型缓存包含非法 ID');
+	return validateModelRows(rows).map(row => {
 		const { capabilityUnverified: _unverified, ...model } = row;
 		return model;
 	});
@@ -83,7 +95,8 @@ export function catalogStatus(state, accountId, plan) {
 	if (cached === undefined || cached === null) {
 		return { rows: snapshot[plan].models.map(model => structuredClone(model)), count: snapshot[plan].models.length, source: 'local-snapshot' };
 	}
-	if (!Array.isArray(cached.models)) return { rows: [], count: 0, source: 'invalid-cache', broken: true };
+	try { validateModelRows(cached.models); }
+	catch { return { rows: [], count: 0, source: 'invalid-cache', broken: true }; }
 	return { rows: cached.models.map(model => structuredClone(model)), count: cached.models.length, source: cached.source ?? 'arkcli', ...(cached.updatedAt ? { updatedAt: cached.updatedAt } : {}) };
 }
 

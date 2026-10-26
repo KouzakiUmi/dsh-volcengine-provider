@@ -139,7 +139,7 @@ function createMiniReact() {
 function buildBundleSource() {
   const remote = readSource('src/remote.mjs').replace(/^export /gm, '');
   const client = readSource('src/client.js').replace(/^export /gm, '');
-  return `window.__ModuleLoader__.load({id:'dsh-volcengine-provider',factory:(require,exports,module)=>{\n'use strict';\n${remote}\n${client}\nmodule.exports={name,inject,apply};\n}});\n`;
+  return `window.__ModuleLoader__.load({id:'dsh-volcengine-provider',factory:(require)=>{\n'use strict';\n${remote}\n${client}\nreturn {name,inject,apply};\n}});\n`;
 }
 
 function loadBundle(bundleSource, react) {
@@ -153,12 +153,10 @@ function loadBundle(bundleSource, react) {
     else globalThis.window = previousWindow;
   }
   assert.ok(loaded, 'ModuleLoader 未被调用');
-  const moduleRecord = { exports: {} };
-  loaded.factory((id) => {
+  return loaded.factory((id) => {
     if (id === 'react') return react;
     throw new Error(`未预期的 require: ${id}`);
-  }, moduleRecord.exports, moduleRecord);
-  return moduleRecord.exports;
+  });
 }
 
 // ── 假后端 ────────────────────────────────────────────────────────────────────

@@ -112,7 +112,7 @@ export class ArkController {
     if (identity?.logged_in !== true) throw new Error('CLI 未确认 OAuth 登录身份');
     const profiles = planProfiles(await cli.status(signal));
     if (signal.aborted || this.disposed) throw new Error('登录已取消');
-    await this.store.mutate(rev, next => { next.oauth[id] = { profiles, loggedAt: new Date().toISOString() }; return next; });
+    await this.store.mutate(rev, next => { next.oauth[id] = { profiles, loggedAt: new Date().toISOString() }; return next; }, { signal });
     this.clearCaches();
     await this.onChange();
   }

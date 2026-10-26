@@ -20,6 +20,27 @@ import {
 } from '../src/state.mjs';
 
 const dirs = [];
+
+test('取消排队中的状态修改不写入文件，后续修改仍能执行', async () => {
+	const dir = await tempDir();
+	const file = join(dir, 'state.json');
+	const store = new StateStore(file);
+	await store.load();
+	let release;
+	store.queue = new Promise(resolve => { release = resolve; });
+	const abort = new AbortController();
+	const pending = store.mutate(revision(store.current), next => {
+		next.accounts[0].label = '不应保存';
+		return next;
+	}, { signal: abort.signal });
+	abort.abort();
+	release();
+	await assert.rejects(pending, { name: 'AbortError' });
+	assert.equal(existsSync(file), false);
+	assert.notEqual(store.current.accounts[0].label, '不应保存');
+	await store.mutate(revision(store.current), next => { next.accounts[0].label = '后续保存'; return next; });
+	assert.equal(JSON.parse(await readFile(file, 'utf8')).accounts[0].label, '后续保存');
+});
 async function tempDir() {
 	const dir = await mkdtemp(join(tmpdir(), 'dsh-volc-state-'));
 	dirs.push(dir);

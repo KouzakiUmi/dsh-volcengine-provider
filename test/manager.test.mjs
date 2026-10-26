@@ -16,6 +16,25 @@ import { approvedLoginUrl } from '../src/oauth.mjs';
 
 const dirs = [];
 const controllers = [];
+
+test('cancelled login cannot persist a queued OAuth binding or update routes', async () => {
+  const { controller } = await setup();
+  let release;
+  controller.store.queue = new Promise(resolve => { release = resolve; });
+  let queued = false, routeChanges = 0;
+  const mutate = controller.store.mutate.bind(controller.store);
+  controller.store.mutate = (...args) => { queued = true; return mutate(...args); };
+  controller.onChange = async () => { routeChanges++; };
+  const abort = new AbortController();
+  const pending = controller.bindLogin('default', revision(controller.store.current), abort.signal);
+  await waitFor(() => queued);
+  abort.abort();
+  release();
+  await assert.rejects(pending, { name: 'AbortError' });
+  assert.equal(controller.store.current.oauth.default, undefined);
+  assert.equal(routeChanges, 0);
+  assert.equal(existsSync(controller.store.path), false);
+});
 after(async () => {
 	for (const controller of controllers) {
 		try {

@@ -3,10 +3,27 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { normalizeCatalog, usableModels, providerProfile, profilesFor, snapshot, getModelRows, modelDefaults, effectiveModel, defaultReasoningFor } from '../src/catalog.mjs';
-import { ROUTES, LABELS } from '../src/state.mjs';
+import { normalizeCatalog, usableModels, providerProfile, profilesFor, snapshot, getModelRows, modelDefaults, effectiveModel, defaultReasoningFor, catalogStatus } from '../src/catalog.mjs';
+import { ROUTES, LABELS, initialState } from '../src/state.mjs';
 
 const known = snapshot['agent-plan'].models[0];
+
+test('损坏目录行保持设置可读，同时阻止启用损坏的路由', () => {
+	for (const models of [[null], [{}], [{ id: 123 }], [{ id: 'bad id' }], [{ id: 'constructor' }], [{ id: 'same' }, { id: 'same' }]]) {
+		const state = initialState();
+		state.catalogs['default:agent-plan'] = { models };
+		assert.equal(catalogStatus(state, 'default', 'agent-plan').source, 'invalid-cache');
+		assert.deepEqual(getModelRows(state, 'default', 'agent-plan'), []);
+		assert.equal(catalogStatus(state, 'default', 'coding-plan').source, 'local-snapshot');
+		assert.throws(() => profilesFor(state), /本地模型缓存/);
+	}
+});
+
+test('远端目录拒绝空行和保留名称，避免保存不可用模型', () => {
+	for (const row of [null, [], { model_id: 'constructor' }, { model_id: 'prototype' }]) {
+		assert.throws(() => normalizeCatalog('agent-plan', { plan: 'agent-plan', models: [row] }), /模型目录包含非法或重复 ID/);
+	}
+});
 
 // ── normalizeCatalog ────────────────────────────────────────────────────────────
 

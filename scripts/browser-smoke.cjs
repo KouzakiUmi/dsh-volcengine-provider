@@ -88,9 +88,8 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
         }
       };
       window.__ModuleLoader__.load = specification => {
-        const module = { exports: {} };
-        specification.factory(name => window.fixtureModules[name], module.exports, module);
-        module.exports.apply(ctx);
+        const plugin = specification.factory(name => window.fixtureModules[name]);
+        plugin.apply(ctx);
       };
     });
     await page.addScriptTag({ content: fs.readFileSync('lib/client.js', 'utf8') });

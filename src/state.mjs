@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 export const STATE_VERSION = 2;
@@ -208,14 +208,22 @@ export class StateStore {
 		catch (error) { if (error.code !== 'ENOENT') throw new Error('无法读取方舟账号状态；原文件未被覆盖'); this.current = initialState(); }
 		return this.current;
 	}
-	mutate(expectedRevision, change) {
+	mutate(expectedRevision, change, { signal } = {}) {
 		const operation = this.queue.then(async () => {
+			signal?.throwIfAborted();
 			if (expectedRevision !== revision(this.current)) throw new Error('设置已改变，请刷新后重试');
 			const next = validateState(change(structuredClone(this.current)));
 			await mkdir(dirname(this.path), { recursive: true });
+			signal?.throwIfAborted();
 			const temp = `${this.path}.${process.pid}.tmp`;
-			await writeFile(temp, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 });
-			await rename(temp, this.path);
+			try {
+				await writeFile(temp, JSON.stringify(next, null, 2) + '\n', { mode: 0o600, signal });
+				signal?.throwIfAborted();
+				await rename(temp, this.path);
+			} catch (error) {
+				await rm(temp, { force: true }).catch(() => {});
+				throw error;
+			}
 			this.current = next;
 			return next;
 		});

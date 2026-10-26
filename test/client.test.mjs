@@ -13,7 +13,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -142,10 +142,10 @@ function createMiniReact() {
 function buildBundleSource() {
   const remote = readSource('src/remote.mjs').replace(/^export /gm, '');
   const client = readSource('src/client.js').replace(/^export /gm, '');
-  return `window.__ModuleLoader__.load({id:'dsh-volcengine-provider',factory:(require,exports,module)=>{\n'use strict';\n${remote}\n${client}\nmodule.exports={name,inject,apply};\n}});\n`;
+  return `window.__ModuleLoader__.load({id:'dsh-volcengine-provider',factory:(require)=>{\n'use strict';\n${remote}\n${client}\nreturn {name,inject,apply};\n}});\n`;
 }
 
-/** 执行 bundle，取出 module.exports。 */
+/** 按宿主的单参数 factory(require) 契约取回插件导出。 */
 function loadBundle(bundleSource, react) {
   let loaded = null;
   const previousWindow = globalThis.window;
@@ -158,12 +158,10 @@ function loadBundle(bundleSource, react) {
   }
   assert.ok(loaded, 'ModuleLoader 未被调用');
   assert.equal(loaded.id, 'dsh-volcengine-provider');
-  const moduleRecord = { exports: {} };
-  loaded.factory((id) => {
+  return loaded.factory((id) => {
     if (id === 'react') return react;
     throw new Error(`未预期的 require: ${id}`);
-  }, moduleRecord.exports, moduleRecord);
-  return moduleRecord.exports;
+  });
 }
 
 // ── 假后端 ────────────────────────────────────────────────────────────────────
@@ -576,13 +574,12 @@ test('远端服务迟到时，兜底轮询仍能拿到服务（有上限、不�
 test('构建脚本漂移守卫：测试用的文本变换必须与 scripts/build.mjs 一致', () => {
   const build = readSource('scripts/build.mjs');
   assert.match(build, /replace\(\/\^export \/gm, ''\)/, '构建的去 export 变换变了，测试需同步');
-  assert.match(build, /module\.exports=\{name,inject,apply\};/, '构建的导出形状变了，测试需同步');
+  assert.match(build, /return \{name,inject,apply\};/, '构建的导出形状变了，测试需同步');
   assert.match(build, /src\/remote\.mjs[\s\S]*src\/client\.js/, '构建的内联顺序变了，测试需同步');
 });
 
-test('真实构建产物（若已构建）与内存构建的导出契约一致', () => {
+test('真实构建产物通过宿主的单参数工厂返回插件导出', () => {
   const built = join(ROOT, 'lib', 'client.js');
-  if (!existsSync(built)) return; // 未构建时跳过；npm run check 会在测试后构建
   const react = createMiniReact();
   const exported = loadBundle(readFileSync(built, 'utf8'), react);
   assert.equal(exported.name, 'dsh-volcengine-provider');
