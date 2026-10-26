@@ -1,0 +1,31 @@
+{
+  "name": "dsh-volcengine-provider",
+  "displayName": "dsh-volcengine-provider",
+  "version": "0.1.0",
+  "description": "火山方舟 Agent Plan 与 Coding Plan：OAuth 登录、账号、模型与额度管理。",
+  "repository": {"type": "git", "url": "git+https://github.com/KouzakiUmi/dsh-volcengine-provider.git"},
+  "homepage": "https://github.com/KouzakiUmi/dsh-volcengine-provider#readme",
+  "bugs": {"url": "https://github.com/KouzakiUmi/dsh-volcengine-provider/issues"},
+  "keywords": ["dsh-plugin", "deepseek-harness", "volcengine", "arkcli", "coding-plan", "agent-plan", "oauth"],
+  "type": "module",
+  "main": "./lib/index.mjs",
+  "exports": {".": "./lib/index.mjs", "./client": "./lib/client.js", "./package.json": "./package.json", "./cordis.patch.yml": "./cordis.patch.yml"},
+  "files": ["lib", "cordis.patch.yml", "README.md", "docs", "LICENSE", "NOTICE"],
+  "license": "MIT",
+  "publishConfig": {"access": "public", "registry": "https://registry.npmjs.org/"},
+  "engines": {"node": ">=22.19.0"},
+  "scripts": {"build": "node scripts/build.mjs", "test": "node --test test/*.test.mjs", "check": "node scripts/check.mjs && node --test test/*.test.mjs && node scripts/build.mjs"},
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.5",
+    "@deepseek-ai/schemastery": "^3.18.4",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-llm-pi-ai": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-credentials": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-launch-environment": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.3"
+  },
+  "dsh": {
+    "bundle": {"patch": "./cordis.patch.yml"},
+    "client": {"platform": "web", "immediately": true, "inject": ["@deepseek-ai/dsh-api-remotes", "@deepseek-ai/dsh-client-connection", "@deepseek-ai/dsh-client-ui-settings", "@deepseek-ai/dsh-client-ui-renderer"]}
+  }
+}
