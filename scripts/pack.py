@@ -24,10 +24,16 @@ for path in files:
     if path.is_symlink() or not path.resolve().is_relative_to(root):
         raise SystemExit('Refusing an unsafe package path')
 output.parent.mkdir(parents=True, exist_ok=True)
+def normalize_metadata(info):
+    if info.name in {'package/lib/browser-bridge/linux/xdg-open', 'package/lib/browser-bridge/darwin/open'}:
+        info.mode = 0o755
+    return info
+
+
 with output.open('xb') as stream:
     with tarfile.open(fileobj=stream, mode='w:gz') as archive:
         for path in files:
-            archive.add(path, arcname='package/' + path.relative_to(root).as_posix(), recursive=False)
+            archive.add(path, arcname='package/' + path.relative_to(root).as_posix(), recursive=False, filter=normalize_metadata)
 with tarfile.open(output, 'r:gz') as archive:
     names = archive.getnames()
     assert 'package/package.json' in names and 'package/lib/index.mjs' in names

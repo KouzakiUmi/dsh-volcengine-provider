@@ -1,0 +1,2 @@
+#!/bin/sh
+exec "${DSH_ARK_BROWSER_NODE:?}" "${DSH_ARK_BROWSER_CLIENT:?}" "$@"

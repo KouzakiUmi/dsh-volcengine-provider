@@ -19,7 +19,7 @@ class VerifyPackageTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name)
 
-    def fixture(self, extra=None, remove=None):
+    def fixture(self, extra=None, remove=None, modes=None):
         manifest = {
             'name': 'dsh-volcengine-provider', 'version': '0.1.0', 'main': './lib/index.mjs', 'license': 'MIT',
             'exports': {'./client': './lib/client.js'}, 'dsh': {'bundle': {'patch': './cordis.patch.yml'}}
@@ -35,6 +35,8 @@ class VerifyPackageTests(unittest.TestCase):
                 payload = text.encode('utf-8')
                 info = tarfile.TarInfo(name)
                 info.size = len(payload)
+                if modes and name in modes:
+                    info.mode = modes[name]
                 archive.addfile(info, io.BytesIO(payload))
         checksum = package.with_suffix('.tgz.sha256')
         checksum.write_text(f'{hashlib.sha256(package.read_bytes()).hexdigest()}  {package.name}\n', encoding='utf-8')
@@ -71,6 +73,22 @@ class VerifyPackageTests(unittest.TestCase):
         self.fixture(remove='package/lib/client.js')
         with self.assertRaisesRegex(ValueError, 'missing'):
             module.verify_package(self.directory)
+
+    def test_browser_bridge_requires_all_platform_helpers(self):
+        self.fixture({'package/lib/browser-bridge.mjs': '// fixture'})
+        with self.assertRaisesRegex(ValueError, 'Browser bridge files missing'):
+            module.verify_package(self.directory)
+
+    def test_browser_bridge_opener_must_be_executable(self):
+        self.fixture({'package/lib/browser-bridge/linux/xdg-open': '#!/bin/sh\n'})
+        with self.assertRaisesRegex(ValueError, 'executable'):
+            module.verify_package(self.directory)
+
+    def test_complete_browser_bridge_with_executable_openers(self):
+        files = {'package/lib/browser-bridge.mjs': '// fixture', 'package/lib/browser-bridge-client.mjs': '// fixture', 'package/lib/browser-bridge/win32/rundll32.exe': 'native fixture', 'package/lib/browser-bridge/linux/xdg-open': '#!/bin/sh\n', 'package/lib/browser-bridge/darwin/open': '#!/bin/sh\n'}
+        modes = {name: 0o755 for name in files if name.endswith(('/xdg-open', '/open'))}
+        self.fixture(files, modes=modes)
+        self.assertEqual(module.verify_package(self.directory)['files'], 12)
 
     def test_development_directory(self):
         self.fixture({'package/test/unwanted.mjs': '// fixture'})

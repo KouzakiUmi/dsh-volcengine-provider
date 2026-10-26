@@ -22,8 +22,9 @@
 - Client 构建产物注册懒加载工厂 `factory(require)`，直接返回 `{ name, inject, apply }`；宿主不传入 CommonJS 的 `module` 或 `exports`。隔离和浏览器测试使用相同的单参数调用契约。
 - Host 使用目标 Core 的 pi-ai 传输能力；Client 通过统一 RPC 调用 Host。源代码分别位于 [Host 入口](src/index.mjs) 和 [设置页](src/client.js)，共享契约位于 [RPC 定义](src/remote.mjs)。
 - 两套套餐分别保存启用状态与所选账号，关闭套餐保留账号选择；逐模型开关和参数按账号、套餐、模型隔离。账号元数据与凭据引用由 [状态模块](src/state.mjs) 管理；版本 1 状态兼容迁移为版本 2，修改采用 revision 校验与原子写入。
-- 网页登录交给官方 `arkcli auth login volc-sso`。每次登录使用独立 session CLI home，身份和个人套餐核验完成后原子切换绑定；取消、失败或冲突不覆盖上次可用身份。旧绑定没有 homeId 时继续使用原账号目录；已准备请求固定其绑定目录。
-- 真实登录使用官方 same-device OAuth：官方 CLI 在用户普通系统默认浏览器打开授权页并接收 loopback 回调，沿用用户浏览器的密码管理器等登录能力；不使用网页自动化、专用浏览器 profile 或隐私窗口。CLI 凭据隔离与浏览器登录能力分开处理；成功状态以 CLI 完成后身份与套餐核验为准。
+- 网页登录使用官方 `arkcli auth login --login-mode broker --credential-store encrypted-file` 同设备流程，原样打开官方方舟 `/region:cn-beijing/arkcli/login` 链接，回调、会话及凭据均由 CLI 管理。每次登录使用独立 session CLI home，身份和个人套餐核验完成后原子切换绑定；取消、失败或冲突不覆盖上次可用身份。旧绑定没有 homeId 时继续使用原账号目录；已准备请求固定其绑定目录。
+- CLI 私有 PATH 中的浏览器启动桥拦截系统 URL opener，通过随机令牌鉴权的 127.0.0.1 IPC 将链接交给 Host；不修改系统 opener、注册表或默认浏览器。Playwright 驱动在净化环境的独立 Worker 中加载，丢弃驱动输出，使用正常系统 HOME/USERPROFILE 和独立临时 Chrome 配置，只打开链接，不读取网页、密码、Cookie 或授权码。CLI 成功核验后及取消/超时/失败时关闭所属浏览器和 IPC；不回退到日常浏览器或 cross-device 授权码流程。
+- 启动桥是安全边界：当前网页登录仅允许已核验的 Windows ArkCli 1.0.37，其他平台/版本在启动登录前拒绝。Windows 原生桥由仓库 C# 源码编译，CI 将 Windows 构建产物带入通用归档；POSIX opener 归档固定 0755、运行前检查执行权限，其 CLI 契约仍未验收，不据此开放 POSIX 登录。真实 Windows 同设备登录、双套餐核验和临时绑定已通过，验证边界见验证记录。
 - 空账号直接提供网页登录；新增 OAuth 身份在用户确认后自动创建本地账号，无需先填写技术 ID。已有账号时保留“登录其他账号”，不覆盖原账号及套餐选择。已验证账号可通过显式动作选择并启用指定套餐。
 - 登录进度传输错误保留进行中状态、取消入口及写入保护，退避重试；启动响应丢失时先读回任务；补读同样失败时保留结果未知的保护态并持续退避同步，确认无任务后才允许重新操作。额度查询按套餐独立忙态，不阻塞账号编辑或切换；身份变化后丢弃旧额度响应。缺少绑定或隔离 Profile 时说明受限操作，不提供必失败的请求。
 - 删除账号后清理其编辑草稿；模型继承参数基于目录 defaults 而非含覆盖的 effective；路由更新失败时保存配置不得称为已生效。停用模型的恢复默认入口需明确会重新启用。

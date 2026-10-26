@@ -164,7 +164,13 @@ async function setup({
 		},
 		cliFactory,
 		fetchImpl,
-		spawnImpl
+		spawnImpl,
+		verifyCli: async () => {},
+		browserAuthorize: (_url, signal) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true })),
+		bridgeFactory: async ({ onLaunch }) => {
+			onLaunch('https://ark.volcengine.com/region:cn-beijing/arkcli/login?callbackNonce=fake-test-nonce-123456&callbackPort=43210&sessionId=fake-test-session-123456');
+			return { environment: env => env, close: async () => {} };
+		}
 	});
 	controllers.push(controller);
 	await controller.store.load();
@@ -419,6 +425,12 @@ test('quota 在缺少 IAM AK/SK 时报 no-key，且不拿推理 Key 顶替', asy
 	assert.equal(fetchCalls.length, 0, '缺少 AK/SK 时不应发起请求');
 });
 
+async function completeLogin(spawnCalls) {
+	assert.equal(spawnCalls.length, 1);
+	assert.deepEqual(spawnCalls[0].args, ['auth', 'login', '--login-mode', 'broker', '--credential-store', 'encrypted-file']);
+	spawnCalls[0].child.exitCode = 0; spawnCalls[0].child.emit('close', 0);
+}
+
 // ── OAuth 登录绑定 ──────────────────────────────────────────────────────────────
 
 test('登录成功后把两套订阅分别绑定到同一账号', async () => {
@@ -428,10 +440,10 @@ test('登录成功后把两套订阅分别绑定到同一账号', async () => {
 	assert.equal(status.state, 'launching');
 	await waitFor(() => spawnCalls.length, { label: 'CLI 进程启动' });
 	assert.equal(spawnCalls.length, 1);
-	assert.deepEqual(spawnCalls[0].args, ['auth', 'login', 'volc-sso']);
+	assert.deepEqual(spawnCalls[0].args, ['auth', 'login', '--login-mode', 'broker', '--credential-store', 'encrypted-file']);
 
 	await waitFor(() => spawnCalls.length, { label: 'CLI 进程启动' });
-	spawnCalls[0].child.emit('close', 0);
+	await completeLogin(spawnCalls);
 	await waitFor(() => controller.store.current.oauth['default'], { label: 'OAuth 绑定' });
 	const binding = controller.store.current.oauth['default'];
 	assert.deepEqual(binding.profiles, { 'agent-plan': 'agent-profile', 'coding-plan': 'coding-profile' });
@@ -444,7 +456,7 @@ test('登录绑定不把推理凭据写进状态文件', async () => {
 	const view = await controller.read();
 	await controller.invoke({ op: 'startLogin', accountId: 'default', revision: view.revision });
 	await waitFor(() => spawnCalls.length, { label: 'CLI 进程启动' });
-	spawnCalls[0].child.emit('close', 0);
+	await completeLogin(spawnCalls);
 	await waitFor(() => controller.store.current.oauth['default'], { label: 'OAuth 绑定' });
 
 	const key = await controller.inferenceKey(controller.store.current.accounts[0], 'agent-plan');
@@ -463,7 +475,7 @@ test('同一订阅存在多个 profile 时登录绑定失败且不写状态', as
 	const view = await controller.read();
 	await controller.invoke({ op: 'startLogin', accountId: 'default', revision: view.revision });
 	await waitFor(() => spawnCalls.length, { label: 'CLI 进程启动' });
-	spawnCalls[0].child.emit('close', 0);
+	await completeLogin(spawnCalls);
 	await waitFor(() => controller.oauth.status().state === 'error', { label: '登录失败' });
 	assert.equal(controller.store.current.oauth['default'], undefined);
 });
@@ -478,7 +490,7 @@ test('登录期间账号设置变化时不落盘绑定', async () => {
 		return draft;
 	});
 	await waitFor(() => spawnCalls.length, { label: 'CLI 进程启动' });
-	spawnCalls[0].child.emit('close', 0);
+	await completeLogin(spawnCalls);
 	await waitFor(() => controller.oauth.status().state === 'error', { label: '绑定失败' });
 	assert.equal(controller.store.current.oauth['default'], undefined);
 });
@@ -497,7 +509,7 @@ test('绑定后的额度读取走 CLI 并带上对应 profile', async () => {
 	const view = await controller.read();
 	await controller.invoke({ op: 'startLogin', accountId: 'default', revision: view.revision });
 	await waitFor(() => spawnCalls.length, { label: 'CLI 进程启动' });
-	spawnCalls[0].child.emit('close', 0);
+	await completeLogin(spawnCalls);
 	await waitFor(() => controller.store.current.oauth['default'], { label: 'OAuth 绑定' });
 
 	const quota = await controller.invoke({ op: 'quota', plan: 'agent-plan', accountId: 'default' });
@@ -519,7 +531,7 @@ test('OAuth 绑定缺少该订阅时返回 no-key，不回退到引用凭据', a
 	const view = await controller.read();
 	await controller.invoke({ op: 'startLogin', accountId: 'default', revision: view.revision });
 	await waitFor(() => spawnCalls.length, { label: 'CLI 进程启动' });
-	spawnCalls[0].child.emit('close', 0);
+	await completeLogin(spawnCalls);
 	await waitFor(() => controller.store.current.oauth['default'], { label: 'OAuth 绑定' });
 
 	const quota = await controller.invoke({ op: 'quota', plan: 'coding-plan', accountId: 'default' });
@@ -537,7 +549,7 @@ test('绑定前后额度缓存不串用', async () => {
 	const view = await controller.read();
 	await controller.invoke({ op: 'startLogin', accountId: 'default', revision: view.revision });
 	await waitFor(() => spawnCalls.length, { label: 'CLI 进程启动' });
-	spawnCalls[0].child.emit('close', 0);
+	await completeLogin(spawnCalls);
 	await waitFor(() => controller.store.current.oauth['default'], { label: 'OAuth 绑定' });
 	// 绑定变化后，同一订阅的额度必须重新读取而不是沿用绑定前的缓存。
 	await controller.invoke({ op: 'quota', plan: 'coding-plan', accountId: 'default' });
@@ -732,11 +744,9 @@ test('模型设置变更使用过期 revision 时被拒绝且不落盘', async (
 });
 
 test('approvedLoginUrl 只放行官方授权地址', () => {
-	assert.equal(approvedLoginUrl('https://ark.volcengine.com/arkcli/login'), 'https://ark.volcengine.com/arkcli/login');
-	assert.equal(
-		approvedLoginUrl('https://signin.volcengine.com/authorize/abc?x=1'),
-		'https://signin.volcengine.com/authorize/abc?x=1'
-	);
+	const official = 'https://ark.volcengine.com/arkcli/login?callbackNonce=fake-test-nonce-123456&callbackPort=43210&sessionId=fake-test-session-123456';
+	assert.equal(approvedLoginUrl(official), official);
+	assert.equal(approvedLoginUrl('https://signin.volcengine.com/authorize/abc?x=1'), undefined);
 	for (const bad of [
 		'http://ark.volcengine.com/arkcli/login',
 		'https://evil.example.com/arkcli/login',

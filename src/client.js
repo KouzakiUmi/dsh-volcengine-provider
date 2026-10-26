@@ -66,7 +66,7 @@ const LOGIN_STATE_LABELS = {
 
 /**
  * 官方授权链接的放行规则：主机 → 允许的路径前缀。
- * 与 Host 端 oauth.mjs 的 approvedLoginUrl 保持同一套规则；
+ * 用于兼容旧 Host 状态；当前 Host 由受控桥打开链接，不向 Client 下发登录 URL。
  * 用 Map 而不是普通对象，避免原型链上的键被误当成白名单。
  */
 const SAFE_LOGIN_PATHS = new Map([
@@ -76,10 +76,10 @@ const SAFE_LOGIN_PATHS = new Map([
 
 /** 登录方式说明；未知取值直接显示后端给的原文。 */
 const AUTH_MODE_LABELS = {
-  oauth: 'OAuth 登录（官方 volc-sso）',
-  sso: 'OAuth 登录（官方 volc-sso）',
-  'arkcli-oauth': 'OAuth 登录（官方 volc-sso）',
-  'arkcli-sso': 'OAuth 登录（官方 volc-sso）',
+  oauth: 'OAuth 登录（官方 ArkCli）',
+  sso: 'OAuth 登录（官方 ArkCli）',
+  'arkcli-oauth': 'OAuth 登录（官方 ArkCli）',
+  'arkcli-sso': 'OAuth 登录（官方 ArkCli）',
   references: '凭据引用名'
 };
 
@@ -144,7 +144,7 @@ const TEMPERATURE_HINT = '开启思考时上游可能忽略温度；输出 token
  * 这几条是登录的真实副作用，缺一条就可能让人以为会覆盖本机 CLI 身份或删掉凭据。
  */
 const LOGIN_CONFIRM_NOTES = [
-  '登录会走官方 CLI 的 volc-sso 授权流程，在系统默认浏览器中打开官方登录页；本插件不读取浏览器 Cookie，只接收官方回调的结果。',
+  '登录使用官方 ArkCli 的方舟同设备授权页，由受控启动桥转交 Playwright 打开独立临时 Chrome；完成登录后由官方 CLI 自动接收回调并关闭窗口，无需复制授权码，也不使用日常 Chrome 的配置、扩展或密码管理器。',
   '登录得到的凭据保存在本插件为该账号准备的隔离目录里，不会改变你原有 CLI 的默认身份。',
   '取消登录或删除账号元数据都不会删除已经保存的凭据；需要清理时请自行处理该账号的隔离目录。',
   'OAuth 登录会绑定该账号可用的个人套餐，模型调用与额度查询使用对应套餐的登录身份，无需另外填写 AK/SK。'

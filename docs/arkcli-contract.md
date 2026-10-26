@@ -2,29 +2,31 @@
 
 ## 版本与证据
 
-目标 DSH Core 为 **0.2.1-rc.3**；ArkCli 命令契约对照 **@volcengine/ark-cli 1.0.37** 的帮助、随包官方 Skills 与官方仓库文档。帮助和 raw API 的 `--dry-run` 已核验；真实登录、真实额度和推理调用尚未执行。CLI 更新可能改变响应格式。
+目标 DSH Core 为 **0.2.1-rc.3**；ArkCli 命令契约对照 **@volcengine/ark-cli 1.0.37** 的帮助、随包官方 Skills 与官方仓库文档。帮助、raw API 的 `--dry-run` 和 Windows 同设备真实登录已核验；真实额度和推理调用尚未执行。网页登录的启动器拦截契约仅对 Windows ArkCli 1.0.37 核验，其他平台/版本在登录前拒绝。
 
 ## OAuth
 
 网页登录按钮调用官方原生命令：
 
 ```sh
-arkcli auth login volc-sso
+arkcli auth login --login-mode broker --credential-store encrypted-file
 ```
 
-用户点击并确认后，由 CLI 打开浏览器、创建 OAuth 请求、处理本地回调并管理身份。页面提供等待授权、核验、成功、失败、取消和五分钟超时状态。
+用户点击并确认后，CLI 在独立账号目录中创建官方 broker 会话，生成 `https://ark.volcengine.com/region:cn-beijing/arkcli/login`（或无 region 前缀的相同入口），并携带 callbackNonce、callbackPort 和 sessionId。链接必须通过精确 HTTPS 主机/路径和回调字段校验，且原样交给浏览器，不构造或改写会话参数。官方网页直接回调官方 CLI；插件不处理 OAuth token 端点，不读取网页或授权码，也不使用 cross-device 手动授权码流程。
 
-登录页面参考：<https://ark.volcengine.com/region:cn-beijing/arkcli/login?callbackNonce=>。实际授权地址和回调参数由 CLI 生成，页面随 CLI 版本而定。
+本机 Windows ArkCli 1.0.37 的浏览器函数已定向核验为 `exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()`。插件只在该登录子进程的 PATH 首位放置仓库 C# 源码编译的同名桥，并设置 NoDefaultCurrentDirectoryInExePath；不会替换系统文件、注册表或默认浏览器。桥通过带每任务 256-bit 随机令牌的 127.0.0.1 POST 将原始链接交回 Host，仅接受一次链接，同链接重试幂等、不同链接拒绝。桥不启动浏览器、不使用代理或系统默认凭据。未核验的平台/CLI 版本在启动登录前拒绝，防止未知启动实现绕过桥。
 
-`auth login` 根命令可能展示交互菜单；显式 `volc-sso` 避免依赖该菜单。本机版本的 `--login-mode` 只在根命令注册，`volc-sso --login-mode broker` 会报 unknown flag，因此没有向子命令传此参数。
+Playwright Core 1.64.1 在净化环境的独立 Worker 中加载，移除 DEBUG/DEBUG_FILE/PWDEBUG、Node 预加载和 CLI 变量，捕获丢弃驱动输出。它使用 `chromium.launch({ channel: 'chrome', headless: false, chromiumSandbox: true, env: 正常系统环境 })` 自动创建临时配置，只打开上述原始链接；既不连接现有浏览器，也不指定日常 User Data。CLI 完成且身份/套餐核验后自动关闭所属窗口；取消、超时、失败同样回收浏览器和 IPC。
 
-官方浏览器流使用 loopback callback。非 TTY 首次登录能否无需额外交互完成尚未实测；若 CLI 要求选择消费场景、签协议或配置 Key，插件会失败而不是替用户签署或创建/轮转 Key。官方另有 `--no-browser` 两段式授权码流程，本插件当前不实现该交互。
+已用真实 Windows/Chrome/ArkCli 1.0.37 完成官方页面登录、自动回调、whoami 身份、两类个人套餐 profile 和临时绑定持久化验收，结束后清理全部测试凭据。CI 从 Windows 构建产物将原生桥带入通用归档；POSIX wrapper 固定 0755 且预检 X_OK，但其 CLI 启动契约未验收，不开放 POSIX 网页登录。
+
+若 CLI 要求选择消费场景、签协议或配置 Key，插件会失败而不是替用户签署或创建/轮转 Key。缺少 Chrome、Playwright 或不兼容 CLI 时明确失败，不降级到旧的默认浏览器启动链。
 
 ### 账号隔离
 
 官方 CLI 同时只有一个 active identity，跨身份登录可能清空并重建原 profile。因此每个插件账号独立设置 `HOME`、`USERPROFILE` 和 `XDG_CONFIG_HOME`，清除子进程继承的 Ark/Volc/AWS 身份变量，使用账号自己的 `.arkcli` 目录。
 
-这不改变原 CLI 默认身份。Windows 下 Go 通常通过 `USERPROFILE` 解析 home；该隔离设置已做假进程验证，但仍需要真实 OAuth 验收。原系统浏览器 Cookie 不由插件清理；用户需在官方页面确认实际授权账号。
+这不改变原 CLI 默认身份。Windows 下已通过两个不同的临时 HOME/USERPROFILE 目录运行本机 CLI，确认它在 USERPROFILE 下创建 `.arkcli`。该环境只能传给 CLI，不能用于浏览器启动；浏览器始终使用正常系统 HOME/USERPROFILE 和独立临时配置。真实账号同设备自动回调已在 Windows ArkCli 1.0.37 验收；插件不读取官方页面中的授权码。
 
 登录完成后依次调用：
 

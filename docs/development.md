@@ -15,7 +15,9 @@ python scripts/pack.py --output-dir test-output/local-package
 python scripts/verify-package.py test-output/local-package
 ```
 
-`lib/` 为生成目录。打包产出 `.tgz` 与同名 `.tgz.sha256`；已有同名文件会报错，可换用新的输出目录。
+`lib/` 为生成目录。Windows 构建使用系统 .NET Framework C# 编译器，从仓库源码生成私有浏览器桥 `lib/browser-bridge/win32/rundll32.exe`；源码树不保存预编译 exe。Linux/macOS 构建不会交叉编译该文件，制作通用包前需恢复同一提交在 Windows CI 构建的桥。归档检查会拒绝缺桥文件或 POSIX opener 缺少执行位的包。
+
+打包产出 `.tgz` 与同名 `.tgz.sha256`；已有同名文件会报错，可换用新的输出目录。
 
 ## CI 流程
 
@@ -28,7 +30,7 @@ python scripts/verify-package.py test-output/local-package
 | 手动运行 | 执行 | 跳过 |
 | 推送 `v*` 标签 | 执行 | 所有检查通过后执行 |
 
-检查矩阵为 Ubuntu / Windows × Node 22.19.0 / 24。单元测试使用假 CLI、假凭据和假网络。打包任务使用 Python 3.12，验证入口、归档路径、校验和及标签版本，上传 `plugin-package` artifact，保留 14 天。
+检查矩阵为 Ubuntu / Windows × Node 22.19.0 / 24。单元测试使用假 CLI、假凭据和外部网络替身，并验证真实本地 loopback IPC；Windows 另执行真实原生桥进程。Windows/Node 24 保存 `windows-browser-bridge` artifact，Ubuntu 打包任务恢复该原生桥后使用 Python 3.12 验证入口、跨平台桥文件、POSIX 执行位、归档路径、校验和及标签版本，上传 `plugin-package` artifact，保留 14 天。
 
 标签发布使用同一次运行已验证的插件包。npm job 使用 GitHub OIDC 短期身份，授权为 `id-token: write`；Release job 单独获取 `contents: write`。其余 job 为只读，官方 Actions 固定到 commit SHA。
 
@@ -82,6 +84,8 @@ git push origin v<version>
 
 - [Host 验证脚本](../scripts/host-smoke.mjs)：`DSH_TEST_HOST_ROOT` 指向目标 Core 的 `dsh` 目录，ASAR 使用对应 Electron 的 Node 模式。
 - [浏览器验证脚本](../scripts/browser-smoke.cjs)：使用既有 Playwright、Chrome 与目标前端资产；RPC 为假数据，HTTP(S) 请求被阻断。
+- [同设备浏览器离线验证](../scripts/test-oauth-browser.mjs)：构建后运行，使用真实独立 Chrome 和本地拦截的官方页面/CLI 回调，验证自动关窗；可在宿主 DEBUG/PWDEBUG 开启时核验 Worker 日志隔离。
+- [真实登录验收](../scripts/test-oauth-live.mjs)：仅在明确同意真实登录后传 `--confirm-real-login`，用户在独立窗口手动授权；临时保存 CLI 身份和绑定，结束后清理，不安装插件、不调用推理或额度接口。
 
 浏览器脚本环境变量：
 

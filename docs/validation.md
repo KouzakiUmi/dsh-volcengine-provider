@@ -4,7 +4,7 @@
 
 - 实际目标 **DSH Core 0.2.1-rc.3**；兼容声明不扩展到未测试版本。
 - ArkCli **1.0.37** 的命令帮助、随包官方 Skills、raw action 注册及无网络预览。
-- 全部业务测试使用假凭据、假 CLI 与假网络；Host 测试只使用临时目录。
+- 单元业务测试使用假凭据、假 CLI 与外部网络替身；真实本地桥 IPC、原生进程和独立账号 OAuth 验收另列，均使用临时目录。
 
 ## 已执行
 
@@ -21,7 +21,7 @@ node --test test/*.test.mjs
 - HMAC 签名测试使用独立 OpenSSL 推导的固定向量，不只比较实现自身的两次输出。
 - 构建生成 Host 模块与返回导出对象的惰性 Client 工厂；不新增安装构建依赖。
 
-当前结果：**240 项 JavaScript 单元测试、7 项归档测试全部通过**，32 个 JavaScript 源文件语法/边界检查通过，构建生成 12 个运行产物。模型管理测试覆盖旧状态迁移、套餐/模型开关、逐模型参数、请求默认值及适配器生命周期；发布测试覆盖 OIDC 身份、版本与渠道、归档校验、registry 错误分类及发布后完整性检查。
+当前结果：**261 项 JavaScript 测试、10 项 Python 归档测试通过**，41 个 JavaScript 源文件语法/边界检查通过，构建包含 16 个模块/Client 产物及 3 个浏览器桥辅助文件。归档测试使用系统 Python 3.12；此前受 Low 完整性影响的运行时 Python 无法创建临时目录，属于工具环境问题。模型管理测试覆盖旧状态迁移、套餐/模型开关、逐模型参数、请求默认值及适配器生命周期；发布测试覆盖 OIDC 身份、版本与渠道、归档校验、registry 错误分类及发布后完整性检查。
 
 ### 实际 Core 隔离加载
 
@@ -76,20 +76,30 @@ node --test test/*.test.mjs
 - 删除正在编辑的账号关闭旧表单；未绑定套餐和没有隔离 Profile 的操作禁用且说明原因；禁用控件有可见状态，空状态不再引导点击禁用按钮。
 - 思考映射切回继承时读取目录默认而不是旧覆盖，并清除不兼容默认档位；路由失败不把保存值称为生效值；恢复停用模型明确会重新启用。
 - 额度查询不锁住账号管理；切换账号后立即允许新查询，迟到响应不覆盖新账号数据。
-- 真实 React/Chrome 离线模拟完成“空账号 → 确认 → 假 OAuth 成功 → 选择并启用 Agent 套餐 → 查询额度”。官方登录页未被打开，也未运行网页自动登录；真实 OAuth 仍按下节列为未执行。
-- 官方 ArkCli 1.0.37 随包登录文档确认 `volc-sso` 为 same-device OAuth、loopback callback；插件仍调用该官方流程，未引入自动化登录或浏览器密码读取。
+- 真实 React/Chrome 离线模拟完成“空账号 → 确认 → 假 OAuth 成功 → 选择并启用 Agent 套餐 → 查询额度”。该离线 UI 测试不打开真实官方页面；真实同设备 OAuth 另按下节独立验收。
+- 当前网页登录使用官方 broker 同设备流程、CLI 私有启动桥和 Playwright 独立临时 Chrome。
+
+## 浏览器隔离修复验证（2026-10-27）
+
+- 代码检查发现 CLI 子进程重写 HOME/USERPROFILE/XDG_CONFIG_HOME，并由它启动日常默认浏览器，存在隔离环境传播风险；没有直接编辑 Chrome Preferences 的插件代码。尚未用真实用户 Chrome 重现或证明“外部篡改”提示的唯一根因。
+- 本机 ArkCli 1.0.37 隔离目录探针确认使用 USERPROFILE 下的 `.arkcli`；定向核验原生浏览器调用为 PATH 查找的 rundll32。CLI 版本和平台在启动登录前检查，仅开放已核验的 Windows 1.0.37。
+- 真实原生 C# 桥进程已验证：精确官方 URL、每任务鉴权 token、仅 127.0.0.1 IPC、链接原样传递、一次链接幂等与异链拒绝；不存在修改系统 opener 或注册表的路径。POSIX opener 打包固定执行位并预检 X_OK，防止缺执行位时落到系统浏览器；其 CLI 行为未验收，当前不开放登录。
+- Playwright Core 1.64.1 在净化环境的独立 Worker 中加载，启动可见、启用沙箱的临时 Chrome，仅 goto 原始方舟链接；不读取 DOM、密码、Cookie 或授权码。宿主 DEBUG/DEBUG_FILE/PWDEBUG、Node 预加载和 CLI 环境不传播，驱动输出捕获丢弃。取消、超时、失败和迟到启动均有回收测试。
+- `node scripts/test-oauth-browser.mjs` 在宿主调试开关开启时通过真实 Chrome 离线验证：官方页面与 CLI callback 均由本地 fixture 拦截，模拟自动回调后关闭所属窗口，无真实登录或提码。
+- **真实验收通过**：`node scripts/test-oauth-live.mjs --confirm-real-login` 使用正式构建产物、官方 CLI 和独立临时目录。用户在方舟同设备页面手动授权后，官方回调完成，CLI 登录成功，whoami 身份与 Agent/Coding 两类个人套餐 profile 核验通过，临时绑定原子持久化成功，随后窗口及全部临时身份/元数据清理完成。没有改变生产账号、安装插件或调用额度/推理。
+- Context7 额度不可用，Playwright 启动契约对照 [官方 API](https://playwright.dev/docs/api/class-browsertype#browser-type-launch)、安装版本类型与实现；Windows CLI 浏览器实现采用对应安装版本的定向只读核验，并以真实回调验收收口。
 
 ## 未执行
 
-- 真实 OAuth 浏览器授权及非 TTY 首登。
-- 真实 CLI profile 摘要、raw 额度信封、实时模型目录与推理调用。
+- 新用户首次购买/签约、创建或轮转 Key 的完整流程。
+- 真实 raw 额度信封、实时模型目录与推理调用。
 - 生产 Profile 安装、重启和会话模型迁移。
 - 其他 Core / ArkCli 版本、企业席位及跨平台的真实 CLI / 宿主行为。
 
 ## 仍需验收的外部契约
 
-1. 官方 `volc-sso` 在非 TTY 的首次消费场景选择；需要选择/协议/Key 操作时必须由用户在官方流程完成。
-2. `profiles_summary` 的真实元素结构，以及 raw GetAFPUsage/GetCodingPlanUsage 的 `{}` 请求与响应信封。
+1. 新用户首次消费场景选择、协议及 Key 操作必须由用户在官方流程完成；当前真实验收使用已有个人套餐账号。
+2. raw GetAFPUsage/GetCodingPlanUsage 的 `{}` 请求与响应信封；本轮只验证真实身份/profile 摘要，不验证额度接口。
 3. 沿用配置的 Anthropic 兼容路径、长上下文和思考档位；模型快照不是实时官方能力声明。
 4. 实际 OAuth 页面与回调地址由官方 CLI 生成，随 CLI 版本而定。
 

@@ -25,7 +25,7 @@ dsh plugin --profile web add dsh-volcengine-provider
 `web` 是示例 Profile，请替换为实际目标；Desktop 使用桌面壳集成的 DSH CLI。也可从 [GitHub Actions](https://github.com/KouzakiUmi/dsh-volcengine-provider/actions/workflows/ci.yml) 或 [Releases](https://github.com/KouzakiUmi/dsh-volcengine-provider/releases) 下载插件包安装。
 
 1. 打开 **设置 → 火山方舟 Provider**，直接点击 **网页登录**；添加另一个登录身份时点击 **登录其他账号**。
-2. 确认后在普通系统浏览器完成官方 OAuth 授权，可正常使用密码管理器。凭据引用接入则使用 **新增账号**。
+2. 确认后在自动打开的独立临时 Chrome 窗口完成官方 OAuth 授权，授权结果自动接回；此窗口不共享日常浏览器的扩展或密码管理器。凭据引用接入则使用 **新增账号**。
 3. 在账号卡片点击 **用于 Agent套餐 / 用于 编程套餐**，或在套餐卡片分别选择账号与启停。查看模型列表，按需拉取官方目录、刷新额度。
 4. 在 DSH 模型选择器中选择对应路由，开始使用。
 
@@ -70,10 +70,11 @@ Coding Plan 展示剩余百分比；Agent Plan 同时展示 AFP 已用量、上�
 
 - **DSH Core**：`0.2.1-rc.3`。
 - **Node.js**：`>=22.19.0`。
-- **ArkCli**：当前按 `1.0.37` 命令契约适配。
+- **ArkCli**：当前按 `1.0.37` 命令契约适配；网页登录仅开放已核验的 Windows ArkCli `1.0.37`，其他平台/版本在登录前拒绝。
+- **Chrome**：网页登录需已安装 Google Chrome；插件的 `playwright-core` 依赖负责独立临时窗口，不下载浏览器。
 - 当前支持国内个人 Agent Plan / Coding Plan。
 
-当前为开发预览。已完成隔离测试、目标 Core 加载和离线界面验证；真实账号 OAuth、在线接口和推理调用的验收状态见[验证记录](docs/validation.md)。
+当前为开发预览。已完成隔离测试、目标 Core 加载、离线界面及 Windows 真实同设备 OAuth/双套餐临时绑定验收；在线额度、推理调用和生产安装的边界见[验证记录](docs/validation.md)。
 
 账号删除仅移除插件元数据，已保存的官方 CLI 身份目录会保留。反馈问题时请提供版本、套餐类型和脱敏错误，凭据及授权链接请勿提交。
 

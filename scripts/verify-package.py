@@ -37,6 +37,13 @@ def verify_package(directory, tag=None):
         required = {'package/package.json', 'package/lib/index.mjs', 'package/lib/client.js', 'package/cordis.patch.yml', 'package/README.md', 'package/LICENSE', 'package/NOTICE'}
         if not required.issubset(names):
             raise ValueError('Required plugin files missing')
+        if 'package/lib/browser-bridge.mjs' in names:
+            helpers = {'package/lib/browser-bridge/win32/rundll32.exe', 'package/lib/browser-bridge/linux/xdg-open', 'package/lib/browser-bridge/darwin/open', 'package/lib/browser-bridge-client.mjs'}
+            if not helpers.issubset(names):
+                raise ValueError('Browser bridge files missing')
+        for member in members:
+            if member.name in {'package/lib/browser-bridge/linux/xdg-open', 'package/lib/browser-bridge/darwin/open'} and member.mode & 0o111 == 0:
+                raise ValueError('Browser bridge opener must be executable')
         manifest = json.load(archive.extractfile('package/package.json'))
         if manifest.get('license') != 'MIT':
             raise ValueError('Package license must be MIT')
