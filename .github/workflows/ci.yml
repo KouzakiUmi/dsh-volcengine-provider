@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  check:
+    name: ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['22.19.0', '24']
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Check JavaScript and plugin boundaries
+        run: node scripts/check.mjs
+      - name: Run isolated tests
+        run: node --test test/*.test.mjs
+      - name: Build plugin
+        run: node scripts/build.mjs
+
+  package:
+    name: Verify plugin package
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Test archive validation
+        run: python -m unittest discover -s test -p 'test_*.py'
+      - name: Build and pack
+        run: |
+          node scripts/build.mjs
+          python scripts/pack.py --output-dir release-artifacts
+      - name: Validate archive and version tag
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ "$REF_TYPE" == tag ]]; then
+            python scripts/verify-package.py release-artifacts --tag "$TAG_NAME"
+          else
+            python scripts/verify-package.py release-artifacts
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: plugin-package
+          path: |
+            release-artifacts/*.tgz
+            release-artifacts/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  publish:
+    name: Publish npm package
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: plugin-package
+          path: release-artifacts
+      - name: Verify package info
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: python scripts/verify-package.py release-artifacts --tag "$TAG_NAME" > release-artifacts/package-info.json
+      - name: Publish to npm with trusted publishing
+        run: node scripts/npm-publish.mjs
+
+  release:
+    name: Publish tagged GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+    needs: [package, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: plugin-package
+          path: release-artifacts
+      - name: Publish verified assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          flags=()
+          if [[ "$TAG_NAME" == *-* ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$TAG_NAME" release-artifacts/*.tgz release-artifacts/*.sha256 \
+            --repo "$GH_REPO" --verify-tag --title "dsh-volcengine-provider $TAG_NAME" --generate-notes \
+            --notes '支持火山方舟 Agent Plan 与 Coding Plan，提供账号管理、网页登录、模型同步和额度查询。使用条件与验证范围见仓库文档。' \
+            "${flags[@]}"

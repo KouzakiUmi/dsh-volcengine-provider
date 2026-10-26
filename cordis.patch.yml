@@ -1,0 +1,4 @@
+- insert:
+    - id: dsh-volcengine-provider
+      name: dsh-volcengine-provider
+      config: {}

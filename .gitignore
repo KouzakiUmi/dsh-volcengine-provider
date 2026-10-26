@@ -1,0 +1,9 @@
+node_modules/
+/lib/
+/release-artifacts/
+__pycache__/
+*.pyc
+.reference/
+test-output/
+artifacts/
+*.tmp
