@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { normalizeCatalog, usableModels, providerProfile, profilesFor, snapshot, getModelRows, modelDefaults, effectiveModel, defaultReasoningFor, catalogStatus } from '../src/catalog.mjs';
 import { ROUTES, LABELS, initialState } from '../src/state.mjs';
 
-const known = snapshot['agent-plan'].models[0];
+const known = snapshot['agent-plan'].models.find(model => !model.capabilityUnverified);
 
 test('损坏目录行保持设置可读，同时阻止启用损坏的路由', () => {
 	for (const models of [[null], [{}], [{ id: 123 }], [{ id: 'bad id' }], [{ id: 'constructor' }], [{ id: 'same' }, { id: 'same' }]]) {

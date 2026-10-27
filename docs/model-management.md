@@ -29,6 +29,12 @@
 
 参数校验：正安全整数 contextWindow/maxTokens，maxTokens 不得超过有效 contextWindow；temperature 为 0 到 1 的有限数；forceAdaptiveThinking 为布尔值。预算模式只接受 off/minimal/low/medium/high，非 off 的映射值必须与档位同名、off 为 null，避免底层将 xhigh/max 折叠为 high 而产生虚假档位。原生 effort 模式按声明的映射值发送。拒绝未知字段、非法模型 ID、数组和敏感凭据字段。设置不会创建目录里不存在的模型。
 
+## 固化能力与缓存
+
+能力参数采用[来源核验快照](model-capabilities.md)，模型清单仍由账号 Plan 查询。显式 `aliases` 连接已核实的控制面 ID、调用别名和文档名称，不根据字符串去日期或改标点猜版本；`aliases` 不是 Core 字段，进入适配器前剥离。
+
+读取已缓存目录时，已识别模型的能力默认值与当前快照合并，保留原调用 ID；代码式展示名采用固化友好名称，已有可读名称保留；不就地写状态、不改变账号/启用状态，`modelSettings` 覆盖仍优先。只缩小上下文而未明确覆盖输出时，继承输出被限制到该上下文；显式输出不被静默改写。未知版本、Auto 及尚未核实的思考控制保守标记。目录移除已保存默认档位时，原设置保留，有效默认改为不强制并返回 `settingsWarning`；界面显示失效选项与重新选择入口，避免旧合法配置阻断模型解析。显式自定义映射不被目录更新覆盖。
+
 ## RPC
 
 沿用 `volcengineProvider.invoke` 和 revision 并发检查：
@@ -44,7 +50,7 @@
 { id, name, enabled, capabilityUnverified, settings, defaults, effective }
 ```
 
-其中 defaults/effective 含 contextWindow、maxTokens、reasoningEfforts、defaultReasoning（无默认时为 null）、forceAdaptiveThinking，temperature 可省略。settings 是原始覆盖值。count 仍为完整目录数量。
+其中 defaults/effective 含 contextWindow、maxTokens、reasoningEfforts、defaultReasoning（无默认时为 null）、forceAdaptiveThinking，temperature 可省略。settings 是原始覆盖值；需处理目录兼容问题时另含 settingsWarning。count 仍为完整目录数量。
 
 ## 路由与请求
 
@@ -58,4 +64,4 @@
 
 两张套餐卡片提供独立启用复选框，账号选择与启用状态分开。模型列表提供逐模型开关、参数编辑和恢复默认。参数空值表示继承；思考默认可选继承、不强制或有效档位；模式可选继承、原生 effort、固定预算。说明温度在启用思考时可能被传输层忽略，输出 token 还受思考预算和上下文约束。
 
-验收覆盖：旧状态迁移、关闭后账号保留、开关隔离、设置持久化/重置/刷新保留、非法参数拒绝、未知模型不再触发默认 low 错误、请求覆盖优先级、已准备请求不随设置变化、实际 Core 与假 HTTP 字段验证。真实 OAuth/推理仍需单独账号验收。
+验收覆盖：旧状态迁移、关闭后账号保留、开关隔离、设置持久化/重置/刷新保留、非法参数拒绝、未知模型不再触发默认 low 错误、请求覆盖优先级、已准备请求不随设置变化、实际 Core 与假 HTTP 字段验证。真实 OAuth 的独立验收见[验证记录](validation.md)；模型管理脚本不验证真实推理、Plan 上限或服务端思考参数效果。

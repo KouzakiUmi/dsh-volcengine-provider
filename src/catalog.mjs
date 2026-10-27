@@ -13,6 +13,32 @@ function validateModelRows(rows) {
 	}
 	return rows;
 }
+// Only explicit, source-audited aliases are matched. Never strip version/date
+// suffixes or punctuation to guess whether two models have the same limits.
+function snapshotModel(plan, id) {
+	if (typeof id !== 'string') return undefined;
+	return snapshot[plan].models.find(model => model.id === id || model.aliases?.includes(id));
+}
+function pinnedCapabilities(model) {
+	const { aliases: _aliases, ...capabilities } = structuredClone(model);
+	return capabilities;
+}
+function displayName(id, candidate, pinned) {
+	const fallback = id === 'auto' ? 'Auto（智能调度）' : pinned?.name || id;
+	if (typeof candidate !== 'string' || !candidate.trim() || candidate.length > 200 || /[\u0000-\u001f\u007f]/.test(candidate)) return fallback;
+	const name = candidate.trim();
+	// Readable server labels remain valid; IDs and punctuation-separated code
+	// labels use the pinned presentation name instead of a second machine ID.
+	const codes = [id, pinned?.id, ...(pinned?.aliases ?? [])].filter(Boolean);
+	const codeLabel = codes.some(code => code.toLowerCase() === name.toLowerCase()) || /^[A-Za-z0-9]+(?:[_.:/-][A-Za-z0-9]+)+$/.test(name);
+	if ((pinned || id === 'auto') && codeLabel) return fallback;
+	return name;
+}
+function reconcileModel(plan, row) {
+	const pinned = snapshotModel(plan, row.id);
+	if (!pinned) return { ...structuredClone(row), name: displayName(row.id, row.name) };
+	return { ...pinnedCapabilities(pinned), id: row.id, name: displayName(row.id, row.name, pinned) };
+}
 export function normalizeCatalog(plan, response) {
 	assertPlan(plan);
 	if (response?.plan !== plan || !Array.isArray(response.models)) throw new Error('模型目录响应与所选订阅不匹配');
@@ -24,10 +50,10 @@ export function normalizeCatalog(plan, response) {
 		if (typeof id !== 'string' || !modelId.test(id) || seen.has(id)) throw new Error('模型目录包含非法或重复 ID');
 		try { assertModelId(id); } catch { throw new Error('模型目录包含非法或重复 ID'); }
 		seen.add(id);
-		const known = snapshot[plan].models.find(m => m.id === id || m.id === row.model_id);
+		const known = snapshotModel(plan, id) ?? snapshotModel(plan, row.model_id);
 		return {
-			...(known ? structuredClone(known) : { contextWindow: 32768, maxTokens: 8192, input: ['text'], reasoningEfforts: false, compat: { forceAdaptiveThinking: false } }),
-			id, name: typeof row.model_name === 'string' && row.model_name.length <= 200 ? row.model_name : id,
+			...(known ? pinnedCapabilities(known) : { contextWindow: 32768, maxTokens: 8192, input: ['text'], reasoningEfforts: false, compat: { forceAdaptiveThinking: false } }),
+			id, name: displayName(id, row.model_name, known),
 			...(known ? {} : { capabilityUnverified: true })
 		};
 	});
@@ -37,7 +63,7 @@ export function usableModels(catalog, plan) {
 	assertPlan(plan);
 	const rows = catalog === undefined || catalog === null ? snapshot[plan].models : catalog.models;
 	return validateModelRows(rows).map(row => {
-		const { capabilityUnverified: _unverified, ...model } = row;
+		const { capabilityUnverified: _unverified, aliases: _aliases, ...model } = reconcileModel(plan, row);
 		return model;
 	});
 }
@@ -73,10 +99,12 @@ export function effectiveModel(defaults, settings = {}) {
 	const effective = { ...defaults };
 	if (settings.contextWindow !== undefined) effective.contextWindow = settings.contextWindow;
 	if (settings.maxTokens !== undefined) effective.maxTokens = settings.maxTokens;
+	else if (effective.maxTokens > effective.contextWindow) effective.maxTokens = effective.contextWindow;
 	if (settings.reasoningEfforts !== undefined) effective.reasoningEfforts = settings.reasoningEfforts;
 	if (settings.forceAdaptiveThinking !== undefined) effective.forceAdaptiveThinking = settings.forceAdaptiveThinking;
 	if (settings.temperature !== undefined) effective.temperature = settings.temperature;
 	effective.defaultReasoning = settings.defaultReasoning === undefined ? defaultReasoningFor(effective.reasoningEfforts) : settings.defaultReasoning;
+	if (typeof effective.defaultReasoning === 'string' && (!effective.reasoningEfforts || !Object.hasOwn(effective.reasoningEfforts, effective.defaultReasoning))) effective.defaultReasoning = null;
 	return effective;
 }
 
@@ -97,7 +125,7 @@ export function catalogStatus(state, accountId, plan) {
 	}
 	try { validateModelRows(cached.models); }
 	catch { return { rows: [], count: 0, source: 'invalid-cache', broken: true }; }
-	return { rows: cached.models.map(model => structuredClone(model)), count: cached.models.length, source: cached.source ?? 'arkcli', ...(cached.updatedAt ? { updatedAt: cached.updatedAt } : {}) };
+	return { rows: cached.models.map(model => reconcileModel(plan, model)), count: cached.models.length, source: cached.source ?? 'arkcli', ...(cached.updatedAt ? { updatedAt: cached.updatedAt } : {}) };
 }
 
 /**
@@ -112,14 +140,18 @@ export function getModelRows(state, accountId, plan) {
 		const override = Object.hasOwn(overrides, model.id) ? overrides[model.id] : {};
 		const settings = override && typeof override === 'object' && !Array.isArray(override) ? override : {};
 		const defaults = modelDefaults(plan, model);
+		const effective = effectiveModel(defaults, settings);
+		const settingsWarning = typeof settings.defaultReasoning === 'string' && settings.defaultReasoning !== effective.defaultReasoning
+			? `已保存的默认思考档位 ${settings.defaultReasoning} 不在当前目录中；暂不强制该档位，请重新选择。` : undefined;
 		return {
 			id: model.id,
 			name: typeof model.name === 'string' && model.name ? model.name : model.id,
 			enabled: settings.enabled !== false,
 			capabilityUnverified: model.capabilityUnverified === true,
 			settings: structuredClone(settings),
+			...(settingsWarning ? { settingsWarning } : {}),
 			defaults,
-			effective: effectiveModel(defaults, settings)
+			effective
 		};
 	});
 }

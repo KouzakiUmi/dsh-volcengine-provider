@@ -912,6 +912,103 @@ test('未绑定套餐和缺少隔离 Profile 不提供必失败的目录或额�
   assert.match(h.joined(), /可使用本地模型快照/);
 });
 
+test('布局回归：统一页头、账号与双套餐分区并存，技术细节默认折叠', async t => {
+  const h = createHarness(); t.after(() => h.dispose()); await h.flush();
+  assert.equal(h.tree.props.className, 'vcp-settings');
+  assert.match(h.joined(), /MODEL PROVIDER/);
+  assert.match(h.joined(), /1 个账号 · 2 个套餐/);
+  for (const label of ['账号管理', '火山方舟 · Agent 套餐', '火山方舟 · 编程套餐']) {
+    assert.equal(h.find(h.tree, node => node.type === 'section' && node.props['aria-label'] === label).length, 1, label);
+  }
+  assert.equal(h.selects().length, 2, '两个套餐的账号选择必须同时可用');
+  const accountSelectFields = h.find(h.tree, node => node.type === 'label'
+    && h.find(node, child => child.type === 'select' && /使用账号$/.test(child.props['aria-label'] ?? '')).length > 0);
+  assert.equal(accountSelectFields.length, 2);
+  assert.ok(accountSelectFields.every(field => field.props.style.flex === 'none'), '垂直账号字段不得用 220px flex-basis 撑高');
+  const cards = h.find(h.tree, node => String(node.props.className ?? '').split(' ').includes('vcp-card'));
+  assert.ok(cards.length >= 3);
+  assert.ok(cards.every(card => card.props.style.padding === undefined), '卡片 padding 必须交给可响应断点的 scoped CSS');
+  assert.match(h.buttonByText('登录其他账号').props.style.background, /#2563eb/, '主按钮实色回退必须保证白字对比度');
+  assert.ok(h.buttons().every(button => String(button.props.className).includes('vcp-button')), '按钮应共享统一主次与焦点样式');
+  const details = h.find(h.tree, node => node.type === 'details');
+  assert.ok(details.length >= 3);
+  assert.ok(details.every(node => node.props.open !== true), '高级信息和模型列表默认不应强制展开');
+  assert.match(h.joined(), /账号高级配置与标识/);
+  assert.equal(h.find(h.tree, node => node.props['aria-label'] === '火山方舟 · Agent 套餐额度').length, 1);
+  assert.equal(h.find(h.tree, node => node.props['aria-label'] === '火山方舟 · 编程套餐额度').length, 1);
+});
+
+test('空闲与成功登录状态保持紧凑，进行中仍保留状态和取消入口', async t => {
+  const backend = new FakeBackend();
+  const h = createHarness({ backend }); t.after(() => h.dispose()); await h.flush();
+  assert.doesNotMatch(h.joined(), /网页登录状态/);
+  backend.login = { jobId: 'done', state: 'success', accountId: 'default', message: '身份已核验（测试）' };
+  await h.click('刷新状态'); assert.match(h.joined(), /身份已核验（测试）/); assert.doesNotMatch(h.joined(), /网页登录状态/);
+  backend.login = { jobId: 'waiting', state: 'waiting', accountId: 'default', message: '等待授权（测试）' };
+  await h.click('刷新状态'); assert.match(h.joined(), /网页登录状态/); assert.ok(h.buttonByText('取消登录'));
+});
+
+test('作用域样式：使用 DSW 变量、焦点和 390px 内断点，并随插件卸载', async t => {
+  const previous = globalThis.document;
+  let appended = null;
+  let removed = false;
+  globalThis.document = {
+    head: { querySelector: () => null, append: element => { appended = element; } },
+    createElement: tag => {
+      assert.equal(tag, 'style');
+      return { dataset: {}, textContent: '', remove: () => { removed = true; } };
+    }
+  };
+  let h;
+  try {
+    h = createHarness(); await h.flush();
+    assert.ok(appended);
+    assert.equal(appended.dataset.volcengineProvider, '');
+    assert.match(appended.textContent, /var\(--dsw-alias-label-primary/);
+    assert.match(appended.textContent, /:focus-visible/);
+    assert.match(appended.textContent, /\.vcp-select\{[^}]*flex:none/);
+    assert.ok(!/\.vcp-select\{[^}]*flex(?:-basis)?:[^}]*220px/.test(appended.textContent), '选择框本身也不能有垂直 220px basis');
+    assert.match(appended.textContent, /@media\(max-width:420px\)/);
+    assert.match(appended.textContent, /\.vcp-card\{padding:16px 18px\}/);
+    assert.match(appended.textContent, /@media\(max-width:420px\)\{[^}]*\.vcp-settings[^}]*\}\.vcp-card\{padding:12px\}/);
+    assert.match(appended.textContent, /\.vcp-fields,\.vcp-fields-three\{grid-template-columns:1fr\}/);
+    h.dispose(); h = null;
+    assert.equal(removed, true);
+  } finally {
+    h?.dispose();
+    if (previous === undefined) delete globalThis.document;
+    else globalThis.document = previous;
+  }
+});
+
+test('样式实例重叠：旧实例卸载只回收自己的样式，新实例保持可用', async () => {
+  const previous = globalThis.document;
+  const appended = [];
+  const removed = [];
+  globalThis.document = {
+    head: { append: element => { appended.push(element); } },
+    createElement: () => {
+      const index = appended.length;
+      return { dataset: {}, textContent: '', remove: () => { removed[index] = (removed[index] ?? 0) + 1; } };
+    }
+  };
+  let first;
+  let second;
+  try {
+    first = createHarness(); second = createHarness();
+    await first.flush(); await second.flush();
+    assert.equal(appended.length, 2, '重叠实例必须各自持有样式，不能复用后无清理所有权');
+    first.dispose(); first = null;
+    assert.deepEqual(removed, [1], '第一个实例不得删除第二个实例的样式');
+    second.dispose(); second = null;
+    assert.deepEqual(removed, [1, 1]);
+  } finally {
+    first?.dispose(); second?.dispose();
+    if (previous === undefined) delete globalThis.document;
+    else globalThis.document = previous;
+  }
+});
+
 test('真实构建产物通过宿主的单参数工厂返回插件导出', () => {
   const built = join(ROOT, 'lib', 'client.js');
   const react = createMiniReact();

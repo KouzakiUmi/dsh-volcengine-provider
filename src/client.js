@@ -19,8 +19,12 @@ const react = typeof require === "function" ? require("react") : globalThis.Reac
 const h = (type, props, ...children) => {
   // Inline theme styles must not hide the native disabled state.
   const control = ['button', 'input', 'select', 'textarea'].includes(type);
+  const buttonClass = type === 'button'
+    ? `vcp-button${props?.style === style.primary ? ' vcp-button-primary' : ''}${props?.className ? ` ${props.className}` : ''}`
+    : props?.className;
+  const themedProps = buttonClass === props?.className ? props : { ...props, className: buttonClass };
   const visibleProps = control && props?.disabled
-    ? { ...props, style: { ...props.style, opacity: 0.5, cursor: 'not-allowed' } } : props;
+    ? { ...themedProps, style: { ...props.style, opacity: 0.5, cursor: 'not-allowed' } } : themedProps;
   return react.createElement(type, visibleProps, ...children);
 };
 
@@ -163,52 +167,108 @@ const LOGIN_POLL_MS = 1000;
 // ── 主题样式（只用设计令牌与继承，兼容深浅色） ───────────────────────────────
 
 const style = {
-  root: { display: 'flex', flexDirection: 'column', gap: 16 },
-  title: { margin: 0, fontSize: 16, fontWeight: 600 },
+  root: { display: 'flex', flexDirection: 'column', gap: 14 },
+  title: { margin: 0, fontSize: 21, fontWeight: 650, lineHeight: 1.35, letterSpacing: '-.02em' },
   card: {
-    display: 'flex', flexDirection: 'column', gap: 10,
-    padding: '14px 16px',
-    border: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.3))',
-    borderRadius: 'var(--dsw-radius-md, 8px)'
+    display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0,
+    border: '1px solid var(--dsw-alias-border-l4, var(--dsw-alias-border-l2, rgba(128,128,128,.2)))',
+    borderRadius: 14,
+    background: 'var(--dsw-alias-bg-layer-1, rgba(128,128,128,.025))'
   },
-  cardTitle: { margin: 0, fontSize: 14, fontWeight: 600 },
-  row: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  field: { display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 220px', minWidth: 180 },
-  label: { fontSize: 12, color: 'var(--dsw-alias-label-secondary, inherit)' },
+  cardTitle: { margin: 0, fontSize: 14, lineHeight: 1.4, fontWeight: 650 },
+  row: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 },
+  field: { display: 'flex', flexDirection: 'column', gap: 6, flex: '1 1 220px', minWidth: 0 },
+  label: { fontSize: 11, lineHeight: 1.6, color: 'var(--dsw-alias-label-secondary, inherit)' },
   input: {
-    width: '100%', minWidth: 0, boxSizing: 'border-box', padding: '6px 8px',
-    borderRadius: 'var(--dsw-radius-sm, 6px)',
-    border: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.4))',
-    background: 'transparent', color: 'inherit', font: 'inherit'
+    width: '100%', minWidth: 0, minHeight: 34, boxSizing: 'border-box', padding: '7px 9px',
+    borderRadius: 8, fontSize: 12,
+    border: '1px solid var(--dsw-alias-border-l3, var(--dsw-alias-border-l2, rgba(128,128,128,.35)))',
+    background: 'var(--dsw-alias-bg-layer-2, rgba(128,128,128,.035))', color: 'inherit', font: 'inherit'
   },
   btn: {
-    padding: '6px 10px', borderRadius: 'var(--dsw-radius-sm, 6px)',
-    border: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35))',
-    background: 'transparent', color: 'inherit', cursor: 'pointer', font: 'inherit'
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minHeight: 34,
+    padding: '7px 12px', borderRadius: 8, fontSize: 12,
+    border: '1px solid var(--dsw-alias-border-l3, var(--dsw-alias-border-l2, rgba(128,128,128,.3)))',
+    background: 'var(--dsw-alias-bg-layer-2, rgba(128,128,128,.06))', color: 'inherit', cursor: 'pointer', font: 'inherit'
   },
   primary: {
-    padding: '6px 10px', borderRadius: 'var(--dsw-radius-sm, 6px)',
-    border: '1px solid var(--dsw-alias-brand-primary, rgba(59,130,246,.65))',
-    background: 'var(--dsw-alias-button-primary-fill, rgba(59,130,246,.16))',
-    color: 'var(--dsw-alias-label-primary-foreground, inherit)',
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minHeight: 34,
+    padding: '7px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+    border: '1px solid var(--dsw-alias-brand-primary, #2563eb)',
+    background: 'var(--dsw-alias-button-primary-fill, var(--dsw-alias-brand-primary, #2563eb))',
+    color: 'var(--dsw-alias-label-primary-foreground, #fff)',
     cursor: 'pointer', font: 'inherit'
   },
   danger: {
-    padding: '6px 10px', borderRadius: 'var(--dsw-radius-sm, 6px)',
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minHeight: 34,
+    padding: '7px 12px', borderRadius: 8, fontSize: 12,
     border: '1px solid var(--dsw-alias-state-error-primary, rgba(220,38,38,.55))',
-    background: 'transparent',
-    color: 'var(--dsw-alias-state-error-primary, #dc2626)',
+    background: 'transparent', color: 'var(--dsw-alias-state-error-primary, #dc2626)',
     cursor: 'pointer', font: 'inherit'
   },
-  muted: { margin: 0, lineHeight: 1.5, fontSize: 12, color: 'var(--dsw-alias-label-secondary, inherit)', overflowWrap: 'anywhere' },
-  error: { fontSize: 12, color: 'var(--dsw-alias-state-error-primary, #dc2626)', overflowWrap: 'anywhere' },
-  warn: { fontSize: 12, color: 'var(--dsw-alias-state-warn-primary, #b45309)', overflowWrap: 'anywhere' },
-  success: { fontSize: 12, color: 'var(--dsw-alias-state-success-primary, #16a34a)', overflowWrap: 'anywhere' },
+  muted: { margin: 0, lineHeight: 1.6, fontSize: 11, color: 'var(--dsw-alias-label-secondary, inherit)', overflowWrap: 'anywhere' },
+  error: { margin: 0, fontSize: 12, lineHeight: 1.6, color: 'var(--dsw-alias-state-error-primary, #dc2626)', overflowWrap: 'anywhere' },
+  warn: { margin: 0, fontSize: 12, lineHeight: 1.6, color: 'var(--dsw-alias-state-warn-primary, #b45309)', overflowWrap: 'anywhere' },
+  success: { margin: 0, fontSize: 12, lineHeight: 1.6, color: 'var(--dsw-alias-state-success-primary, #16a34a)', overflowWrap: 'anywhere' },
   chip: {
-    fontSize: 11, padding: '1px 8px', borderRadius: 999, whiteSpace: 'nowrap',
-    background: 'var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.14))'
-  }
+    display: 'inline-flex', alignItems: 'center', maxWidth: '100%', fontSize: 10, lineHeight: 1.7,
+    padding: '1px 8px', borderRadius: 999, whiteSpace: 'normal', overflowWrap: 'anywhere',
+    border: '1px solid var(--dsw-alias-border-l3, rgba(128,128,128,.18))',
+    color: 'var(--dsw-alias-label-secondary, inherit)',
+    background: 'var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.08))'
+  },
+  subcard: {
+    display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0, padding: '12px',
+    borderRadius: 10, background: 'var(--dsw-alias-bg-layer-2, rgba(128,128,128,.04))'
+  },
+  summary: { cursor: 'pointer', minHeight: 32, padding: '6px 0', fontSize: 12, color: 'var(--dsw-alias-label-secondary, inherit)' }
 };
+
+// Scoped CSS supplies interaction states and responsive grids which inline styles cannot express.
+const CLIENT_STYLES = `
+.vcp-settings{color:var(--dsw-alias-label-primary,inherit);max-width:860px;padding:6px 2px 24px;font-size:13px;line-height:1.5}
+.vcp-settings *{box-sizing:border-box}.vcp-settings :focus-visible{outline:2px solid var(--dsw-alias-brand-primary,Highlight);outline-offset:3px}.vcp-card{padding:16px 18px}
+.vcp-header{display:flex;align-items:flex-start;gap:12px;padding:0 2px 2px}.vcp-header-copy{flex:1;min-width:0}.vcp-eyebrow{margin-bottom:5px;font-size:10px;font-weight:650;letter-spacing:.1em;color:var(--dsw-alias-label-secondary,inherit);opacity:.75}
+.vcp-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}.vcp-heading-copy{flex:1 1 220px;min-width:0}.vcp-heading-copy p{margin-top:5px}.vcp-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+.vcp-select{width:100%;min-width:0;max-width:100%;flex:none}.vcp-chip-row{display:flex;gap:6px;flex-wrap:wrap;min-width:0}.vcp-section{border-top:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.14));padding-top:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.vcp-notice{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;border-radius:10px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.06));overflow-wrap:anywhere}.vcp-notice[data-tone=error]{background:var(--dsw-alias-state-error-secondary,rgba(220,38,38,.08))}.vcp-notice[data-tone=warn]{background:var(--dsw-alias-state-warn-secondary,rgba(180,83,9,.08))}.vcp-notice[data-tone=success]{background:var(--dsw-alias-state-success-secondary,rgba(22,163,74,.08))}
+.vcp-account{padding:12px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.16));border-radius:10px;display:flex;flex-direction:column;gap:9px;min-width:0}.vcp-account-title{font-size:13px;font-weight:650;overflow-wrap:anywhere}.vcp-model{padding:10px 12px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.14));border-radius:9px;display:flex;flex-direction:column;gap:8px;min-width:0}.vcp-model-name{font-weight:600;min-width:0;overflow-wrap:anywhere}.vcp-model-id{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace;font-size:10px}
+.vcp-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.vcp-fields-three{grid-template-columns:repeat(3,minmax(0,1fr))}.vcp-quota{display:grid;gap:10px}.vcp-quota-group{display:grid;gap:10px}.vcp-quota-window{display:grid;gap:6px;min-width:0}.vcp-quota-line{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}.vcp-quota-value{text-align:right;min-width:0;font-variant-numeric:tabular-nums}.vcp-quota progress{width:100%;height:7px}
+.vcp-details>summary{cursor:pointer}.vcp-details-body{display:flex;flex-direction:column;gap:8px;margin-top:8px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.14))}.vcp-login{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:10px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.04))}
+.vcp-button:hover:not(:disabled){border-color:var(--dsw-alias-brand-primary,Highlight)}.vcp-button-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,var(--dsw-alias-brand-primary,Highlight))}.vcp-button:disabled{opacity:.55;cursor:not-allowed}.vcp-settings summary:hover{color:var(--dsw-alias-label-primary,inherit)}
+@media(max-width:680px){.vcp-fields,.vcp-fields-three{grid-template-columns:1fr}.vcp-card{padding:14px}.vcp-quota-value{text-align:left}.vcp-select{width:100%;min-width:0}}
+@media(max-width:420px){.vcp-settings{padding:2px 0 20px}.vcp-card{padding:12px}.vcp-header{flex-wrap:wrap}.vcp-header>.vcp-actions{width:100%;justify-content:space-between}.vcp-heading{gap:8px}.vcp-heading>.vcp-actions{width:100%}.vcp-actions .vcp-button{flex:1 1 auto}.vcp-account,.vcp-model{padding:10px}.vcp-section{padding-top:12px}}
+`;
+
+function installStyles() {
+  if (typeof document === 'undefined' || !document.head || !document.createElement) return () => {};
+  // Each plugin instance owns its element: an older instance can dispose without
+  // removing styles still needed by a newer overlapping instance.
+  const element = document.createElement('style');
+  element.dataset.volcengineProvider = '';
+  element.textContent = CLIENT_STYLES;
+  document.head.append(element);
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    element.remove();
+  };
+}
+
+function SectionHeading({ eyebrow, title, description, action }) {
+  return h('div', { className: 'vcp-heading' },
+    h('div', { className: 'vcp-heading-copy' },
+      eyebrow ? h('div', { className: 'vcp-eyebrow' }, eyebrow) : null,
+      h('h3', { style: style.cardTitle }, title),
+      description ? h('p', { style: style.muted }, description) : null),
+    action ?? null);
+}
+
+function Notice({ tone = 'muted', role, children }) {
+  return h('div', { className: 'vcp-notice', 'data-tone': tone },
+    h('p', { role, style: style[tone] || style.muted }, children));
+}
 
 // ── 纯函数小工具 ─────────────────────────────────────────────────────────────
 
@@ -522,7 +582,8 @@ function describeEffective(model) {
   if (Number.isFinite(effective.temperature)) parts.push(`温度 ${effective.temperature}`);
   if (Object.hasOwn(effective, 'reasoningEfforts')) parts.push(`思考档位 ${effortSummary(effective.reasoningEfforts)}`);
   if (Object.hasOwn(effective, 'defaultReasoning')) parts.push(`默认档位 ${effective.defaultReasoning === null ? '不强制' : String(effective.defaultReasoning)}`);
-  if (Object.hasOwn(effective, 'forceAdaptiveThinking')) parts.push(effective.forceAdaptiveThinking ? '原生 effort 模式' : '固定预算模式');
+  if (effective.reasoningEfforts === false) parts.push('思考控制按模型默认');
+  else if (Object.hasOwn(effective, 'forceAdaptiveThinking')) parts.push(effective.forceAdaptiveThinking ? '原生 effort 模式' : '固定预算模式');
   return parts.join('，');
 }
 
@@ -757,21 +818,21 @@ function QuotaWindows({ quota }) {
     }
     group.windows.push(item);
   }
-  return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
-    groups.map((group, index) => h('div', { key: group.key || `g${index}`, style: { display: 'flex', flexDirection: 'column', gap: 4 } },
-      group.label ? h('div', { style: { fontSize: 12, fontWeight: 600 } }, group.label) : null,
+  return h('div', { className: 'vcp-quota' },
+    groups.map((group, index) => h('section', { key: group.key || `g${index}`, className: 'vcp-quota-group', 'aria-label': group.label || '额度窗口' },
+      group.label ? h('div', { style: { fontSize: 12, fontWeight: 650 } }, group.label) : null,
       group.windows.map((item, position) => {
         const summary = windowSummary(item);
         const percent = finiteQuotaNumber(item?.percent);
         const label = WINDOW_KIND_LABELS[item?.kind] ?? item?.kind ?? '窗口';
-        return h('div', { key: `${item?.kind ?? 'w'}-${position}`, style: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 } },
-          h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: 12 } },
-            h('span', { style: { flexShrink: 0, whiteSpace: 'nowrap' } }, label),
-            h('span', { style: { textAlign: 'right', minWidth: 0, ...style[summary.tone] } }, summary.text)),
+        return h('div', { key: `${item?.kind ?? 'w'}-${position}`, className: 'vcp-quota-window', style: { fontSize: 12 } },
+          h('div', { className: 'vcp-quota-line' },
+            h('span', { style: { flexShrink: 0 } }, label),
+            h('span', { className: 'vcp-quota-value', style: style[summary.tone] }, summary.text)),
           percent !== null ? h('progress', {
             max: 100, value: Math.max(0, Math.min(100, 100 - percent)),
             'aria-label': `${label}剩余额度`, 'aria-valuetext': `剩余 ${formatPercent(Math.max(0, Math.min(100, 100 - percent)))}%`,
-            style: { width: '100%', height: 8, accentColor: summary.tone === 'error' ? 'var(--dsw-alias-state-error-primary, #dc2626)' : summary.tone === 'warn' ? 'var(--dsw-alias-state-warn-primary, #b45309)' : 'var(--dsw-alias-brand-primary, #3b82f6)' }
+            style: { accentColor: summary.tone === 'error' ? 'var(--dsw-alias-state-error-primary, #dc2626)' : summary.tone === 'warn' ? 'var(--dsw-alias-state-warn-primary, #b45309)' : 'var(--dsw-alias-brand-primary, #3b82f6)' }
           }) : null);
       })
     ))
@@ -791,6 +852,8 @@ function ModelSettingsEditor({ model, draft, error, disabled, onChange, onSave, 
   const stackedField = { ...style.field, flex: '0 0 auto', minWidth: 0 };
   const effortsMode = draft?.effortsMode ?? 'inherit';
   const tiers = draftTiers(draft, model);
+  const selectedDefault = draft?.defaultReasoning ?? 'inherit';
+  const staleDefault = !['inherit', 'none'].includes(selectedDefault) && !tiers.includes(selectedDefault);
   const numberField = (key, label) => h('label', { style: style.field },
     h('span', { style: style.label }, label),
     h('input', {
@@ -798,9 +861,9 @@ function ModelSettingsEditor({ model, draft, error, disabled, onChange, onSave, 
       'aria-label': label, placeholder: '留空表示继承目录默认', autoComplete: 'off', spellCheck: false,
       onChange: (event) => onChange({ [key]: event.target.value })
     }));
-  return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 10px', border: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.3))', borderRadius: 'var(--dsw-radius-sm, 6px)' } },
-    h('div', { style: { fontWeight: 600, fontSize: 13 } }, `模型参数：${model?.name || model?.id}`),
-    h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 10 } },
+  return h('div', { className: 'vcp-login' },
+    h('div', { style: { fontWeight: 650, fontSize: 13 } }, `模型参数：${model?.name || model?.id}`),
+    h('div', { className: 'vcp-fields vcp-fields-three' },
       numberField('contextWindow', MODEL_FIELD_LABELS.contextWindow),
       numberField('maxTokens', MODEL_FIELD_LABELS.maxTokens),
       numberField('temperature', MODEL_FIELD_LABELS.temperature)),
@@ -836,6 +899,7 @@ function ModelSettingsEditor({ model, draft, error, disabled, onChange, onSave, 
       },
         h('option', { value: 'inherit' }, '继承目录默认'),
         h('option', { value: 'none' }, '不强制默认档位（null）'),
+        staleDefault ? h('option', { value: selectedDefault, disabled: true }, `${selectedDefault}（已失效，请重选）`) : null,
         tiers.map((tier) => h('option', { key: tier, value: tier }, tier)))),
     h('label', { style: stackedField },
       h('span', { style: style.label }, '思考模式 forceAdaptiveThinking'),
@@ -865,21 +929,29 @@ function ModelRow({ model, disabled, routingError, editor, draftError, onToggle,
   const enabled = model?.enabled !== false;
   const editing = editor?.modelId === model?.id;
   const effective = describeEffective(model);
-  return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', border: '1px solid var(--dsw-alias-border-l1, rgba(128,128,128,.22))', borderRadius: 'var(--dsw-radius-sm, 6px)' } },
-    h('div', { style: style.row },
-      h('input', {
-        type: 'checkbox', checked: enabled, disabled,
-        'aria-label': `启用模型 ${model?.id ?? ''}`,
-        onChange: (event) => onToggle(model, Boolean(event.target.checked))
-      }),
-      h('span', { style: { fontWeight: 500 } }, model?.name || model?.id),
-      h('span', { style: style.chip }, model?.id),
-      model?.capabilityUnverified ? h('span', { style: style.chip }, '能力未核实') : null,
-      enabled ? null : h('span', { style: style.chip }, '已停用'),
-      h('button', { type: 'button', style: style.btn, disabled, 'aria-label': `模型参数 ${model?.id ?? ''}`, onClick: () => (editing ? onCloseEditor() : onOpenEditor(model)) }, editing ? '收起参数' : '参数'),
-      h('button', { type: 'button', style: style.btn, disabled, 'aria-label': `恢复默认 ${model?.id ?? ''}`, title: '清除全部参数覆盖并恢复模型启用状态', onClick: () => onReset(model) }, enabled ? '恢复默认' : '恢复默认并启用')),
+  return h('div', { className: 'vcp-model' },
+    h('div', { className: 'vcp-heading' },
+      h('div', { className: 'vcp-actions', style: { flex: '1 1 260px' } },
+        h('label', { className: 'vcp-actions', style: { flex: '1 1 220px', minWidth: 0 } },
+          h('input', {
+            type: 'checkbox', checked: enabled, disabled,
+            'aria-label': `启用模型 ${model?.id ?? ''}`,
+            style: { width: 18, height: 18, margin: 0, flex: '0 0 auto', accentColor: 'var(--dsw-alias-brand-primary, Highlight)' },
+            onChange: (event) => onToggle(model, Boolean(event.target.checked))
+          }),
+          h('span', { className: 'vcp-model-name', title: model?.id }, model?.name || model?.id)),
+        h('span', { className: 'vcp-chip-row' },
+          model?.capabilityUnverified ? h('span', { style: style.chip }, '能力未核实') : null,
+          enabled ? null : h('span', { style: style.chip }, '已停用'))),
+      h('div', { className: 'vcp-actions' },
+        h('button', { type: 'button', style: style.btn, disabled, 'aria-label': `模型参数 ${model?.id ?? ''}`, onClick: () => (editing ? onCloseEditor() : onOpenEditor(model)) }, editing ? '收起参数' : '参数'),
+        h('button', { type: 'button', style: style.btn, disabled, 'aria-label': `恢复默认 ${model?.id ?? ''}`, title: '清除全部参数覆盖并恢复模型启用状态', onClick: () => onReset(model) }, enabled ? '恢复默认' : '恢复默认并启用'))),
+    h('details', { className: 'vcp-details' },
+      h('summary', { style: style.summary }, '模型技术标识'),
+      h('p', { className: 'vcp-model-id', style: style.muted }, `调用 ID：${model?.id ?? ''}`)),
     h('p', { style: style.muted }, `当前参数：${describeModelSettings(model)}`),
     effective ? h('p', { style: routingError ? style.warn : style.muted }, `${routingError ? '已保存配置（路由尚未生效）' : '生效值'}：${effective}`) : null,
+    model?.settingsWarning ? h('p', { role: 'alert', style: style.warn }, model.settingsWarning) : null,
     editing
       ? h(ModelSettingsEditor, {
         model, draft: editor.draft, error: draftError, disabled,
@@ -982,86 +1054,103 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
     onResetModelSettings(plan, activeId, model.id);
   };
 
-  return h('section', { style: style.card },
-    h('h3', { style: style.cardTitle }, PLAN_TITLES[plan]),
-    account ? h('p', { style: { margin: 0, fontSize: 13 } }, `${snapshot?.routingError ? '所选账号' : '当前账号'}：${accountName(account)}`) : null,
-    snapshot?.routingError ? h('p', { style: style.warn }, appliedAccount === undefined
+  return h('section', { className: 'vcp-card', style: style.card, 'aria-label': PLAN_TITLES[plan] },
+    h(SectionHeading, {
+      eyebrow: plan === 'agent-plan' ? '02 · AGENT PLAN' : '03 · CODING PLAN',
+      title: PLAN_TITLES[plan],
+      description: '账号、模型与额度均独立管理；停用套餐不会清除已保存的选择和参数。',
+      action: h('span', { style: style.chip }, providerEnabled
+        ? (!account ? '待选择账号' : !auth.inference ? '待完成鉴权' : '套餐已启用')
+        : '套餐已停用')
+    }),
+    account ? h('p', { style: { margin: 0, fontSize: 13, fontWeight: 550 } }, `${snapshot?.routingError ? '所选账号' : '当前账号'}：${accountName(account)}`) : null,
+    snapshot?.routingError ? h(Notice, { tone: 'warn', role: 'alert' }, appliedAccount === undefined
       ? '实际生效账号暂不可确认，请排除路由错误后重试。'
       : appliedAccount ? `实际生效账号：${accountName(appliedAccount)}（${appliedAccount.id}），路由更新尚未完成。` : '该套餐当前没有已生效的模型路由。') : null,
-    h('div', { style: style.row },
-      h('label', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 } },
-        h('input', {
-          type: 'checkbox', checked: providerEnabled, disabled,
-          'aria-label': `启用${PLAN_TITLES[plan]}`,
-          onChange: (event) => onToggleProvider(plan, Boolean(event.target.checked))
-        }),
-        h('span', null, '启用该套餐')),
-      providerEnabled
-        ? h('span', { style: style.chip }, !account ? '待选择账号' : !auth.inference ? '待完成鉴权' : '套餐已启用')
-        : h('span', { style: style.chip }, '已停用：不注册模型路由（账号选择与模型参数保留）')),
-    h('div', { style: style.row },
-      h('label', { style: style.label }, '使用账号'),
-      h('select', {
-        style: { ...style.input, width: 'auto', minWidth: 160 },
-        value: activeId ?? '',
-        'aria-label': `${PLAN_TITLES[plan]}使用账号`,
-        disabled: disabled,
-        onChange: (event) => onSelect(plan, event.target.value || null)
-      },
-        h('option', { value: '' }, '未选择'),
-        accounts.map((item) => h('option', { key: item.id, value: item.id }, `${accountName(item)}${item.label && item.label !== accountName(item) ? ` · 备注：${item.label}` : ''}（${item.id}）`)))),
-    h('div', { style: style.row },
-      h('button', { type: 'button', style: style.btn, disabled: disabled || !canPullModels, onClick: () => onModels(plan) }, busy === `models:${plan}` ? '正在拉取模型…' : '拉取模型'),
-      h('button', { type: 'button', style: style.btn, disabled: disabled || quotaBusy || !auth.quota, onClick: () => onQuota(plan) }, quotaBusy ? '正在刷新额度…' : quota?.state === 'error' ? '重试额度查询' : '刷新额度')),
-    account ? h('div', { style: style.row },
-      h('span', { style: style.chip }, `鉴权来源：${auth.oauth ? '官方网页登录（OAuth）' : '凭据引用'}`),
-      h('span', { style: style.chip }, auth.oauth ? `套餐绑定：${auth.bound ? '已绑定' : '未绑定'}` : `推理凭据：${auth.inference ? '已配置' : '未配置'}`),
-      h('span', { style: style.chip }, `额度鉴权：${auth.oauth ? (auth.quota ? 'OAuth 已就绪' : 'OAuth 未就绪') : auth.quota ? 'AK/SK 已配置' : '未配置'}`)) : null,
+    h('div', { className: 'vcp-login' },
+      h('div', { className: 'vcp-heading' },
+        h('label', { className: 'vcp-actions', style: { fontSize: 12, fontWeight: 550 } },
+          h('input', {
+            type: 'checkbox', checked: providerEnabled, disabled,
+            'aria-label': `启用${PLAN_TITLES[plan]}`,
+            style: { width: 18, height: 18, margin: 0, accentColor: 'var(--dsw-alias-brand-primary, Highlight)' },
+            onChange: (event) => onToggleProvider(plan, Boolean(event.target.checked))
+          }),
+          h('span', null, '启用该套餐')),
+        !providerEnabled ? h('span', { style: style.muted }, '不注册模型路由；账号选择与模型参数保留') : null),
+      h('label', { style: { ...style.field, flex: 'none' } },
+        h('span', { style: style.label }, '使用账号'),
+        h('select', {
+          className: 'vcp-select', style: style.input,
+          value: activeId ?? '',
+          'aria-label': `${PLAN_TITLES[plan]}使用账号`,
+          disabled: disabled,
+          onChange: (event) => onSelect(plan, event.target.value || null)
+        },
+          h('option', { value: '' }, '未选择'),
+          accounts.map((item) => h('option', { key: item.id, value: item.id }, `${accountName(item)}${item.label && item.label !== accountName(item) ? ` · 备注：${item.label}` : ''}（${item.id}）`)))),
+      account ? h('div', { className: 'vcp-chip-row' },
+        h('span', { style: style.chip }, `鉴权来源：${auth.oauth ? '官方网页登录（OAuth）' : '凭据引用'}`),
+        h('span', { style: style.chip }, auth.oauth ? `套餐绑定：${auth.bound ? '已绑定' : '未绑定'}` : `推理凭据：${auth.inference ? '已配置' : '未配置'}`),
+        h('span', { style: style.chip }, `额度鉴权：${auth.oauth ? (auth.quota ? 'OAuth 已就绪' : 'OAuth 未就绪') : auth.quota ? 'AK/SK 已配置' : '未配置'}`)) : null),
     !account ? h('p', { style: style.muted }, '该套餐尚未选择账号，请选择已登录的账号。') : null,
     account && auth.oauth && !auth.bound
-      ? h('p', { style: style.warn }, '此账号尚未绑定该套餐，暂不能拉取模型或查询额度。请先确认已订阅此个人套餐，再到上方账号区重新网页登录更新绑定。')
+      ? h(Notice, { tone: 'warn' }, '此账号尚未绑定该套餐，暂不能拉取模型或查询额度。请先确认已订阅此个人套餐，再到上方账号区重新网页登录更新绑定。')
       : null,
-    account && !auth.oauth && !canPullModels
-      ? h('p', { style: style.muted }, '当前可使用本地模型快照；远端目录需要官方网页登录或该账号隔离目录内的 CLI Profile，配置前无法拉取。') : null,
     account && !auth.oauth && !auth.inference
-      ? h('p', { style: style.warn }, '该账号尚未配置此套餐的推理凭据，请在账号高级配置中填写引用名，或使用网页登录。')
+      ? h(Notice, { tone: 'warn' }, '该账号尚未配置此套餐的推理凭据，请在账号高级配置中填写引用名，或使用网页登录。')
       : null,
-    account && !auth.quota && (!auth.oauth || auth.bound)
-      ? h('p', { style: style.warn }, auth.oauth ? '该套餐的登录身份暂不可查询额度，请重新登录后重试。' : '该账号缺少 AK/SK 凭据引用，额度窗口无法查询。')
-      : null,
-    h('details', null,
-      h('summary', { style: style.muted }, '套餐高级信息'),
-      h('p', { style: style.muted }, PLAN_HINTS[plan]),
-      account ? h('p', { style: style.muted }, `本地账号 ID：${account.id}${auth.oauth && auth.bound ? ` · 套餐 Profile：${account.oauthProfiles[plan]}` : ''}`) : null,
-      route ? h('p', { style: style.muted }, `模型路由：${route}`) : null,
-      catalog ? h('p', { style: style.muted }, `模型目录：${catalog.count} 个模型（来源 ${CATALOG_SOURCE_LABELS[catalog.source] ?? catalog.source}${catalog.updatedAt ? `，更新于 ${formatTime(catalog.updatedAt)}` : ''}）。`) : null),
-    catalog?.error ? h('p', { role: 'alert', style: style.error }, describeError(catalog.error)) : null,
-    models.length
-      ? h('details', { open: modelsOpen },
-        h('summary', {
-          style: { cursor: 'pointer', fontSize: 13 },
-          onClick: (event) => {
-            // 自己接管开合，避免浏览器原生开合与受控状态打架。
-            if (event?.preventDefault) event.preventDefault();
-            setModelsOpen((previous) => !previous);
-          }
-        }, `模型列表（已启用 ${enabledCount} / 共 ${models.length}）`),
-        h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 } },
-          models.map((model, index) => h(ModelRow, {
-            key: model?.id ?? `model-${index}`,
-            model, disabled, routingError: snapshot?.routingError, editor, draftError,
-            onToggle: (item, enabled) => onToggleModel(plan, activeId, item.id, enabled),
-            onOpenEditor: openEditor,
-            onCloseEditor: closeEditor,
-            onChangeDraft: changeDraft,
-            onSave: saveEditor,
-            onReset: resetModel
-          }))))
-      : h('p', { style: style.muted }, catalog
-        ? '该目录暂无模型明细（旧缓存可能没有模型列表，重新拉取模型后可用）。'
-        : !account ? '选择账号后显示该套餐的模型目录。' : '模型目录：尚未拉取。'),
-    h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 }, 'aria-busy': Boolean(quotaBusy) },
-      h('h4', { style: { margin: 0, fontSize: 13 } }, '套餐额度'),
+    h('details', { className: 'vcp-details' },
+      h('summary', { style: style.summary }, '套餐高级信息与技术标识'),
+      h('div', { className: 'vcp-details-body' },
+        h('p', { style: style.muted }, PLAN_HINTS[plan]),
+        account ? h('p', { style: style.muted }, `本地账号 ID：${account.id}${auth.oauth && auth.bound ? ` · 套餐 Profile：${account.oauthProfiles[plan]}` : ''}`) : null,
+        route ? h('p', { style: style.muted }, `模型路由：${route}`) : null,
+        catalog ? h('p', { style: style.muted }, `模型目录：${catalog.count} 个模型（来源 ${CATALOG_SOURCE_LABELS[catalog.source] ?? catalog.source}${catalog.updatedAt ? `，更新于 ${formatTime(catalog.updatedAt)}` : ''}）。`) : null,
+        h('p', { style: style.muted }, '能力参数采用插件固化快照；拉取只更新可用模型清单，手动覆盖优先。'))),
+    h('section', { className: 'vcp-section', 'aria-label': `${PLAN_TITLES[plan]}模型目录` },
+      h('div', { className: 'vcp-heading' },
+        h('div', { className: 'vcp-heading-copy' },
+          h('h4', { style: { margin: 0, fontSize: 13, fontWeight: 650 } }, '模型目录'),
+          h('p', { style: style.muted }, models.length ? `已启用 ${enabledCount} / 共 ${models.length} 个模型` : '拉取官方目录，或查看可用的本地快照。')),
+        h('button', { type: 'button', style: style.btn, disabled: disabled || !canPullModels, 'aria-busy': busy === `models:${plan}` || undefined, onClick: () => onModels(plan) }, busy === `models:${plan}` ? '正在拉取模型…' : '拉取模型')),
+      account && !auth.oauth && !canPullModels
+        ? h('p', { style: style.muted }, '当前可使用本地模型快照；远端目录需要官方网页登录或该账号隔离目录内的 CLI Profile，配置前无法拉取。') : null,
+      catalog?.error ? h('p', { role: 'alert', style: style.error }, describeError(catalog.error)) : null,
+      models.some(model => model?.settingsWarning) ? h(Notice, { tone: 'warn', role: 'alert' }, '部分已保存的默认思考档位已失效，当前未强制这些档位；展开模型列表可重新选择。') : null,
+      models.length
+        ? h('details', { className: 'vcp-details', open: modelsOpen },
+          h('summary', {
+            style: style.summary,
+            onClick: (event) => {
+              // 自己接管开合，避免浏览器原生开合与受控状态打架。
+              if (event?.preventDefault) event.preventDefault();
+              setModelsOpen((previous) => !previous);
+            }
+          }, `模型列表（已启用 ${enabledCount} / 共 ${models.length}）`),
+          h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 } },
+            models.map((model, index) => h(ModelRow, {
+              key: model?.id ?? `model-${index}`,
+              model, disabled, routingError: snapshot?.routingError, editor, draftError,
+              onToggle: (item, enabled) => onToggleModel(plan, activeId, item.id, enabled),
+              onOpenEditor: openEditor,
+              onCloseEditor: closeEditor,
+              onChangeDraft: changeDraft,
+              onSave: saveEditor,
+              onReset: resetModel
+            }))))
+        : h('p', { style: style.muted }, catalog
+          ? '该目录暂无模型明细（旧缓存可能没有模型列表，重新拉取模型后可用）。'
+          : !account ? '选择账号后显示该套餐的模型目录。' : '模型目录：尚未拉取。')),
+    h('section', { className: 'vcp-section', 'aria-busy': Boolean(quotaBusy), 'aria-label': `${PLAN_TITLES[plan]}额度` },
+      h('div', { className: 'vcp-heading' },
+        h('div', { className: 'vcp-heading-copy' },
+          h('h4', { style: { margin: 0, fontSize: 13, fontWeight: 650 } }, '套餐额度'),
+          h('p', { style: style.muted }, '仅展示接口返回的有效数据；不同窗口与能力范围分别计量。')),
+        h('button', { type: 'button', style: style.btn, disabled: disabled || quotaBusy || !auth.quota, 'aria-busy': quotaBusy || undefined, onClick: () => onQuota(plan) }, quotaBusy ? '正在刷新额度…' : quota?.state === 'error' ? '重试额度查询' : '刷新额度')),
+      account && !auth.quota && (!auth.oauth || auth.bound)
+        ? h('p', { style: style.warn }, auth.oauth ? '该套餐的登录身份暂不可查询额度，请重新登录后重试。' : '该账号缺少 AK/SK 凭据引用，额度窗口无法查询。')
+        : null,
       quotaBusy ? h('p', { role: 'status', style: style.muted }, `正在查询${PLAN_TITLES[plan]}的额度…`) : null,
       quota?.updatedAt ? h('p', { style: style.muted }, `额度更新时间：${formatTime(quota.updatedAt)}`) : null,
       !account ? h('p', { style: style.muted }, '请先登录或添加账号，再为此套餐选择账号。')
@@ -1085,40 +1174,44 @@ function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, bu
   const loginAccount = accounts.find((item) => item?.id === login.accountId) ?? null;
   const authMode = loginAccount?.authMode ?? login.authMode ?? null;
 
-  return h('section', { style: style.card },
-    h('h3', { style: style.cardTitle }, '账号管理'),
-    h('p', { style: style.muted }, '账号以官方登录身份区分，本地备注仅用于帮助识别。每个套餐可独立选择账号。'),
+  return h('section', { className: 'vcp-card', style: style.card, 'aria-label': '账号管理' },
+    h(SectionHeading, {
+      eyebrow: '01 · 账号', title: '账号与登录',
+      description: '官方身份用于鉴权，本地备注仅帮助识别；两个套餐可分别选择账号。',
+      action: h('span', { style: style.chip }, `${accounts.length} 个账号`)
+    }),
     accounts.length
-      ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
-        accounts.map((account) => h('div', { key: account.id, style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', border: '1px solid var(--dsw-alias-border-l1, rgba(128,128,128,.22))', borderRadius: 'var(--dsw-radius-sm, 6px)' } },
-          h('div', { style: style.row },
-            h('strong', { style: { fontWeight: 600 } }, accountName(account)),
+      ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
+        accounts.map((account) => h('article', { key: account.id, className: 'vcp-account', 'aria-label': accountName(account) },
+          h('div', { className: 'vcp-heading' },
+            h('strong', { className: 'vcp-account-title' }, accountName(account)),
             account.authMode ? h('span', { style: style.chip }, `凭据来源：${AUTH_MODE_LABELS[account.authMode] ?? account.authMode}`) : null),
           account.label ? h('p', { style: style.muted }, `本地备注：${account.label}`) : null,
-          account.identity?.accountId ? h('p', { style: style.muted }, `官方账号 ID：${account.identity.accountId}`) : null,
-          account.identity?.userId ? h('p', { style: style.muted }, `官方用户 ID：${account.identity.userId}`) : null,
           isOAuth(account) && !account.identity ? h('p', { style: style.muted }, '官方身份摘要暂不可用，完成网页登录后更新。') : null,
-          account.loggedAt ? h('p', { style: style.muted }, `最近登录：${formatTime(account.loggedAt)}`) : null,
           account.credentialError ? h('p', { role: 'alert', style: style.error }, `凭据状态：${describeError(account.credentialError)}`) : null,
-          h('div', { style: style.row }, PLANS.map((plan) => h('span', { key: plan, style: style.chip },
+          h('div', { className: 'vcp-chip-row' }, PLANS.map((plan) => h('span', { key: plan, style: style.chip },
             `${plan === 'agent-plan' ? 'Agent' : '编程'}套餐：${snapshot?.active?.[plan] === account.id ? (providerEnabledOf(snapshot, plan) ? '当前使用' : '已选择 · 已停用') : '未选用'}${isOAuth(account) ? ` · ${account.oauthProfiles?.[plan] ? '已绑定' : '未绑定'}` : ''}`))),
-          h('div', { style: style.row }, PLANS.map(plan => {
+          h('div', { className: 'vcp-actions' }, PLANS.map(plan => {
             const selected = snapshot?.active?.[plan] === account.id;
             if (!planAuth(account, plan).inference || (selected && providerEnabledOf(snapshot, plan))) return null;
             return h('button', { key: plan, type: 'button', style: style.primary, disabled: disabled || loginActive,
               onClick: () => onUsePlan(plan, account.id) }, `${selected ? '启用' : '用于'} ${plan === 'agent-plan' ? 'Agent' : '编程'}套餐`);
           })),
-          h('details', null,
-            h('summary', { style: style.muted }, '账号高级配置与标识'),
-            h('p', { style: style.muted }, `本地账号 ID：${account.id}`),
+          h('details', { className: 'vcp-details' },
+            h('summary', { style: style.summary }, '账号高级配置与标识'),
+            h('div', { className: 'vcp-details-body' },
+              account.identity?.accountId ? h('p', { style: style.muted }, `官方账号 ID：${account.identity.accountId}`) : null,
+              account.identity?.userId ? h('p', { style: style.muted }, `官方用户 ID：${account.identity.userId}`) : null,
+              account.loggedAt ? h('p', { style: style.muted }, `最近登录：${formatTime(account.loggedAt)}`) : null,
+              h('p', { style: style.muted }, `本地账号 ID：${account.id}`),
             isOAuth(account)
               ? PLANS.map((plan) => account.oauthProfiles?.[plan] ? h('p', { key: plan, style: style.muted }, `${plan === 'agent-plan' ? 'Agent' : '编程'}套餐 Profile：${account.oauthProfiles[plan]}`) : null)
               : h('div', null,
                 h('p', { style: style.muted }, `Agent 套餐推理引用：${account.apiKeyRefs?.['agent-plan'] || '未配置'}`),
                 h('p', { style: style.muted }, `编程套餐推理引用：${account.apiKeyRefs?.['coding-plan'] || '未配置'}`),
                 h('p', { style: style.muted }, `AK 引用：${account.accessKeyRef || '未配置'} · SK 引用：${account.secretKeyRef || '未配置'}`)),
-            account.cliProfile ? h('p', { style: style.muted }, `ArkCli Profile：${account.cliProfile}`) : null),
-          h('div', { style: style.row },
+            account.cliProfile ? h('p', { style: style.muted }, `ArkCli Profile：${account.cliProfile}`) : null)),
+          h('div', { className: 'vcp-actions' },
             h('button', { type: 'button', style: style.btn, disabled: disabled || loginActive, onClick: () => onRequestLogin(account.id) }, loginActive ? '登录进行中…' : '网页登录'),
             h('button', { type: 'button', style: style.btn, disabled: disabled || loginActive, onClick: () => onEdit(account) }, '编辑'),
             confirmDelete === account.id
@@ -1128,17 +1221,17 @@ function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, bu
               ? h('button', { type: 'button', style: style.btn, disabled: disabled, onClick: onCancelDelete }, '取消')
               : null),
           loginConfirm === account.id
-            ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', border: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.3))', borderRadius: 'var(--dsw-radius-sm, 6px)' } },
-              h('div', { style: { fontWeight: 600, fontSize: 13 } }, `开始网页登录：${accountName(account)}`),
-              h('ul', { style: { margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 } },
+            ? h('div', { className: 'vcp-login' },
+              h('div', { style: { fontWeight: 650, fontSize: 13 } }, `开始网页登录：${accountName(account)}`),
+              h('ul', { style: { margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 } },
                 LOGIN_CONFIRM_NOTES.map((note, index) => h('li', { key: index, style: style.muted }, note))),
-              h('div', { style: style.row },
+              h('div', { className: 'vcp-actions' },
                 h('button', { type: 'button', style: style.primary, disabled: disabled, onClick: () => onConfirmLogin(account.id) }, '确认并打开官方登录页'),
                 h('button', { type: 'button', style: style.btn, disabled: disabled, onClick: onCancelLoginConfirm }, '取消')))
             : null)))
-      : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+      : h('div', { className: 'vcp-login' },
         h('p', { style: style.muted }, '还没有账号。可直接网页登录，确认后会自动创建本地账号，无需填写账号 ID 或密钥引用。'),
-        h('div', { style: style.row },
+        h('div', { className: 'vcp-actions' },
           h('button', { type: 'button', style: style.primary, disabled: disabled || loginActive, onClick: () => onRequestLogin(NEW_LOGIN_ACCOUNT) }, '网页登录')),
         loginConfirm === NEW_LOGIN_ACCOUNT ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
           h('strong', null, '创建账号并开始网页登录'),
@@ -1147,19 +1240,22 @@ function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, bu
           h('div', { style: style.row },
             h('button', { type: 'button', style: style.primary, disabled: disabled || loginActive, onClick: () => onConfirmLogin(NEW_LOGIN_ACCOUNT) }, '确认并打开官方登录页'),
             h('button', { type: 'button', style: style.btn, disabled, onClick: onCancelLoginConfirm }, '取消'))) : null),
-    h('div', { style: style.row },
+    h('div', { className: 'vcp-actions' },
       accounts.length ? h('button', { type: 'button', style: style.primary, disabled: disabled || loginActive, onClick: () => onRequestLogin(NEW_LOGIN_ACCOUNT) }, '登录其他账号') : null,
       h('button', { type: 'button', style: style.btn, disabled: disabled || loginActive || editor !== null, onClick: onNew }, '新增账号')),
-    accounts.length > 0 && loginConfirm === NEW_LOGIN_ACCOUNT ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+    accounts.length > 0 && loginConfirm === NEW_LOGIN_ACCOUNT ? h('div', { className: 'vcp-login' },
       h('strong', null, '创建独立账号并网页登录'),
-      h('p', { style: style.muted }, '使用新的本地账号保存登录结果，不覆盖已有账号或更改当前套餐选择。请在普通浏览器的官方页面确认实际授权身份。'),
+      h('p', { style: style.muted }, '使用新的本地账号保存登录结果，不覆盖已有账号或更改当前套餐选择。请在独立 Chrome 窗口的官方页面确认实际授权身份。'),
       h('ul', { style: { margin: 0, paddingLeft: 18 } }, LOGIN_CONFIRM_NOTES.map((note, index) => h('li', { key: index, style: style.muted }, note))),
       h('div', { style: style.row },
         h('button', { type: 'button', style: style.primary, disabled: disabled || loginActive, onClick: () => onConfirmLogin(NEW_LOGIN_ACCOUNT) }, '确认并打开官方登录页'),
         h('button', { type: 'button', style: style.btn, disabled, onClick: onCancelLoginConfirm }, '取消'))) : null,
     editor ? h(AccountForm, { editor, busy: busy ?? (loginActive ? 'login-active' : null), onChangeDraft, onSave, onCancel: onCancelEdit }) : null,
-    h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 } },
-      h('div', { style: { fontWeight: 600, fontSize: 13 } }, '网页登录'),
+    login.state === 'idle' && !login.message && !loginUrl ? null
+      : login.state === 'success' && !loginUrl
+        ? h(Notice, { tone: 'success', role: 'status' }, login.message ? `${LOGIN_STATE_LABELS.success} ${login.message}` : LOGIN_STATE_LABELS.success)
+        : h('div', { className: 'vcp-login', role: loginActive ? 'status' : undefined },
+      h('div', { style: { fontWeight: 650, fontSize: 13 } }, '网页登录状态'),
       loginAccount ? h('p', { style: style.muted }, `当前登录账号：${accountName(loginAccount)}（${loginAccount.id}）`) : null,
       authMode ? h('p', { style: style.muted }, `凭据来源：${AUTH_MODE_LABELS[authMode] ?? authMode}`) : null,
       h('p', { style: style.muted }, LOGIN_STATE_LABELS[login.state] ?? login.state),
@@ -1196,25 +1292,25 @@ function AccountForm({ editor, busy, onChangeDraft, onSave, onCancel }) {
       placeholder, autoComplete: 'off', spellCheck: false,
       onChange: (event) => onChangeDraft({ apiKeyRefs: { [plan]: event.target.value } })
     }));
-  return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', border: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.3))', borderRadius: 'var(--dsw-radius-sm, 6px)' } },
-    h('div', { style: { fontWeight: 600, fontSize: 13 } }, editor.mode === 'edit' ? `编辑账号：${editor.id}` : '新增账号'),
-    h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 10 } },
+  return h('div', { className: 'vcp-login' },
+    h('div', { style: { fontWeight: 650, fontSize: 13 } }, editor.mode === 'edit' ? `编辑账号：${editor.id}` : '新增账号'),
+    h('div', { className: 'vcp-fields' },
       field('账号 ID（小写字母开头）', 'id', 'default'),
       field('本地备注', 'label', '例如：个人账号')),
     h('p', { style: style.muted }, '保存后点击「网页登录」绑定官方账号；使用 OAuth 时无需填写下方的凭据引用。'),
-    h('details', null,
-      h('summary', { style: style.muted }, '高级配置：凭据引用与 CLI Profile'),
+    h('details', { className: 'vcp-details' },
+      h('summary', { style: style.summary }, '高级配置：凭据引用与 CLI Profile'),
       isOAuth(editor) ? h('p', { style: style.warn }, '此账号当前使用 OAuth，编辑引用不会切换鉴权方式。模型调用与额度查询仍使用已绑定的套餐身份。') : null,
-      h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 10 } },
+      h('div', { className: 'vcp-fields' },
       apiKeyField('agent-plan', 'Agent 套餐推理凭据引用名', '例如：ARKCLI_AGENT_PLAN_API_KEY'),
       apiKeyField('coding-plan', '编程套餐推理凭据引用名', '例如：ARKCLI_CODING_PLAN_API_KEY')),
-    h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 10 } },
+    h('div', { className: 'vcp-fields' },
       field('AccessKey 引用名（可选）', 'accessKeyRef', '例如：VOLC_ACCESSKEY'),
       field('SecretKey 引用名（可选）', 'secretKeyRef', '例如：VOLC_SECRETKEY')),
     h('p', { style: style.muted }, 'AK/SK 引用名只用于查询管控面额度；用「网页登录」完成 OAuth 的账号不需要填写这两项。'),
-    h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 10 } },
+    h('div', { className: 'vcp-fields' },
       field('ArkCli Profile（可选）', 'cliProfile', '留空表示不使用'))),
-    h('div', { style: style.row },
+    h('div', { className: 'vcp-actions' },
       h('button', { type: 'button', style: style.primary, disabled: disabled, onClick: onSave }, busy === 'save' ? '保存中…' : '保存'),
       h('button', { type: 'button', style: style.btn, disabled: disabled, onClick: onCancel }, '取消'))
   );
@@ -1582,21 +1678,29 @@ function VolcengineProviderSection({ client }) {
   const loginActive = LOGIN_ACTIVE_STATES.includes(login.state);
   const planBusy = busy ?? (loginActive ? 'login-active' : null);
 
-  return h('div', { style: style.root },
-    h('header', null,
-      h('div', { style: { ...style.row, justifyContent: 'space-between' } },
+  const headerStatus = snapshot?.routingError ? '路由需要检查'
+    : loginActive ? '登录进行中'
+      : loading && !snapshot ? '正在读取设置'
+        : snapshot ? `${snapshot.accounts?.length ?? 0} 个账号 · 2 个套餐` : '等待连接';
+
+  return h('div', { className: 'vcp-settings', style: style.root },
+    h('header', { className: 'vcp-header' },
+      h('div', { className: 'vcp-header-copy' },
+        h('div', { className: 'vcp-eyebrow' }, 'MODEL PROVIDER'),
         h('h2', { style: style.title }, '火山方舟 Provider'),
-        h('button', { type: 'button', style: style.btn, disabled: busyAccount || loading, onClick: () => { void refresh(); } }, loading ? '正在刷新状态…' : '刷新状态')),
-      h('p', { style: style.muted }, '登录或添加账号，再为 Agent 套餐与编程套餐分别选择账号、管理模型并查看额度。')),
-    loading && snapshot ? h('p', { role: 'status', style: style.muted }, '正在更新账号与套餐状态…') : null,
-    busy ? h('p', { role: 'status', 'aria-live': 'polite', style: style.muted }, busyMessage(busy)) : null,
-    loginActive ? h('p', { role: 'status', style: style.muted }, '登录期间暂不能修改账号与套餐，请完成登录或取消后继续。') : null,
-    loadError ? h('div', null,
+        h('p', { style: { ...style.muted, marginTop: 6 } }, '集中管理官方登录身份、双套餐模型与额度。套餐启停、账号选择和模型参数互不清空。')),
+      h('div', { className: 'vcp-actions' },
+        h('span', { role: 'status', style: style.chip }, headerStatus),
+        h('button', { type: 'button', style: style.btn, disabled: busyAccount || loading, onClick: () => { void refresh(); } }, loading ? '正在刷新状态…' : '刷新状态'))),
+    loading && snapshot ? h(Notice, { role: 'status' }, '正在更新账号与套餐状态…') : null,
+    busy ? h(Notice, { role: 'status' }, h('span', { 'aria-live': 'polite' }, busyMessage(busy))) : null,
+    loginActive ? h(Notice, { tone: 'warn', role: 'status' }, '登录期间暂不能修改账号与套餐，请完成登录或取消后继续。') : null,
+    loadError ? h('div', { className: 'vcp-notice', 'data-tone': 'error' },
       h('p', { role: 'alert', style: style.error }, `读取状态失败：${loadError}`),
       h('button', { type: 'button', style: style.btn, disabled: busyAccount || loading, onClick: () => { void refresh(); } }, '重试读取状态')) : null,
-    snapshot?.routingError ? h('p', { role: 'alert', style: style.error }, describeError(snapshot.routingError)) : null,
+    snapshot?.routingError ? h(Notice, { tone: 'error', role: 'alert' }, describeError(snapshot.routingError)) : null,
     notice
-      ? h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+      ? h('div', { className: 'vcp-notice', 'data-tone': notice.ok ? 'success' : 'error' },
         h('p', { role: notice.ok ? 'status' : 'alert', style: notice.ok ? style.success : style.error }, notice.text),
         notice.refresh
           ? h('button', { type: 'button', style: style.btn, disabled: busyAccount, onClick: () => { setNotice(null); void refresh(); } }, '刷新')
@@ -1642,6 +1746,7 @@ function VolcengineProviderSection({ client }) {
  */
 export function apply(ctx) {
   const runtime = { disposed: false, service: null, unmount: null, timers: new Set(), waiters: new Set() };
+  ctx.effect(installStyles, 'dsh-volcengine-provider: 设置页样式');
 
   /** 读取已挂载的远端服务；未就绪返回 null。 */
   const lookupService = () => {

@@ -6,6 +6,16 @@
 - ArkCli **1.0.37** 的命令帮助、随包官方 Skills、raw action 注册及无网络预览。
 - 单元业务测试使用假凭据、假 CLI 与外部网络替身；真实本地桥 IPC、原生进程和独立账号 OAuth 验收另列，均使用临时目录。
 
+## 0.2.4 模型快照与界面重构
+
+- 参数按[固化能力来源](model-capabilities.md)逐字段核对，优先对应 Plan Pi 明确整数；补齐当前 15 个固定模型族与账号选择路由配置，并保留冲突/思考控制的证据边界，不把其他 Provider 原厂上限直接覆盖 Plan。
+- 显式别名覆盖控制面 ID、Plan 调用 ID 与文档名称；未知版本不去日期猜测。真实已有目录样本只读回放：Agent 原有 8 个、Coding 原有 7 个 32K 回退项均缩减为仅 `auto`，各 15 个固定模型采用固化默认值；原始状态文件逐字节未变。
+- 回归覆盖旧缓存内存合并、友好显示名、原 ID 操作键、用户覆盖优先、默认输出不超过有效上下文、别名进入 Core 前剥离；旧 GLM medium 默认保留原值、有提示地降为不强制，真实 Core resolve/prepare 均通过。实际 Core 隔离 Host 再次通过，验证 16 配置/套餐及 Economy 的 `1049000`/`393216`；模型管理和请求优先级脚本通过，全部 HTTP 使用替身。
+- 设置页保留全部原 RPC/并发保护，参考 Antigravity ACP 0.1.29 与 OpenDesign CoRouter 0.1.4 的公开客户端：编号分区、DSW 令牌、卡片/控件、技术信息折叠、紧凑成功状态、主次按钮。没有复制对方业务逻辑。
+- 真实 Core 的 listModels 返回友好名称；真实 React 模型目录验证“豆包 Seed 2.1 Pro”“Kimi K3.1 Pro”“DeepSeek V4.1 Flash”及折叠调用 ID，见[模型名称预览](client-model-names-preview.png)。
+- 新增布局、样式所有权、重叠实例卸载和紧凑状态回归；保留旧 Host 安全授权链接、登录确认/取消、未知启动保护、身份/额度迟到隔离等既有覆盖。真实 React/Chrome 离线复验深浅色、390px、模型参数、原生折叠及控件实际尺寸。
+- 能力边界来自对应来源资料；真实服务端容量上限和 Plan 思考控制效果尚需单独的推理验证。
+
 ## 已执行
 
 ### 语法、单元测试与构建
@@ -21,7 +31,7 @@ node --test test/*.test.mjs
 - HMAC 签名测试使用独立 OpenSSL 推导的固定向量，不只比较实现自身的两次输出。
 - 构建生成 Host 模块与返回导出对象的惰性 Client 工厂；不新增安装构建依赖。
 
-当前结果：**261 项 JavaScript 测试、10 项 Python 归档测试通过**，41 个 JavaScript 源文件语法/边界检查通过，构建包含 16 个模块/Client 产物及 3 个浏览器桥辅助文件。归档测试使用系统 Python 3.12；此前受 Low 完整性影响的运行时 Python 无法创建临时目录，属于工具环境问题。模型管理测试覆盖旧状态迁移、套餐/模型开关、逐模型参数、请求默认值及适配器生命周期；发布测试覆盖 OIDC 身份、版本与渠道、归档校验、registry 错误分类及发布后完整性检查。
+当前结果：**280 项 JavaScript 测试、10 项 Python 归档测试通过**，43 个 JavaScript 源文件语法/边界检查通过，构建包含 16 个模块/Client 产物及 3 个浏览器桥辅助文件。归档测试使用系统 Python 3.12；此前受 Low 完整性影响的运行时 Python 无法创建临时目录，属于工具环境问题。模型管理测试覆盖旧状态迁移、套餐/模型开关、逐模型参数、请求默认值及适配器生命周期；发布测试覆盖 OIDC 身份、版本与渠道、归档校验、registry 错误分类及发布后完整性检查。
 
 ### 实际 Core 隔离加载
 
@@ -29,7 +39,7 @@ node --test test/*.test.mjs
 
 - 真实 Core 导入、Config Schema、Typert RPC 注册。
 - 先加载既有原生 llm-pi-ai，再加载本插件，验证共存。
-- 独立账号凭据服务桥接、两个路由各 10 个模型；缺凭据时不显示为可用模型。
+- 独立账号凭据服务桥接、两个路由各 16 个固化模型配置；缺凭据时不显示为可用模型。
 - 模型上下文和输出规格解析；单独停用 Coding 路由不影响 Agent。
 - dispose 后清除本插件服务与两个适配器，既有 Core 不被修改。
 
@@ -56,7 +66,7 @@ node --test test/*.test.mjs
 - 只提取宿主静态 React 模块，主动停止宿主应用启动；不访问运行中的 DSH 页面、接口或登录态。
 - HTTP(S) 请求被拦截；全部 RPC 为假数据，不打开真实 OAuth 页面。
 - 验证双卡片、套餐及模型开关、参数保存/恢复默认、额度剩余/AFP 分组、网页登录确认前不发起登录、确认后调用与卸载。
-- 已检查[桌面界面预览](client-journey-preview.png)、[窄屏界面预览](client-journey-preview-mobile.png)与[空账号入口](client-journey-preview-empty.png)，390px 视口无横向溢出。这不是生产 DSH 页面截图，账号和额度均是假数据。
+- 已检查重构后的[桌面浅色预览](client-settings-preview.png)、[桌面深色预览](client-settings-preview-dark.png)、[390px 深色窄屏预览](client-settings-preview-mobile-dark.png)与[空账号入口](client-settings-preview-empty.png)。主题使用受控 DSW 令牌；390px 无横向溢出、账号选择框高度小于 64px、卡片移动端 padding 为 12px、原生 details 可正常开合。不是生产 DSH 页面截图，账号和额度均为假数据。
 - 模拟网页登录从等待到成功，验证官方用户名自动更新至账号区与套餐卡片、旧额度清空、重新查询归属新身份；进度条与文案统一表达剩余额度。
 
 ## 身份与交互修复验证（2026-10-26）

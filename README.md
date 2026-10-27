@@ -33,9 +33,9 @@ dsh plugin --profile web add dsh-volcengine-provider
 
 ## 功能介绍
 
-<img src="docs/client-journey-preview.png" width="1000" alt="火山方舟 Provider 的双套餐、额度分组、账号管理和网页登录设置页">
+<img src="docs/client-settings-preview.png" width="1000" alt="火山方舟 Provider 重构后的账号、双套餐、模型与额度分区">
 
-<sub>真实组件离线预览，账号与额度为示例数据。</sub>
+<sub>真实组件离线预览，使用受控 DSW 主题令牌，账号与额度均为示例数据。另见<a href="docs/client-settings-preview-dark.png">深色预览</a>与<a href="docs/client-settings-preview-mobile-dark.png">390px 窄屏预览</a>。</sub>
 
 ### 两套套餐，分别接入
 
@@ -54,7 +54,9 @@ Agent Plan 与 Coding Plan 各有独立的启用开关、账号选择、模型�
 
 ### 拉取套餐模型
 
-从官方套餐目录同步模型，按账号和套餐分别保存。每个模型可单独启用或停用，停用后从 DSH 模型选择器中移除；再次启用会保留原有参数。目录刷新也会保留模型设置。
+从官方套餐目录同步可用模型清单，按账号和套餐分别保存。能力参数依据官方 Plan Pi 文档和官方目录固化，显式匹配别名与版本，旧缓存默认值随快照更新，手动覆盖保留；来源与冲突见[能力参数](docs/model-capabilities.md)。每个模型可独立启停，目录刷新不清空设置；Auto/未知模型保守标记。
+
+设置页和模型选择器使用友好名称，原始调用 ID 可在模型技术详情中查看。查看[模型名称预览](docs/client-model-names-preview.png)。
 
 ### 调整模型参数
 

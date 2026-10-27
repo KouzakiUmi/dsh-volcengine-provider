@@ -1,7 +1,7 @@
 // Run with a Node runtime capable of reading the target Core (Electron for ASAR).
 // This creates only disposable metadata and fake credentials. No API requests.
 import './host-resolve.mjs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
@@ -11,6 +11,7 @@ const { TypertRegistry } = await import('@deepseek-ai/dsh-typert-registry');
 const { CredentialProvider } = await import('@deepseek-ai/dsh-credentials');
 const plugin = await import('../src/index.mjs');
 const { initialState } = await import('../src/state.mjs');
+const { snapshot } = await import('../src/catalog.mjs');
 const piAi = await import('@deepseek-ai/dsh-llm-pi-ai');
 const home = await mkdtemp(join(tmpdir(), 'ark-host-smoke-'));
 const ctx = new Context();
@@ -29,6 +30,7 @@ try {
   const seed = initialState();
   seed.accounts.push({ ...structuredClone(seed.accounts[0]), id: 'broken', label: '损坏缓存夹具' });
   seed.catalogs['broken:agent-plan'] = {};
+  seed.modelSettings['default:agent-plan'] = { 'glm-5.3': { defaultReasoning: 'medium' } };
   await writeFile(join(home, 'state.json'), JSON.stringify(seed));
   registryFork = ctx.plugin(TypertRegistry);
   llmFork = ctx.plugin(LlmRuntime);
@@ -46,14 +48,23 @@ try {
   assert.deepEqual(ctx.llm.listProviders().map(p => p.id).sort(), ['volcengine-agent-plan', 'volcengine-coding-plan']);
   assert.equal((await ctx.llm.listModels('volcengine-agent-plan')).length, 0);
   configured = true;
-  assert.equal((await ctx.llm.listModels('volcengine-agent-plan')).length, 10);
-  assert.equal((await ctx.llm.listModels('volcengine-coding-plan')).length, 10);
+  assert.equal((await ctx.llm.listModels('volcengine-agent-plan')).length, snapshot['agent-plan'].models.length);
+  assert.equal((await ctx.llm.listModels('volcengine-coding-plan')).length, snapshot['coding-plan'].models.length);
+  const namedModel = (await ctx.llm.listModels('volcengine-agent-plan')).find(row => row.id === 'deepseek-v4-1-flash-economy-261017');
+  assert.equal(namedModel.name, 'DeepSeek V4.1 Flash Economy');
+  assert.equal((await ctx.llm.listModels('volcengine-coding-plan')).find(row => row.id === 'kimi-k3.1-pro').name, 'Kimi K3.1 Pro');
+  const legacyGlm = initial.catalogs.find(row => row.plan === 'agent-plan' && row.accountId === 'default').models.find(row => row.id === 'glm-5.3');
+  assert.equal(legacyGlm.settings.defaultReasoning, 'medium'); assert.equal(legacyGlm.effective.defaultReasoning, null); assert.match(legacyGlm.settingsWarning, /medium/);
+  assert.notEqual((await ctx.llm.resolveModelInfo('volcengine-agent-plan', 'glm-5.3')).reasoning.defaultEffort, 'medium');
+  assert.notEqual((await ctx.llm.prepareCall({ provider: 'volcengine-agent-plan', model: 'glm-5.3' })).config.reasoningEffort, 'medium');
+  assert.equal(JSON.parse(await readFile(join(home, 'state.json'), 'utf8')).modelSettings['default:agent-plan']['glm-5.3'].defaultReasoning, 'medium');
   const model = await ctx.llm.resolveModelInfo('volcengine-agent-plan', 'deepseek-v4-1-flash-economy-261017');
-  assert.equal(model.context.contextWindow, 1048576);
-  assert.equal(model.defaultMaxTokens, 384000);
+  // Exact integers from the official Plan Pi configuration, not a blanket K conversion.
+  assert.equal(model.context.contextWindow, 1049000);
+  assert.equal(model.defaultMaxTokens, 393216);
   await assert.rejects(service.invoke({ op: 'select', revision: initial.revision, plan: 'agent-plan', accountId: 'broken' }));
   assert.equal(ctx.llm.listProviders().length, 2);
-  assert.equal((await ctx.llm.listModels('volcengine-agent-plan')).length, 10);
+  assert.equal((await ctx.llm.listModels('volcengine-agent-plan')).length, snapshot['agent-plan'].models.length);
   const failed = await service.invoke({ op: 'read' });
   assert.match(failed.routingError, /校验失败|更新失败/);
   assert.equal(failed.active['agent-plan'], 'broken', 'Requested settings remain visible after routing failure');

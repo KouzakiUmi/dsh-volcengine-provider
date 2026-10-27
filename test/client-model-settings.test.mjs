@@ -15,6 +15,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { getModelRows } from '../src/catalog.mjs';
+import { initialState } from '../src/state.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const readSource = (relative) => readFileSync(join(ROOT, relative), 'utf8');
@@ -425,11 +427,52 @@ test('套餐启用开关：发 setProviderEnabled，关闭后仍保留账号选�
   // 关闭套餐不得清掉账号选择。
   assert.equal(harness.backend.active['agent-plan'], 'default');
   assert.equal(harness.select()[0].props.value, 'default');
-  assert.match(harness.joined(), /已停用：不注册模型路由/);
+  // The redesigned layout separates the state badge from the routing hint.
+  assert.match(harness.joined(), /套餐已停用/);
+  assert.match(harness.joined(), /不注册模型路由/);
 
   // Coding 套餐不受影响。
   assert.equal(harness.backend.enabled['coding-plan'], true);
   harness.dispose();
+});
+
+test('模型行以友好名称为标题，调用 ID 收入默认折叠详情且操作仍按 ID', async () => {
+  const h = createHarness(); await h.flush();
+  const id = 'doubao-seed-2-1-pro-260915';
+  const row = h.find(h.tree, node => node.props.className === 'vcp-model')[0];
+  const title = h.find(row, node => node.props.className === 'vcp-model-name')[0];
+  assert.equal(title.props.children, 'Doubao Seed 2.1 Pro'); assert.equal(title.props.title, id);
+  const details = h.find(row, node => node.type === 'details')[0];
+  assert.ok(details && details.props.open !== true);
+  assert.equal(h.find(details, node => node.props.className === 'vcp-model-id')[0].props.children, `调用 ID：${id}`);
+  await h.toggle(h.byLabel('input', `启用模型 ${id}`), false);
+  assert.equal(h.backend.calls.find(call => call.op === 'setModelEnabled').modelId, id);
+  h.dispose();
+});
+
+test('旧默认档位失效时显示修复入口，重新选择后更新配置', async t => {
+  const backend = new FakeBackend(), state = initialState(), key = 'default:agent-plan', modelId = 'glm-5.3';
+  backend.modelSettings[`${key}:${modelId}`] = { defaultReasoning: 'medium' };
+  state.catalogs[key] = { models: [{ id: modelId, name: modelId }] };
+  const originalRead = backend.readShape.bind(backend);
+  backend.readShape = () => {
+    const shape = originalRead();
+    state.modelSettings[key] = { [modelId]: backend.modelSettings[`${key}:${modelId}`] };
+    const catalog = shape.catalogs.find(row => row.plan === 'agent-plan');
+    catalog.models = getModelRows(state, 'default', 'agent-plan'); catalog.count = 1; catalog.enabledCount = 1;
+    return shape;
+  };
+  const h = createHarness({ backend }); t.after(() => h.dispose()); await h.flush();
+  assert.match(h.joined(), /已保存的默认思考档位 medium/);
+  assert.match(h.joined(), /展开模型列表可重新选择/);
+  await h.clicks(h.byLabel('button', `模型参数 ${modelId}`));
+  const select = h.byLabel('select', '默认思考档位 defaultReasoning');
+  const oldOption = h.find(select, node => node.type === 'option' && node.props.value === 'medium')[0];
+  assert.equal(oldOption.props.disabled, true); assert.match(oldOption.props.children, /已失效/);
+  await h.change(select, 'high');
+  await h.clicks(h.find(h.tree, node => node.type === 'button' && node.props.children === '保存参数')[0]);
+  assert.equal(backend.calls.find(call => call.op === 'saveModelSettings').settings.defaultReasoning, 'high');
+  assert.doesNotMatch(h.joined(), /已保存的默认思考档位 medium/);
 });
 
 test('旧快照缺少 enabled 时按启用处理', async () => {

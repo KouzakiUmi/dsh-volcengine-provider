@@ -23,6 +23,12 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.setContent('<!doctype html><html><body><div id="root"></div></body></html>');
+    // Controlled DSW theme tokens: this is an offline fixture, not the running host.
+    await page.addStyleTag({ content: `
+      :root{color-scheme:light;--dsw-alias-label-primary:#1f2937;--dsw-alias-label-secondary:#647084;--dsw-alias-label-primary-foreground:#fff;--dsw-alias-bg-layer-1:#fff;--dsw-alias-bg-layer-2:#f5f7fa;--dsw-alias-border-l4:#e4e8ee;--dsw-alias-border-l3:#cdd4df;--dsw-alias-brand-primary:#2563eb;--dsw-alias-button-primary-fill:#2563eb;--dsw-alias-button-primary-hover:#1d4ed8;--dsw-alias-state-error-primary:#b91c1c;--dsw-alias-state-warn-primary:#b45309;--dsw-alias-state-success-primary:#15803d}
+      :root[data-fixture-theme=dark]{color-scheme:dark;--dsw-alias-label-primary:#e5eaf1;--dsw-alias-label-secondary:#a9b4c5;--dsw-alias-bg-layer-1:#1b2029;--dsw-alias-bg-layer-2:#252d39;--dsw-alias-border-l4:#354152;--dsw-alias-border-l3:#46556b;--dsw-alias-brand-primary:#60a5fa;--dsw-alias-state-error-primary:#f87171;--dsw-alias-state-warn-primary:#fbbf24;--dsw-alias-state-success-primary:#4ade80}
+      body{background:#f3f5f8;color:var(--dsw-alias-label-primary)}html[data-fixture-theme=dark] body{background:#11161e}
+    ` });
     // Capture the target's static React modules before its app boot. The fixture deliberately
     // stops there: no transport, authentication, route or real boot configuration is loaded.
     await page.evaluate(() => { window.__ModuleLoader__ = { create(options) { window.fixtureModules = options.staticModules; throw Error('offline-fixture-stop'); } }; });
@@ -116,9 +122,24 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     await providerToggle.uncheck();
     assert.equal(await page.evaluate(() => window.fixtureState.active['agent-plan']), 'default');
     await providerToggle.check();
+    for (const select of await page.locator('select.vcp-select').all()) {
+      const box = await select.boundingBox();
+      assert.ok(box && box.height >= 28 && box.height < 64, 'Account selector must stay a compact control, never a 220px flex item');
+    }
+    const advanced = page.getByText('账号高级配置与标识', { exact: true }).first();
+    await advanced.click();
+    assert.equal(await advanced.evaluate(node => node.parentElement.open), true, 'Native details opens');
+    await advanced.click();
+    assert.equal(await advanced.evaluate(node => node.parentElement.open), false, 'Native details closes');
     await page.getByText('模型列表（已启用 1 / 共 1）', { exact: true }).first().click();
     const modelToggle = page.getByRole('checkbox', { name: '启用模型 demo-reasoning-model', exact: true }).first();
     await modelToggle.uncheck();
+    const modelIdentity = page.getByText('模型技术标识', { exact: true }).first();
+    assert.equal(await modelIdentity.evaluate(node => node.parentElement.open), false);
+    await modelIdentity.click();
+    assert.equal(await page.getByText('调用 ID：demo-reasoning-model', { exact: true }).first().isVisible(), true);
+    await modelIdentity.click();
+    assert.equal(await modelIdentity.evaluate(node => node.parentElement.open), false);
     await page.getByRole('button', { name: '模型参数 demo-reasoning-model', exact: true }).first().click();
     for (const label of ['思考档位映射 reasoningEfforts', '默认思考档位 defaultReasoning', '思考模式 forceAdaptiveThinking']) {
       const box = await page.getByLabel(label, { exact: true }).locator('..').boundingBox();
@@ -151,8 +172,14 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     await page.getByText('模型列表（已启用 1 / 共 1）', { exact: true }).first().click();
     fs.mkdirSync(path.dirname(screenshot), { recursive: true });
     await page.screenshot({ path: screenshot, fullPage: true });
+    await page.evaluate(() => { document.documentElement.dataset.fixtureTheme = 'dark'; });
+    await page.screenshot({ path: screenshot.replace(/\.png$/, '-dark.png'), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Settings must fit a narrow viewport');
+    for (const select of await page.locator('select.vcp-select').all()) assert.ok((await select.boundingBox()).height < 64, 'Narrow account selectors must remain compact');
+    assert.equal(await page.locator('.vcp-card').first().evaluate(node => getComputedStyle(node).paddingLeft), '12px', 'Narrow card padding must override the desktop rule');
+    await page.screenshot({ path: screenshot.replace(/\.png$/, '-mobile-dark.png'), fullPage: true });
+    await page.evaluate(() => { delete document.documentElement.dataset.fixtureTheme; });
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-mobile.png'), fullPage: true });
     // Empty-account onboarding must work without a technical ID form or any official browser page.
     await page.evaluate(() => {
@@ -174,6 +201,22 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     assert.equal(await page.evaluate(() => window.fixtureState.active['coding-plan']), null);
     await page.getByRole('button', { name: '刷新额度', exact: true }).first().click();
     await page.getByText('剩余 75%').waitFor();
+    // Render a few real pinned names through the same RPC fixture, with IDs folded.
+    const { getModelRows } = await import('../src/catalog.mjs');
+    const { initialState } = await import('../src/state.mjs');
+    const namedRows = getModelRows(initialState(), 'default', 'agent-plan').filter(row => ['doubao-seed-2-1-pro-260915', 'deepseek-v4-1-flash-261017', 'kimi-k3-1-pro-261024'].includes(row.id));
+    await page.evaluate(rows => {
+      const catalog = window.fixtureState.catalogs.find(row => row.plan === 'agent-plan');
+      catalog.models = rows; catalog.count = rows.length; catalog.enabledCount = rows.length;
+    }, namedRows);
+    await page.getByRole('button', { name: '刷新状态', exact: true }).click();
+    await page.setViewportSize({ width: 1200, height: 1000 });
+    await page.evaluate(() => { document.documentElement.dataset.fixtureTheme = 'dark'; });
+    await page.getByText('模型列表（已启用 3 / 共 3）', { exact: true }).first().click();
+    for (const name of ['豆包 Seed 2.1 Pro', 'DeepSeek V4.1 Flash', 'Kimi K3.1 Pro']) await page.getByText(name, { exact: true }).waitFor();
+    const namedSection = page.locator('section[aria-label="火山方舟 · Agent 套餐模型目录"]');
+    for (const details of await namedSection.locator('.vcp-model details').all()) assert.equal(await details.getAttribute('open'), null);
+    await namedSection.screenshot({ path: screenshot.replace(/\.png$/, '-models.png') });
     await page.evaluate(() => window.fixtureDispose());
     assert.deepEqual(errors, []);
     console.log('Browser smoke passed: real React/Chrome, provider/model toggles, model parameters/reset, quota grouping, login confirmation and dispose; fake RPC, HTTP(S) blocked.');
