@@ -113,7 +113,7 @@ test('refreshed input and token capacities reach Core without metadata-only alia
 test('snapshot aliases are unique and partial capability notes do not erase documented effort maps', () => {
   for (const plan of ['agent-plan','coding-plan']) {
     const seen=new Set();for(const model of snapshot[plan].models)for(const id of [model.id,...model.aliases]){assert.equal(seen.has(id),false,id);seen.add(id);}
-    const kimi=snapshot[plan].models.find(row=>row.id==='kimi-k2.7-code');assert.equal(kimi.reasoningEfforts,false);assert.equal(kimi.capabilityStatus,'partial');assert.match(kimi.capabilityNote,/思考能力已确认/);
+    const kimi=snapshot[plan].models.find(row=>row.id==='kimi-k2.7-code');assert.equal(kimi.reasoningEfforts,false);assert.equal(kimi.capabilityStatus,'partial');assert.match(kimi.capabilityNote,plan==='coding-plan'?/思考能力已确认/:/尚未单独确认/);
     const minimax=snapshot[plan].models.find(row=>row.id==='minimax-m3');assert.deepEqual(minimax.reasoningEfforts,{low:'low',medium:'medium',high:'high'});assert.equal(minimax.defaultReasoning,'medium');assert.equal(minimax.capabilityStatus,'partial');
     assert.deepEqual(Object.keys(snapshot[plan].models.find(model=>model.id==='glm-5.3').reasoningEfforts),['low','high','max']);
   }

@@ -135,6 +135,153 @@ test('usableModels 对 models 为 null 的损坏缓存应报错而不是回退�
 	assert.throws(() => usableModels({ models: null }, 'agent-plan'), /本地模型缓存格式错误/);
 });
 
+// ── 图片输入与工具开关 ──────────────────────────────────────────────────────────
+
+test('modelDefaults 给出图片输入与工具开关的目录默认', () => {
+	const vision = modelDefaults('agent-plan', { id: 'vision', input: ['text', 'image'] });
+	assert.equal(vision.imageInput, true);
+	assert.equal(vision.toolsEnabled, true, '工具默认开启，保持既有工具行为');
+	const text = modelDefaults('agent-plan', { id: 'text', input: ['text'] });
+	assert.equal(text.imageInput, false);
+	assert.equal(text.toolsEnabled, true);
+	const unknown = modelDefaults('agent-plan', { id: 'unknown' });
+	assert.equal(unknown.imageInput, false, '没有模态声明时按纯文本处理');
+	assert.equal(unknown.toolsEnabled, true);
+	const media = modelDefaults('agent-plan', { id: 'media', input: ['text', 'audio', 'video'] });
+	assert.equal(media.imageInput, false, '音视频不算图片输入');
+});
+
+test('effectiveModel 合并图片与工具覆盖，未覆盖时继承目录默认', () => {
+	const defaults = modelDefaults('agent-plan', { id: 'vision', input: ['text', 'image'] });
+	assert.equal(effectiveModel(defaults, {}).imageInput, true);
+	assert.equal(effectiveModel(defaults, {}).toolsEnabled, true);
+	assert.equal(effectiveModel(defaults, { imageInput: false }).imageInput, false);
+	assert.equal(effectiveModel(defaults, { toolsEnabled: false }).toolsEnabled, false);
+	const textDefaults = modelDefaults('agent-plan', { id: 'text', input: ['text'] });
+	assert.equal(effectiveModel(textDefaults, {}).imageInput, false);
+	assert.equal(effectiveModel(textDefaults, { toolsEnabled: false }).toolsEnabled, false);
+	assert.equal(effectiveModel(textDefaults, { temperature: 0.2 }).imageInput, false, '其它参数不影响图片与工具默认');
+});
+
+test('getModelRows 的默认值与有效值都带图片与工具开关', () => {
+	const state = {
+		active: { 'agent-plan': 'acct-a' },
+		accounts: [{ id: 'acct-a' }],
+		catalogs: {
+			'acct-a:agent-plan': {
+				models: [
+					{ id: 'vision-model', input: ['text', 'image'] },
+					{ id: 'text-model', input: ['text'] }
+				]
+			}
+		},
+		modelSettings: { 'acct-a:agent-plan': { 'vision-model': { toolsEnabled: false } } }
+	};
+	const rows = getModelRows(state, 'acct-a', 'agent-plan');
+	const vision = rows.find(row => row.id === 'vision-model');
+	const text = rows.find(row => row.id === 'text-model');
+	assert.equal(vision.defaults.imageInput, true);
+	assert.equal(vision.defaults.toolsEnabled, true);
+	assert.equal(vision.effective.imageInput, true);
+	assert.equal(vision.effective.toolsEnabled, false);
+	assert.equal(text.defaults.imageInput, false);
+	assert.equal(text.effective.imageInput, false);
+	assert.equal(text.effective.toolsEnabled, true);
+});
+
+test('Core 模型描述按有效图片开关给出输入模态，且不泄漏工具开关', () => {
+	const state = {
+		enabled: { 'agent-plan': true },
+		active: { 'agent-plan': 'acct-a' },
+		accounts: [{ id: 'acct-a' }],
+		catalogs: {
+			'acct-a:agent-plan': {
+				models: [
+					{ id: 'vision-model', input: ['text', 'image'] },
+					{ id: 'text-model', input: ['text'] }
+				]
+			}
+		},
+		modelSettings: {
+			'acct-a:agent-plan': { 'vision-model': { imageInput: false, toolsEnabled: false }, 'text-model': { imageInput: true } }
+		}
+	};
+	const models = profilesFor(state)[ROUTES['agent-plan']].models;
+	const vision = models.find(model => model.id === 'vision-model');
+	const text = models.find(model => model.id === 'text-model');
+	assert.deepEqual(vision.input, ['text'], '关闭图片后只保留文本输入');
+	assert.deepEqual(text.input, ['text', 'image'], '显式开启后给出图片输入');
+	for (const model of models) {
+		assert.ok(!('toolsEnabled' in model), '工具开关不得作为 Core 字段下发');
+		assert.ok(!('imageInput' in model), '图片开关不得作为 Core 字段下发');
+	}
+});
+
+test('目录声明的音视频等未支持模态时路由构建显式拒绝', () => {
+	const state = {
+		enabled: { 'agent-plan': true },
+		active: { 'agent-plan': 'acct-a' },
+		accounts: [{ id: 'acct-a' }],
+		catalogs: {
+			'acct-a:agent-plan': {
+				models: [{ id: 'media-model', input: ['text', 'audio', 'video'], toolsEnabled: false }]
+			}
+		}
+	};
+	assert.throws(() => profilesFor(state), /输入模态不受支持/, '音视频不得被当作纯文本注册到路由');
+});
+
+test('坏目录的输入模态让设置页可读，但路由构建拒绝该目录', () => {
+	const malformed = [
+		{ input: 'text' },
+		{ input: [] },
+		{ input: null },
+		{ input: ['text', 'text'] },
+		{ input: ['text', 'audio'] },
+		{ input: ['text', 'video'] }
+	];
+	for (const row of malformed) {
+		const state = {
+			enabled: { 'agent-plan': true },
+			active: { 'agent-plan': 'acct-a' },
+			accounts: [{ id: 'acct-a' }],
+			catalogs: { 'acct-a:agent-plan': { models: [{ id: 'broken-model', ...row }] } },
+			// 显式的图片开关不能掩盖坏目录。
+			modelSettings: { 'acct-a:agent-plan': { 'broken-model': { imageInput: true } } }
+		};
+		const rows = getModelRows(state, 'acct-a', 'agent-plan');
+		assert.equal(rows.length, 1, '设置页仍应给出该模型');
+		assert.match(rows[0].settingsWarning, /输入模态.*路由更新失败.*已有可用路由/, '设置页应说明更新失败并保留已有路由');
+		assert.throws(() => profilesFor(state), /输入模态/, `应当拒绝 ${JSON.stringify(row)}`);
+	}
+});
+
+test('目录没有声明输入模态时沿用既有 fallback，路由照常构建', () => {
+	const state = {
+		enabled: { 'agent-plan': true },
+		active: { 'agent-plan': 'acct-a' },
+		accounts: [{ id: 'acct-a' }],
+		catalogs: { 'acct-a:agent-plan': { models: [{ id: 'plain-model' }] } }
+	};
+	const models = profilesFor(state)[ROUTES['agent-plan']].models;
+	assert.deepEqual(models[0].input, ['text']);
+	const rows = getModelRows(state, 'acct-a', 'agent-plan');
+	assert.equal(rows[0].settingsWarning, undefined, '没有声明不算坏目录');
+	assert.equal(rows[0].defaults.imageInput, false);
+});
+
+test('强制开启图片会提醒目录未声明该能力', () => {
+	const state = {
+		active: { 'agent-plan': 'acct-a' },
+		accounts: [{ id: 'acct-a' }],
+		catalogs: { 'acct-a:agent-plan': { models: [{ id: 'text-model', input: ['text'] }] } },
+		modelSettings: { 'acct-a:agent-plan': { 'text-model': { imageInput: true } } }
+	};
+	const row = getModelRows(state, 'acct-a', 'agent-plan')[0];
+	assert.equal(row.effective.imageInput, true, '用户确认的能力覆写仍然生效');
+	assert.match(row.settingsWarning, /强制开启图片/);
+});
+
 // ── providerProfile / profilesFor ───────────────────────────────────────────────
 
 test('providerProfile 叠加快照基线与展示名', () => {

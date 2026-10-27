@@ -367,7 +367,7 @@
         "messagesThinkingMode": "server-default",
         "canDisableThinking": null,
         "capabilityStatus": "partial",
-        "capabilityNote": "思考能力已确认，未列可调档位、默认档位与关闭控制。",
+        "capabilityNote": "该套餐的思考能力与控制尚未单独确认；保持服务端默认。",
         "aliases": [
           "kimi-k2-7-code-260601"
         ],

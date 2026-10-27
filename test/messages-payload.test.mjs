@@ -95,3 +95,45 @@ test('SDK hook composition preserves amendments and isolates redirects', async (
   const amendedInPlace = messagesStreamOptions({ onPayload: value => { value.marker = 1; } }, { reasoningEffort: undefined });
   assert.equal((await amendedInPlace.onPayload(example(), {})).marker, 1);
 });
+
+test('a disabled tool switch asks for none only when tools are declared', () => {
+  const payload = example();
+  const before = structuredClone(payload);
+  const actual = messagesPayload(payload, { toolsEnabled: false });
+  assert.deepEqual(actual.tool_choice, { type: 'none' });
+  assert.equal(actual.tools, payload.tools);
+  assert.equal(actual.messages, payload.messages);
+  assert.deepEqual(payload, before);
+});
+
+test('a disabled tool switch drops the selection field when no tool is declared', () => {
+  for (const tools of [undefined, []]) {
+    const payload = example();
+    if (tools === undefined) delete payload.tools;
+    else payload.tools = tools;
+    payload.tool_choice = { type: 'auto' };
+    const actual = messagesPayload(payload, { toolsEnabled: false });
+    assert.ok(!Object.hasOwn(actual, 'tool_choice'));
+    assert.equal(actual.messages, payload.messages);
+  }
+});
+
+test('an enabled or missing tool switch leaves the payload untouched', () => {
+  for (const toolsEnabled of [true, undefined]) {
+    const payload = example();
+    const actual = messagesPayload(payload, { toolsEnabled });
+    assert.ok(!Object.hasOwn(actual, 'tool_choice'));
+    assert.equal(actual.tools, payload.tools);
+    assert.equal(actual.messages, payload.messages);
+  }
+});
+
+test('the tool switch reaches the wire payload together with the thinking controls', async () => {
+  const options = messagesStreamOptions({}, { toolsEnabled: false, reasoningEffort: 'off', canDisableThinking: true });
+  const actual = await options.onPayload(example(), { id: 'exact-version-1' });
+  assert.deepEqual(actual.tool_choice, { type: 'none' });
+  assert.deepEqual(actual.thinking, { type: 'disabled' });
+  const withoutTools = await options.onPayload({ model: 'exact-version-1', messages: [] }, { id: 'exact-version-1' });
+  assert.ok(!Object.hasOwn(withoutTools, 'tool_choice'));
+  assert.deepEqual(withoutTools.thinking, { type: 'disabled' });
+});

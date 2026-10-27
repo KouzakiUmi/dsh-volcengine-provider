@@ -10,6 +10,18 @@ function withoutEffort(payload) {
   return result;
 }
 
+/**
+ * 逐模型关闭工具调用时，服务端只接受 tools 非空搭配 tool_choice:none。
+ * 没有工具声明时不发送 tool_choice，工具声明与历史保持原样。
+ */
+function withToolChoice(payload, toolsEnabled) {
+  if (toolsEnabled !== false) return payload;
+  const result = { ...payload };
+  if (Array.isArray(result.tools) && result.tools.length) result.tool_choice = { type: 'none' };
+  else delete result.tool_choice;
+  return result;
+}
+
 /** Normalize only request-level controls; replay blocks and signatures stay SDK-owned. */
 export function messagesPayload(payload, control = {}) {
   const mode = control.messagesThinkingMode ?? 'server-default';
@@ -18,7 +30,7 @@ export function messagesPayload(payload, control = {}) {
   if (effort === undefined || effort === null) {
     const result = withoutEffort(payload);
     delete result.thinking;
-    return result;
+    return withToolChoice(result, control.toolsEnabled);
   }
   const mappedOff = effort === 'off' && typeof control.offWire === 'string';
   if (effort === 'off' && !mappedOff) {
@@ -27,7 +39,7 @@ export function messagesPayload(payload, control = {}) {
       error.code = 'UNSUPPORTED_REASONING_EFFORT';
       throw error;
     }
-    return { ...withoutEffort(payload), thinking: { type: 'disabled' } };
+    return withToolChoice({ ...withoutEffort(payload), thinking: { type: 'disabled' } }, control.toolsEnabled);
   }
   const result = { ...payload };
   if (mappedOff) result.output_config = { ...payload.output_config, effort: control.offWire };
@@ -41,7 +53,7 @@ export function messagesPayload(payload, control = {}) {
   // A fixed-budget override intentionally keeps the SDK's enabled + budget shape.
   if (Object.keys(thinking).length) result.thinking = thinking;
   else delete result.thinking;
-  return result;
+  return withToolChoice(result, control.toolsEnabled);
 }
 
 /** Compose the SDK callback, without replacing fetch globally or serializing history. */

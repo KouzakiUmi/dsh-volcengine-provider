@@ -176,6 +176,7 @@ const CATALOG_MODELS = {
       capabilityUnverified: false,
       defaults: {
         contextWindow: 1048576, maxTokens: 256000,
+        imageInput: true, toolsEnabled: true,
         reasoningEfforts: { low: 'low', medium: 'medium', high: 'high' },
         defaultReasoning: null, forceAdaptiveThinking: false
       }
@@ -186,6 +187,7 @@ const CATALOG_MODELS = {
       capabilityUnverified: true,
       defaults: {
         contextWindow: 32768, maxTokens: 32000,
+        imageInput: false, toolsEnabled: true,
         reasoningEfforts: { off: null, low: 'low' },
         defaultReasoning: null, forceAdaptiveThinking: false
       }
@@ -198,12 +200,16 @@ const CATALOG_MODELS = {
       capabilityUnverified: false,
       defaults: {
         contextWindow: 262144, maxTokens: 65536,
+        imageInput: true, toolsEnabled: false,
         reasoningEfforts: { low: 'low', medium: 'medium', high: 'high' },
         defaultReasoning: null, forceAdaptiveThinking: false
       }
     }
   ]
 };
+
+CATALOG_MODELS['other:agent-plan'] = CATALOG_MODELS['default:agent-plan'];
+CATALOG_MODELS['other:coding-plan'] = CATALOG_MODELS['default:coding-plan'];
 
 class FakeBackend {
   /**
@@ -221,6 +227,12 @@ class FakeBackend {
       accessKeyRef: 'VOLC_ACCESSKEY', secretKeyRef: 'VOLC_SECRETKEY',
       hasApiKeys: { 'agent-plan': true, 'coding-plan': true }, hasQuotaKeys: true, authMode: 'references'
     }];
+    if (options.secondAccount) this.accounts.push({
+      id: 'other', label: '另一个方舟账号',
+      apiKeyRefs: { 'agent-plan': 'OTHER_AGENT_PLAN_API_KEY', 'coding-plan': 'OTHER_CODING_PLAN_API_KEY' },
+      accessKeyRef: 'OTHER_ACCESSKEY', secretKeyRef: 'OTHER_SECRETKEY',
+      hasApiKeys: { 'agent-plan': true, 'coding-plan': true }, hasQuotaKeys: true, authMode: 'references'
+    });
     this.active = { 'agent-plan': 'default', 'coding-plan': 'default' };
     this.enabled = { 'agent-plan': true, 'coding-plan': true };
     this.modelEnabled = {};
@@ -266,6 +278,8 @@ class FakeBackend {
               ...(Object.hasOwn(settings, 'contextWindow') ? { contextWindow: settings.contextWindow } : {}),
               ...(Object.hasOwn(settings, 'maxTokens') ? { maxTokens: settings.maxTokens } : {}),
               ...(Object.hasOwn(settings, 'temperature') ? { temperature: settings.temperature } : {}),
+              ...(Object.hasOwn(settings, 'imageInput') ? { imageInput: settings.imageInput } : {}),
+              ...(Object.hasOwn(settings, 'toolsEnabled') ? { toolsEnabled: settings.toolsEnabled } : {}),
               reasoningEfforts: efforts,
               ...(Object.hasOwn(settings, 'defaultReasoning') ? { defaultReasoning: settings.defaultReasoning } : {}),
               ...(Object.hasOwn(settings, 'forceAdaptiveThinking') ? { forceAdaptiveThinking: settings.forceAdaptiveThinking } : {})
@@ -286,6 +300,12 @@ class FakeBackend {
         return { ok: true, value: this.readShape() };
       case 'loginStatus':
         return { ok: true, value: { ...this.login } };
+      case 'select': {
+        if (request.revision !== this.revision) return { ok: false, error: new Error('设置已改变，请刷新后重试') };
+        this.active = { ...this.active, [request.plan]: request.accountId };
+        this.bump();
+        return { ok: true, value: this.readShape() };
+      }
       case 'setProviderEnabled': {
         if (request.revision !== this.revision) return { ok: false, error: new Error('设置已改变，请刷新后重试') };
         this.enabled = { ...this.enabled, [request.plan]: request.enabled };
@@ -571,6 +591,145 @@ test('模型参数：空数字等于继承，档位与思考模式按三态写�
   assert.deepEqual(call.settings, { reasoningEfforts: false, defaultReasoning: null, forceAdaptiveThinking: true });
   assert.ok(!Object.hasOwn(call.settings, 'contextWindow'));
   harness.dispose();
+});
+
+test('图片输入与工具调用：复选框载荷、独立恢复继承和回显均正确', async t => {
+  const backend = new FakeBackend();
+  const key = 'default:agent-plan:doubao-seed-2-1-pro-260915';
+  backend.modelSettings[key] = { contextWindow: 65536, temperature: 0.2, imageInput: false, toolsEnabled: false };
+  backend.modelEnabled[key] = false;
+  const harness = createHarness({ backend });
+  t.after(() => harness.dispose());
+  await harness.flush();
+  await harness.clicks(harness.byLabel('button', '模型参数 doubao-seed-2-1-pro-260915'));
+
+  const image = () => harness.byLabel('input', '图片输入');
+  const tools = () => harness.byLabel('input', '工具调用');
+  const save = () => harness.clicks(harness.find(harness.tree, node => node.type === 'button' && node.props.children === '保存参数')[0]);
+  const text = harness.byLabel('input', '文本输入（固定开启）');
+  assert.equal(text.props.checked, true); assert.equal(text.props.disabled, true);
+  assert.equal(image().props.checked, false);
+  assert.equal(tools().props.checked, false);
+  assert.match(harness.joined(), /已覆盖 · 禁用/);
+  assert.match(harness.joined(), /生效值：.*图片输入 禁用.*工具调用 禁用/);
+  assert.match(harness.joined(), /历史消息中的工具调用回放保留/);
+  assert.match(harness.joined(), /音频 \/ 视频：本 DSH 通道不可用/);
+  assert.match(harness.joined(), /独立 JSON Schema 结构化输出：本 DSH 通道暂不可用/);
+
+  // 只恢复图片继承：显示 defaults=true，保留工具覆盖和数值草稿。
+  await harness.clicks(harness.byLabel('button', '恢复图片输入默认'));
+  assert.equal(image().props.checked, true);
+  assert.equal(tools().props.checked, false);
+  assert.match(harness.joined(), /继承 · 目录默认：启用/);
+  await save();
+  let call = backend.calls.filter(item => item.op === 'saveModelSettings').pop();
+  assert.deepEqual(call.settings, { contextWindow: 65536, temperature: 0.2, toolsEnabled: false });
+  assert.ok(!Object.hasOwn(call.settings, 'imageInput'));
+  assert.equal(backend.modelEnabled[key], false, '保存能力覆盖不得改动模型开关');
+
+  await harness.toggle(image(), false);
+  await harness.toggle(tools(), true);
+  await save();
+  call = backend.calls.filter(item => item.op === 'saveModelSettings').pop();
+  assert.deepEqual(call.settings, { contextWindow: 65536, temperature: 0.2, imageInput: false, toolsEnabled: true });
+  assert.equal(image().props.checked, false);
+  assert.equal(tools().props.checked, true);
+
+  await harness.toggle(image(), true);
+  assert.match(harness.joined(), /仅是本地能力声明，服务端可能仍不支持图片/);
+  // 只恢复工具继承，图片显式 true 与其他参数保持原样。
+  await harness.clicks(harness.byLabel('button', '恢复工具调用默认'));
+  await save();
+  call = backend.calls.filter(item => item.op === 'saveModelSettings').pop();
+  assert.deepEqual(call.settings, { contextWindow: 65536, temperature: 0.2, imageInput: true });
+  assert.ok(!Object.hasOwn(call.settings, 'toolsEnabled'));
+  assert.equal(tools().props.checked, true);
+  assert.match(harness.joined(), /生效值：.*图片输入 启用.*工具调用 启用/);
+
+  await harness.clicks(harness.byLabel('button', '恢复图片输入默认'));
+  await save();
+  call = backend.calls.filter(item => item.op === 'saveModelSettings').pop();
+  assert.deepEqual(call.settings, { contextWindow: 65536, temperature: 0.2 });
+  assert.equal(image().props.checked, true);
+  assert.equal(tools().props.checked, true);
+});
+
+test('能力复选框显示原始继承 true/false，未知默认使用未定态', async t => {
+  const backend = new FakeBackend();
+  const read = backend.readShape.bind(backend);
+  backend.readShape = () => {
+    const shape = read();
+    const model = shape.catalogs.find(row => row.plan === 'agent-plan').models.find(row => row.id === 'ark-code-latest');
+    delete model.defaults.toolsEnabled;
+    return shape;
+  };
+  const harness = createHarness({ backend });
+  t.after(() => harness.dispose());
+  await harness.flush();
+
+  await harness.clicks(harness.byLabel('button', '模型参数 doubao-seed-2-1-pro-260915'));
+  assert.equal(harness.byLabel('input', '图片输入').props.checked, true);
+  assert.equal(harness.byLabel('input', '工具调用').props.checked, true);
+  assert.equal(harness.byLabel('button', '恢复图片输入默认'), undefined);
+  assert.equal(harness.byLabel('button', '恢复工具调用默认'), undefined);
+
+  await harness.clicks(harness.byLabel('button', '模型参数 ark-code-latest'));
+  assert.equal(harness.byLabel('input', '图片输入').props.checked, false);
+  assert.match(harness.joined(), /继承 · 目录默认：禁用/);
+  const unknown = harness.byLabel('input', '工具调用');
+  assert.equal(unknown.props['aria-checked'], 'mixed');
+  assert.equal(unknown.props.disabled, false, '未知默认仍可手动覆盖');
+  const element = { indeterminate: false };
+  unknown.props.ref(element);
+  assert.equal(element.indeterminate, true);
+  assert.match(harness.joined(), /继承 · 目录默认：未知/);
+
+  await harness.toggle(unknown, true);
+  const overridden = harness.byLabel('input', '工具调用');
+  assert.equal(overridden.props['aria-checked'], undefined);
+  assert.equal(overridden.props.checked, true);
+  const overriddenElement = { indeterminate: true };
+  overridden.props.ref(overriddenElement);
+  assert.equal(overriddenElement.indeterminate, false, '手动覆盖后应清除未定态');
+  assert.equal(harness.byLabel('button', '恢复工具调用默认').props.disabled, false);
+
+  await harness.clicks(harness.byLabel('button', '恢复工具调用默认'));
+  const restored = harness.byLabel('input', '工具调用');
+  assert.equal(restored.props['aria-checked'], 'mixed');
+  const restoredElement = { indeterminate: false };
+  restored.props.ref(restoredElement);
+  assert.equal(restoredElement.indeterminate, true, '恢复未知默认后应回到未定态');
+  assert.equal(harness.byLabel('button', '恢复工具调用默认'), undefined);
+});
+
+test('模型能力草稿按账号隔离，切换账号不串用未保存值', async t => {
+  const backend = new FakeBackend({ secondAccount: true });
+  const harness = createHarness({ backend });
+  t.after(() => harness.dispose());
+  await harness.flush();
+  const id = 'doubao-seed-2-1-pro-260915';
+  const account = () => harness.byLabel('select', '火山方舟 · Agent 套餐使用账号');
+  const open = () => harness.clicks(harness.byLabel('button', `模型参数 ${id}`));
+
+  await open();
+  await harness.change(harness.byLabel('input', '上下文长度 contextWindow'), '131072');
+  await harness.toggle(harness.byLabel('input', '图片输入'), false);
+  await harness.toggle(harness.byLabel('input', '工具调用'), false);
+  await harness.change(account(), 'other');
+  assert.equal(harness.byLabel('input', '图片输入'), undefined, '切换账号后旧编辑器应立即关闭');
+
+  await open();
+  assert.equal(harness.byLabel('input', '上下文长度 contextWindow').props.value, '');
+  assert.equal(harness.byLabel('input', '图片输入').props.checked, true);
+  assert.equal(harness.byLabel('input', '工具调用').props.checked, true);
+  await harness.change(harness.byLabel('input', '上下文长度 contextWindow'), '32768');
+  await harness.toggle(harness.byLabel('input', '图片输入'), false);
+
+  await harness.change(account(), 'default');
+  await open();
+  assert.equal(harness.byLabel('input', '上下文长度 contextWindow').props.value, '');
+  assert.equal(harness.byLabel('input', '图片输入').props.checked, true);
+  assert.equal(harness.byLabel('input', '工具调用').props.checked, true);
 });
 
 test('模型参数：非法输入只提示错误，不发 RPC', async () => {

@@ -14,6 +14,8 @@
         contextWindow: 131072,
         maxTokens: 8192,
         temperature: 0.5,
+        imageInput: true,
+        toolsEnabled: false,
         reasoningEfforts: { off: null, low: 'low', high: 'high' },
         defaultReasoning: 'low',
         forceAdaptiveThinking: true
@@ -28,6 +30,8 @@
 模型参数按账号、套餐、模型隔离。`defaultReasoning`：省略表示继承模型已声明默认，声明缺失时采用服务端默认；`null` 表示不强制档位，实际请求省略思考控制字段。其他值必须由有效的 `reasoningEfforts` 支持。`reasoningEfforts: false` 只表示无可选档位，不等于不支持思考；字典只接受 Core 已有档位，只有 off 可为 null，且至少声明一个非 off 档位。
 
 参数校验：正安全整数 contextWindow/maxTokens，maxTokens 不得超过有效 contextWindow；temperature 为 0 到 1 的有限数；forceAdaptiveThinking 为布尔值。预算模式只接受 off/minimal/low/medium/high，非 off 的映射值必须与档位同名、off 为 null，避免底层将 xhigh/max 折叠为 high 而产生虚假档位。原生 effort 模式按声明的映射值发送：`off:null` 才是真正关闭，`off:"low"` 等非空字符串是用户自定义原生档位别名，仍按该值开启思考；后者可用于常驻思考模型。拒绝未知字段、非法模型 ID、数组和敏感凭据字段。设置不会创建目录里不存在的模型。
+
+`imageInput` 与 `toolsEnabled` 是可选布尔覆盖，省略时继承目录声明与现有工具默认策略；版本 1、2 的旧状态仍可读取。图片开启会向 Core 声明图片输入，但不会改变服务端模型能力；音频、视频不在当前 Core/SDK 消息模型内。工具调用关闭后，带工具声明的请求指定 `tool_choice: none`，不含工具时不发送该字段；历史消息保留。0.2.7 会因新增字段拒绝加载整份状态；回退前须在新版逐项恢复继承并保存，若已回退需先回到新版处理。
 
 ## 固化能力与缓存
 
@@ -50,7 +54,7 @@
 { id, name, enabled, capabilityUnverified, settings, defaults, effective }
 ```
 
-其中 defaults/effective 含 contextWindow、maxTokens、reasoningEfforts、defaultReasoning（无默认时为 null）、forceAdaptiveThinking，temperature 可省略。根字段另有 messagesThinkingMode、canDisableThinking、capabilityStatus 和可选 capabilityNote；它们不进入 Core 模型描述。settings 是原始覆盖值，settingsWarning 表示需修复的兼容配置。count 仍为完整目录数量。
+其中 defaults/effective 含 contextWindow、maxTokens、imageInput、toolsEnabled、reasoningEfforts、defaultReasoning（无默认时为 null）、forceAdaptiveThinking，temperature 可省略。根字段另有 messagesThinkingMode、canDisableThinking、capabilityStatus 和可选 capabilityNote；它们不进入 Core 模型描述。settings 是原始覆盖值，settingsWarning 表示需修复的兼容配置。count 仍为完整目录数量。
 
 ## 路由与请求
 
@@ -64,6 +68,6 @@
 
 ## 界面与验证
 
-两张套餐卡片提供独立启用复选框，账号选择与启用状态分开。模型列表提供逐模型开关、参数编辑和恢复默认。参数空值表示继承；思考默认可选继承、不强制或有效档位；模式可选继承、原生 effort、固定预算。说明温度在启用思考时可能被传输层忽略，输出 token 还受思考预算和上下文约束。
+两张套餐卡片提供独立启用复选框，账号选择与启用状态分开。模型列表提供逐模型开关、参数编辑和恢复默认。图片输入与工具调用使用复选框调整，并可分别恢复继承；参数空值表示继承；思考默认可选继承、不强制或有效档位；模式可选继承、原生 effort、固定预算。说明温度在启用思考时可能被传输层忽略，输出 token 还受思考预算和上下文约束。
 
 验收覆盖：旧状态迁移、关闭后账号保留、开关隔离、设置持久化/重置/刷新保留、非法参数拒绝、未知模型不再触发默认 low 错误、请求覆盖优先级、已准备请求不随设置变化、实际 Core 与假 HTTP 字段验证。真实 OAuth 的独立验收见[验证记录](validation.md)；模型管理脚本不验证真实推理、Plan 上限或服务端思考参数效果。

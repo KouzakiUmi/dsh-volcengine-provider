@@ -9,7 +9,9 @@ export const LABELS = { 'agent-plan': '火山方舟 · Agent 套餐', 'coding-pl
 // Core（pi-ai）已声明的思考档位，模型设置只接受这些键。
 export const CORE_THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 // 逐模型覆盖允许出现的字段；其余字段一律拒绝（含任何凭据字段）。
-export const MODEL_SETTING_FIELDS = ['enabled', 'contextWindow', 'maxTokens', 'temperature', 'reasoningEfforts', 'defaultReasoning', 'forceAdaptiveThinking'];
+export const MODEL_SETTING_FIELDS = ['enabled', 'contextWindow', 'maxTokens', 'temperature', 'reasoningEfforts', 'defaultReasoning', 'forceAdaptiveThinking', 'imageInput', 'toolsEnabled'];
+// 图片输入与工具开关只接受布尔值；不给出时保持缺省，由目录默认值继承。
+export const MODEL_SETTING_BOOLEAN_FIELDS = ['imageInput', 'toolsEnabled'];
 // 预算模式（未开启自适应思考）下 Core 只消费档位键：xhigh/max 会被折叠为 high，映射值也不再上线。
 export const BUDGET_THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high'];
 const idPattern = /^[a-z][a-z0-9-]{0,63}$/;
@@ -112,6 +114,12 @@ export function normalizeModelSettings(input) {
 	if ('forceAdaptiveThinking' in input) {
 		if (typeof input.forceAdaptiveThinking !== 'boolean') throw new Error('forceAdaptiveThinking 必须是布尔值');
 		settings.forceAdaptiveThinking = input.forceAdaptiveThinking;
+	}
+	// 图片输入与工具开关：只接受布尔值；缺省不落盘，由目录默认值继承。
+	for (const key of MODEL_SETTING_BOOLEAN_FIELDS) {
+		if (!(key in input)) continue;
+		if (typeof input[key] !== 'boolean') throw new Error(`${key} 必须是布尔值`);
+		settings[key] = input[key];
 	}
 	if ('reasoningEfforts' in input) settings.reasoningEfforts = normalizeReasoningEfforts(input.reasoningEfforts);
 	if ('defaultReasoning' in input) {

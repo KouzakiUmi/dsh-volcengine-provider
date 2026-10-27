@@ -341,6 +341,75 @@ test('预算模式下的思考档位必须与 Core 消费端一致', () => {
 	assert.throws(() => validateState(renamed), /必须与档位同名/);
 });
 
+// ── 图片输入与工具开关 ──────────────────────────────────────────────────────────
+
+test('图片输入与工具开关只接受布尔值', () => {
+	const base = initialState();
+	for (const key of ['imageInput', 'toolsEnabled']) {
+		for (const value of ['true', 'false', 'yes', 1, 0, null, {}, [], Number.NaN]) {
+			const draft = structuredClone(base);
+			draft.modelSettings = { 'default:agent-plan': { 'ark-code-latest': { [key]: value } } };
+			assert.throws(() => validateState(draft), new RegExp(`${key} 必须是布尔值`), `应当拒绝 ${key}=${JSON.stringify(value)}`);
+		}
+		for (const value of [true, false]) {
+			const draft = structuredClone(base);
+			draft.modelSettings = { 'default:agent-plan': { 'ark-code-latest': { [key]: value } } };
+			const result = validateState(draft);
+			assert.equal(result.modelSettings['default:agent-plan']['ark-code-latest'][key], value);
+		}
+	}
+});
+
+test('未给出图片与工具设置时保持缺省，由目录默认继承', () => {
+	const draft = initialState();
+	draft.modelSettings = { 'default:agent-plan': { 'ark-code-latest': { temperature: 0.4 } } };
+	const result = validateState(draft);
+	const settings = result.modelSettings['default:agent-plan']['ark-code-latest'];
+	assert.equal(settings.temperature, 0.4);
+	assert.equal(Object.hasOwn(settings, 'imageInput'), false, '缺省不落盘');
+	assert.equal(Object.hasOwn(settings, 'toolsEnabled'), false, '缺省不落盘');
+});
+
+test('图片与工具设置按模型、账号与套餐三层隔离', () => {
+	const draft = initialState();
+	draft.accounts.push({ ...draft.accounts[0], id: 'second', label: '第二账号' });
+	draft.modelSettings = {
+		'default:agent-plan': { 'ark-code-latest': { imageInput: false, toolsEnabled: false } },
+		'default:coding-plan': { 'ark-code-latest': { imageInput: false } },
+		'second:agent-plan': { 'ark-code-latest': { toolsEnabled: false } },
+		'default:agent-plan-other': { 'ark-code-latest': { imageInput: false } }
+	};
+	const result = validateState(draft);
+	const agent = result.modelSettings['default:agent-plan']['ark-code-latest'];
+	assert.equal(agent.imageInput, false);
+	assert.equal(agent.toolsEnabled, false);
+	const coding = result.modelSettings['default:coding-plan']['ark-code-latest'];
+	assert.equal(coding.imageInput, false);
+	assert.equal(Object.hasOwn(coding, 'toolsEnabled'), false, '另一套餐不应继承工具开关');
+	const second = result.modelSettings['second:agent-plan']['ark-code-latest'];
+	assert.equal(second.toolsEnabled, false);
+	assert.equal(Object.hasOwn(second, 'imageInput'), false, '另一账号不应继承图片开关');
+});
+
+test('图片与工具设置随状态文件持久化并可重新加载', async () => {
+	const dir = await tempDir();
+	const path = join(dir, 'state.json');
+	const store = new StateStore(path);
+	const state = await store.load();
+	const next = await store.mutate(revision(state), draft => {
+		draft.modelSettings = { 'default:agent-plan': { 'ark-code-latest': { imageInput: false, toolsEnabled: false } } };
+		return draft;
+	});
+	assert.equal(next.version, 2, '状态版本保持为 2');
+	const reloaded = await new StateStore(path).load();
+	const settings = reloaded.modelSettings['default:agent-plan']['ark-code-latest'];
+	assert.equal(settings.imageInput, false);
+	assert.equal(settings.toolsEnabled, false);
+	const raw = JSON.parse(await readFile(path, 'utf8'));
+	assert.equal(raw.version, 2);
+	assert.equal(raw.modelSettings['default:agent-plan']['ark-code-latest'].toolsEnabled, false);
+});
+
 // ── 持久化与 revision 冲突 ──────────────────────────────────────────────────────
 
 test('StateStore.load 在文件缺失时返回初始状态且不落盘', async () => {

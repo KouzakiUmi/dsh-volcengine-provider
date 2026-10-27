@@ -21,7 +21,7 @@
 
 - Client 构建产物注册懒加载工厂 `factory(require)`，直接返回 `{ name, inject, apply }`；宿主不传入 CommonJS 的 `module` 或 `exports`。隔离和浏览器测试使用相同的单参数调用契约。
 - Host 使用目标 Core 的公开 `PiAiAdapter` 与其消费的 `@earendil-works/pi-ai@1.1.0`。插件为每个已准备调用建立独立 Provider 请求钩子，区分原始 off 与未设置档位；V4.1 使用 adaptive+effort，其余已确认可调模型使用 enabled+effort，未指定档位保持服务端默认。Client 通过统一 RPC 调用 Host。入口见 [Host](src/index.mjs)、[模型级适配器](src/ark-adapter.mjs)、[载荷处理](src/messages-payload.mjs)、[设置页](src/client.js)及[RPC](src/remote.mjs)。
-- 两套套餐分别保存启用状态与所选账号，关闭套餐保留账号选择；逐模型开关和参数按账号、套餐、模型隔离。账号元数据与凭据引用由 [状态模块](src/state.mjs) 管理；版本 1 状态兼容迁移为版本 2，修改采用 revision 校验与原子写入。
+- 两套套餐分别保存启用状态与所选账号，关闭套餐保留账号选择；逐模型开关和参数按账号、套餐、模型隔离。图片输入与工具调用以复选框调整并分别支持恢复继承，文本输入始终开启；图片开关只影响本地声明，工具禁用保留历史并阻止新工具调用。当前 Core/SDK 仅支持文本和图片输入，模型原生音频/视频能力与当前传输边界分开记录。账号元数据与凭据引用由 [状态模块](src/state.mjs) 管理；版本 1 状态兼容迁移为版本 2，修改采用 revision 校验与原子写入。写入新能力字段后的旧版回退限制与处置见[使用说明](docs/usage.md)。
 - 网页登录使用官方 `arkcli auth login --login-mode broker --credential-store encrypted-file` 同设备流程，原样打开官方方舟 `/region:cn-beijing/arkcli/login` 链接，回调、会话及凭据均由 CLI 管理。每次登录使用独立 session CLI home，身份和个人套餐核验完成后原子切换绑定；取消、失败或冲突不覆盖上次可用身份。旧绑定没有 homeId 时继续使用原账号目录；已准备请求固定其绑定目录。
 - CLI 私有 PATH 中的浏览器启动桥拦截系统 URL opener，通过随机令牌鉴权的 127.0.0.1 IPC 将链接交给 Host；不修改系统 opener、注册表或默认浏览器。Playwright 驱动在净化环境的独立 Worker 中加载，丢弃驱动输出，使用正常系统 HOME/USERPROFILE 和独立临时 Chrome 配置，只打开链接，不读取网页、密码、Cookie 或授权码。CLI 成功核验后及取消/超时/失败时关闭所属浏览器和 IPC；不回退到日常浏览器或 cross-device 授权码流程。
 - 启动桥是安全边界：当前网页登录仅允许已核验的 Windows ArkCli 1.0.37，其他平台/版本在启动登录前拒绝。Windows 原生桥由仓库 C# 源码编译，CI 将 Windows 构建产物带入通用归档；POSIX opener 归档固定 0755、运行前检查执行权限，其 CLI 契约仍未验收，不据此开放 POSIX 登录。真实 Windows 同设备登录、双套餐核验和临时绑定已通过，验证边界见验证记录。

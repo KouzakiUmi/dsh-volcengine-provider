@@ -33,12 +33,40 @@ function fallbackCapabilities(id) {
 		capabilityNote: dynamic ? '智能调度的能力随目标模型变化，未声明统一思考档位。' : '该精确版本尚无固化能力资料，采用保守配置。'
 	};
 }
+// Core 只支持文本与图片两种输入模态；目录声明的其它模态（含音视频）不被接受。
+const CORE_INPUT_MODALITIES = ['text', 'image'];
+// 目录没有声明输入模态时沿用既有 fallback：只接文本。
+const FALLBACK_INPUT = ['text'];
+/**
+ * 检查目录声明的输入模态。
+ * 缺失按既有 fallback 处理；非数组、含重复或含未支持模态一律判为无效：
+ * 不能悄悄退化成纯文本，否则损坏的目录会被伪装成可用路由。
+ * 调用方自行决定是报错（路由构建）还是只作提示（设置页）。
+ */
+function inspectInput(modalities) {
+	if (modalities === undefined) return { input: [...FALLBACK_INPUT] };
+	if (!Array.isArray(modalities) || !modalities.length) return { error: '模型目录的输入模态格式错误' };
+	const seen = new Set();
+	for (const value of modalities) {
+		if (typeof value !== 'string' || !CORE_INPUT_MODALITIES.includes(value)) return { error: '模型目录的输入模态不受支持' };
+		if (seen.has(value)) return { error: '模型目录的输入模态包含重复项' };
+		seen.add(value);
+	}
+	return { input: [...modalities] };
+}
 function coreCapabilities(model) {
 	const {
 		aliases: _aliases, capabilityUnverified: _unverified, defaultReasoning: _default,
 		messagesThinkingMode: _mode, canDisableThinking: _disable,
-		capabilityStatus: _status, capabilityNote: _note, ...capabilities
+		capabilityStatus: _status, capabilityNote: _note,
+		toolsEnabled: _tools, imageInput: _image, ...capabilities
 	} = model;
+	if ('input' in capabilities) {
+		const checked = inspectInput(capabilities.input);
+		// 路由构建阶段直接拒绝：坏目录不得被当成纯文本模型注册。
+		if (checked.error) throw new Error(`${checked.error}：${model.id ?? '未知模型'}`);
+		capabilities.input = checked.input;
+	}
 	return capabilities;
 }
 function displayName(id, candidate, pinned) {
@@ -114,7 +142,9 @@ export function modelDefaults(plan, model) {
 	const forceAdaptiveThinking = typeof model?.compat?.forceAdaptiveThinking === 'boolean'
 		? model.compat.forceAdaptiveThinking
 		: typeof base.compat?.forceAdaptiveThinking === 'boolean' ? base.compat.forceAdaptiveThinking : false;
-	return { contextWindow, maxTokens, reasoningEfforts: efforts, defaultReasoning: defaultReasoningFor(efforts, model?.defaultReasoning), forceAdaptiveThinking };
+	// 图片输入取模型实际声明的模态；工具开关默认开启，保持既有工具行为不变。
+	const imageInput = Array.isArray(model?.input) && model.input.includes('image');
+	return { contextWindow, maxTokens, reasoningEfforts: efforts, defaultReasoning: defaultReasoningFor(efforts, model?.defaultReasoning), forceAdaptiveThinking, imageInput, toolsEnabled: true };
 }
 
 /** 目录默认与用户覆盖合并后的有效参数。 */
@@ -127,6 +157,8 @@ export function effectiveModel(defaults, settings = {}) {
 	if (settings.forceAdaptiveThinking !== undefined) effective.forceAdaptiveThinking = settings.forceAdaptiveThinking;
 	if (settings.forceAdaptiveThinking === false && settings.reasoningEfforts === undefined) effective.reasoningEfforts = inheritedBudgetMap(effective.reasoningEfforts);
 	if (settings.temperature !== undefined) effective.temperature = settings.temperature;
+	if (settings.imageInput !== undefined) effective.imageInput = settings.imageInput;
+	if (settings.toolsEnabled !== undefined) effective.toolsEnabled = settings.toolsEnabled;
 	effective.defaultReasoning = defaultReasoningFor(effective.reasoningEfforts, settings.defaultReasoning === undefined ? defaults.defaultReasoning : settings.defaultReasoning);
 	return effective;
 }
@@ -165,6 +197,10 @@ export function getModelRows(state, accountId, plan) {
 		const defaults = modelDefaults(plan, model);
 		const effective = effectiveModel(defaults, settings);
 		const warnings = [];
+		// 目录声明的输入模态无效时设置页仍可读，但路由构建会拒绝该目录。
+		const declaredInput = inspectInput(model.input);
+		if (declaredInput.error) warnings.push(`${declaredInput.error}：该目录会导致路由更新失败；若已有可用路由会予以保留，请重新拉取模型目录。`);
+		if (settings.imageInput === true && defaults.imageInput === false) warnings.push('已强制开启图片输入：目录未声明该模型支持图片，请先确认服务端能力。');
 		if (model.canDisableThinking === false && effective.reasoningEfforts?.off === null) {
 			const { off: _off, ...levels } = effective.reasoningEfforts;
 			effective.reasoningEfforts = Object.keys(levels).length ? levels : false;
@@ -203,10 +239,14 @@ export function providerProfile(plan, models) {
 
 /** 把有效参数写回 Core 的模型描述；只写 Core 认识的字段。 */
 function coreModel(model, row) {
+	// 目录声明的输入模态在此之前已被校验；畸形目录不会走到这里。
 	if (!row) return coreCapabilities(model);
 	const compat = { ...(model.compat ?? {}) };
 	if (typeof row.effective.forceAdaptiveThinking === 'boolean') compat.forceAdaptiveThinking = row.effective.forceAdaptiveThinking;
-	return { ...coreCapabilities(model), contextWindow: row.effective.contextWindow, maxTokens: row.effective.maxTokens, reasoningEfforts: row.effective.reasoningEfforts, compat };
+	// 目录声明有效时，Core 的输入模态由图片开关决定：text 或 text+image。
+	const input = row.effective.imageInput ? ['text', 'image'] : ['text'];
+	// 工具开关只经 factsByProvider 的行传给适配器，不作为 Core 字段下发。
+	return { ...coreCapabilities(model), input, contextWindow: row.effective.contextWindow, maxTokens: row.effective.maxTokens, reasoningEfforts: row.effective.reasoningEfforts, compat };
 }
 
 export function profilesFor(state) {

@@ -84,6 +84,7 @@ git push origin v<version>
 
 - [Host 验证脚本](../scripts/host-smoke.mjs)：`DSH_TEST_HOST_ROOT` 指向目标 Core 的 `dsh` 目录，ASAR 使用对应 Electron 的 Node 模式。
 - [逐模型思考验证](../scripts/model-thinking-smoke.mjs)：使用同一目标 Core 与 SDK，覆盖两套餐的声明默认、原生档、关闭、未强制及动态 Auto，HTTP 全部由本地替身响应。
+- [模型能力验证](../scripts/model-capabilities-smoke.mjs)：使用同一目标 Core 与 SDK，验证两套餐的图片能力声明、工具选择和已准备请求的隔离；使用临时状态、假凭据与 HTTP 替身。
 - [浏览器验证脚本](../scripts/browser-smoke.cjs)：使用既有 Playwright、Chrome 与目标前端资产；RPC 为假数据，HTTP(S) 请求被阻断。
 - [同设备浏览器离线验证](../scripts/test-oauth-browser.mjs)：构建后运行，使用真实独立 Chrome 和本地拦截的官方页面/CLI 回调，验证自动关窗；可在宿主 DEBUG/PWDEBUG 开启时核验 Worker 日志隔离。
 - [真实登录验收](../scripts/test-oauth-live.mjs)：仅在明确同意真实登录后传 `--confirm-real-login`，用户在独立窗口手动授权；临时保存 CLI 身份和绑定，结束后清理，不安装插件、不调用推理或额度接口。

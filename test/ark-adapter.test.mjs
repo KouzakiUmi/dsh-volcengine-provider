@@ -56,6 +56,12 @@ function fixture() {
         return;
       }
       yield { type: 'text-delta', text: JSON.stringify(actual) };
+      if (state.violateTools) {
+        yield { type: 'block-start', index: 0, blockType: 'tool-call' };
+        yield { type: 'tool-call-delta', index: 0, id: 'call-1', name: 'tool', argumentsDelta: '{"a":1}' };
+        yield { type: 'block-end', index: 0, block: { type: 'tool-call', id: 'call-1', name: 'tool', arguments: '{"a":1}' } };
+        return;
+      }
       if (state.waitForAbort) {
         await new Promise((resolve, reject) => {
           const abort = () => reject(new LlmError('aborted', 'ABORTED'));
@@ -67,17 +73,21 @@ function fixture() {
   };
   const model = (id, compat) => ({ id, name: id, contextWindow: 100000, maxTokens: 30000, input: ['text', 'image'], reasoningEfforts: { off: null, low: 'low', high: 'high', max: 'max' }, ...(compat ? { compat } : {}) });
   const providers = {
-    [ROUTE]: { api: 'anthropic-messages', baseURL: 'https://ark.cn-beijing.volces.com/api/plan', displayName: 'Agent Plan', models: [model('enabled-version'), model('adaptive-version'), model('budget-version', { forceAdaptiveThinking: false }), model('unknown-version')] },
-    [OTHER]: { api: 'anthropic-messages', baseURL: 'https://ark.cn-beijing.volces.com/api/coding', displayName: 'Coding Plan', models: [model('enabled-version')] }
+    [ROUTE]: { api: 'anthropic-messages', baseURL: 'https://ark.cn-beijing.volces.com/api/plan', displayName: 'Agent Plan', models: [model('enabled-version'), model('adaptive-version'), model('budget-version', { forceAdaptiveThinking: false }), model('unknown-version'), model('no-tools-version')] },
+    [OTHER]: { api: 'anthropic-messages', baseURL: 'https://ark.cn-beijing.volces.com/api/coding', displayName: 'Coding Plan', models: [model('enabled-version'), model('no-tools-version')] }
   };
   const factsByProvider = new Map([
     [ROUTE, new Map([
       ['enabled-version', { messagesThinkingMode: 'enabled', canDisableThinking: true }],
       ['adaptive-version', { messagesThinkingMode: 'adaptive', canDisableThinking: false }],
       ['budget-version', { messagesThinkingMode: 'enabled', canDisableThinking: true }],
-      ['unknown-version', { messagesThinkingMode: 'server-default', canDisableThinking: null }]
+      ['unknown-version', { messagesThinkingMode: 'server-default', canDisableThinking: null }],
+      ['no-tools-version', { messagesThinkingMode: 'server-default', canDisableThinking: null, effective: { toolsEnabled: false } }]
     ])],
-    [OTHER, new Map([['enabled-version', { messagesThinkingMode: 'adaptive', canDisableThinking: true }]])]
+    [OTHER, new Map([
+      ['enabled-version', { messagesThinkingMode: 'adaptive', canDisableThinking: true, effective: {} }],
+      ['no-tools-version', { messagesThinkingMode: 'server-default', canDisableThinking: null, effective: { toolsEnabled: false } }]
+    ])]
   ]);
   const deps = {
     LlmAdapter, LlmError, PiAiAdapter, InMemoryCredentialStore, anthropicMessagesApi: () => api,
@@ -108,7 +118,7 @@ test('materialized models preserve exact IDs, null-pin maps and strip metadata',
   assert.equal(profile.requestImageMaxBytes, 1048576);
   assert.deepEqual(adapter.providerRetryPolicy(ROUTE), { mode: 'normal', maxRetries: 5 });
   assert.equal((await adapter.resolveModel(ROUTE, model.id)).defaultMaxTokens, 30000);
-  assert.equal((await adapter.listModels(ROUTE)).length, 4);
+  assert.equal((await adapter.listModels(ROUTE)).length, 5);
   assert.deepEqual(adapter.providerInfo(ROUTE), { id: ROUTE, name: 'Agent Plan' });
   assert.deepEqual(adapter.imageRequestTarget(ROUTE, model.id, { width: 100, height: 50 }), { width: 100, height: 50, maxBytes: 1048576 });
   assert.deepEqual(await profile.piProvider.auth.apiKey.resolve(), { auth: {}, source: 'request' });
@@ -342,4 +352,105 @@ test('consumer return interrupts a pending next for direct and prepared streams'
     assert.equal((await returning).done, true);
     assert.equal(state.requests[0].options.signal.aborted, true);
   }
+});
+
+test('the per-model tool switch asks for none only when tools are declared', async () => {
+  const { create, state } = fixture();
+  const adapter = create();
+  await collect(adapter.stream(request('no-tools-version', { tools: [{ name: 'tool' }] })));
+  assert.deepEqual(state.requests.at(-1).payload.tool_choice, { type: 'none' });
+  await collect(adapter.stream(request('no-tools-version')));
+  assert.ok(!Object.hasOwn(state.requests.at(-1).payload, 'tool_choice'));
+});
+
+test('an enabled or missing tool switch keeps the request payload unchanged', async () => {
+  const { create, state } = fixture();
+  const adapter = create();
+  for (const model of ['enabled-version', 'unknown-version']) {
+    await collect(adapter.stream(request(model, { tools: [{ name: 'tool' }] })));
+    assert.ok(!Object.hasOwn(state.requests.at(-1).payload, 'tool_choice'));
+  }
+  await collect(adapter.stream(request('enabled-version', { provider: OTHER, tools: [{ name: 'tool' }] })));
+  assert.ok(!Object.hasOwn(state.requests.at(-1).payload, 'tool_choice'));
+});
+
+test('a disabled model keeps its history and tool declarations intact', async () => {
+  const { create, state } = fixture();
+  const adapter = create();
+  const history = [{ role: 'assistant', content: [{ type: 'text', text: 'earlier' }] }];
+  const tools = [{ name: 'tool', input_schema: { type: 'object' } }];
+  await collect(adapter.stream(request('no-tools-version', { messages: history, tools })));
+  const last = state.requests.at(-1);
+  assert.equal(last.context.messages, history);
+  assert.deepEqual(last.payload.messages, history);
+  assert.equal(last.payload.tools, tools);
+  assert.deepEqual(last.payload.tool_choice, { type: 'none' });
+});
+
+test('the tool switch stays per model and per prepared call', async () => {
+  const { create, state } = fixture();
+  const adapter = create();
+  const gate = deferred();
+  const entered = deferred();
+  state.beforePayload = async model => { if (model.id === 'no-tools-version' && model.provider === ROUTE) { entered.resolve(); await gate.promise; } };
+  const disabled = await adapter.prepareCall(ROUTE, 'no-tools-version');
+  const enabled = await adapter.prepareCall(ROUTE, 'enabled-version');
+  const first = collect(disabled.stream(request('no-tools-version', { tools: [{ name: 'tool' }] })));
+  await entered.promise;
+  await collect(enabled.stream(request('enabled-version', { tools: [{ name: 'tool' }] })));
+  gate.resolve();
+  await first;
+  assert.deepEqual(state.requests.find(item => item.model.id === 'no-tools-version').payload.tool_choice, { type: 'none' });
+  assert.ok(!Object.hasOwn(state.requests.find(item => item.model.id === 'enabled-version').payload, 'tool_choice'));
+});
+
+test('a tool call from a disabled model is blocked and never released', async () => {
+  const { create, state } = fixture();
+  state.violateTools = true;
+  const adapter = create();
+  const seen = [];
+  await assert.rejects((async () => {
+    for await (const chunk of adapter.stream(request('no-tools-version', { tools: [{ name: 'tool' }] }))) seen.push(chunk);
+  })(), { code: 'TOOL_CALL_DISABLED' });
+  assert.deepEqual(seen.map(chunk => chunk.type), ['text-delta']);
+});
+
+test('an enabled model still receives the tool call it asked for', async () => {
+  const { create, state } = fixture();
+  state.violateTools = true;
+  const adapter = create();
+  const seen = [];
+  for await (const chunk of adapter.stream(request('enabled-version', { tools: [{ name: 'tool' }] }))) seen.push(chunk);
+  assert.deepEqual(seen.map(chunk => chunk.type), ['text-delta', 'block-start', 'tool-call-delta', 'block-end']);
+});
+
+test('a blocked tool call stops only its own call', async () => {
+  const { create, state } = fixture();
+  state.violateTools = true;
+  const adapter = create();
+  await assert.rejects(collect(adapter.stream(request('no-tools-version', { tools: [{ name: 'tool' }] }))), { code: 'TOOL_CALL_DISABLED' });
+  state.violateTools = false;
+  const seen = [];
+  for await (const chunk of adapter.stream(request('enabled-version', { tools: [{ name: 'tool' }] }))) seen.push(chunk);
+  assert.deepEqual(seen.map(chunk => chunk.type), ['text-delta']);
+  assert.equal(state.requests.at(-1).payload.tools.length, 1);
+});
+
+test('the tool switch does not break cancellation of a disabled model', async () => {
+  const { create, state } = fixture();
+  const adapter = create();
+  state.waitForAbort = true;
+  const stream = adapter.stream(request('no-tools-version', { tools: [{ name: 'tool' }] }))[Symbol.asyncIterator]();
+  await stream.next();
+  const waiting = stream.next();
+  adapter.dispose();
+  await assert.rejects(waiting, { code: 'ABORTED' });
+  assert.equal(state.requests[0].options.signal.aborted, true);
+});
+
+test('a malformed tool switch is rejected before any delegate is built', () => {
+  const item = fixture();
+  item.config.factsByProvider.get(ROUTE).get('no-tools-version').effective.toolsEnabled = 'no';
+  assert.throws(item.create, { code: 'INVALID_CONFIG' });
+  assert.equal(item.state.delegates.length, 0);
 });

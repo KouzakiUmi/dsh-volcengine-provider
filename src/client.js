@@ -591,6 +591,8 @@ function describeModelSettings(model) {
   if (Number.isFinite(settings.contextWindow)) parts.push(`上下文长度 ${settings.contextWindow}`);
   if (Number.isFinite(settings.maxTokens)) parts.push(`最大输出 ${settings.maxTokens}`);
   if (Number.isFinite(settings.temperature)) parts.push(`温度 ${settings.temperature}`);
+  if (Object.hasOwn(settings, 'imageInput')) parts.push(`图片输入 ${settings.imageInput ? '启用' : '禁用'}`);
+  if (Object.hasOwn(settings, 'toolsEnabled')) parts.push(`工具调用 ${settings.toolsEnabled ? '启用' : '禁用'}`);
   if (Object.hasOwn(settings, 'reasoningEfforts')) parts.push(`思考档位 ${effortSummary(settings.reasoningEfforts)}`);
   if (Object.hasOwn(settings, 'defaultReasoning')) parts.push(`默认档位 ${settings.defaultReasoning === null ? '不强制' : String(settings.defaultReasoning)}`);
   if (Object.hasOwn(settings, 'forceAdaptiveThinking')) parts.push(settings.forceAdaptiveThinking ? '原生 effort 模式' : '固定预算模式');
@@ -610,6 +612,8 @@ function describeEffective(model) {
   if (Number.isFinite(effective.contextWindow)) parts.push(`上下文长度 ${effective.contextWindow}`);
   if (Number.isFinite(effective.maxTokens)) parts.push(`最大输出 ${effective.maxTokens}`);
   if (Number.isFinite(effective.temperature)) parts.push(`温度 ${effective.temperature}`);
+  if (typeof effective.imageInput === 'boolean') parts.push(`图片输入 ${effective.imageInput ? '启用' : '禁用'}`);
+  if (typeof effective.toolsEnabled === 'boolean') parts.push(`工具调用 ${effective.toolsEnabled ? '启用' : '禁用'}`);
   if (Object.hasOwn(effective, 'reasoningEfforts')) parts.push(`思考档位 ${effortSummary(effective.reasoningEfforts)}`);
   if (Object.hasOwn(effective, 'defaultReasoning')) parts.push(`默认档位 ${effective.defaultReasoning === null ? '不强制' : String(effective.defaultReasoning)}`);
   if (effective.reasoningEfforts === false) parts.push('思考控制按模型默认');
@@ -647,6 +651,8 @@ function modelDraftFrom(model) {
     contextWindow: settings.contextWindow === undefined ? '' : String(settings.contextWindow),
     maxTokens: settings.maxTokens === undefined ? '' : String(settings.maxTokens),
     temperature: settings.temperature === undefined ? '' : String(settings.temperature),
+    imageInput: settings.imageInput === undefined ? 'inherit' : settings.imageInput ? 'true' : 'false',
+    toolsEnabled: settings.toolsEnabled === undefined ? 'inherit' : settings.toolsEnabled ? 'true' : 'false',
     effortsMode,
     effortsText,
     defaultReasoning,
@@ -721,6 +727,12 @@ function parseModelSettings(draft, model) {
     const value = Number(temperature);
     if (!Number.isFinite(value) || value < 0 || value > 1) problems.push('温度 temperature 须为 0 到 1 之间的数值。');
     else settings.temperature = value;
+  }
+
+  for (const key of ['imageInput', 'toolsEnabled']) {
+    const value = draft?.[key] ?? 'inherit';
+    if (value === 'true') settings[key] = true;
+    else if (value === 'false') settings[key] = false;
   }
 
   const effortsMode = draft?.effortsMode ?? 'inherit';
@@ -930,6 +942,30 @@ function ModelSettingsEditor({ model, draft, error, disabled, onChange, onSave, 
       'aria-label': label, placeholder: '留空表示继承目录默认', autoComplete: 'off', spellCheck: false,
       onChange: (event) => onChange({ [key]: event.target.value })
     }));
+  const capabilityCheckbox = (key, label) => {
+    const mode = draft?.[key] ?? 'inherit';
+    const inherited = model?.defaults?.[key];
+    const unknown = mode === 'inherit' && typeof inherited !== 'boolean';
+    return h('input', {
+      type: 'checkbox', checked: mode === 'inherit' ? inherited === true : mode === 'true', disabled,
+      'aria-label': label, 'aria-checked': unknown ? 'mixed' : undefined,
+      ref: (element) => { if (element) element.indeterminate = unknown; },
+      style: { width: 18, height: 18, margin: 0, flex: '0 0 auto', accentColor: 'var(--dsw-alias-brand-primary, Highlight)' },
+      onChange: (event) => onChange({ [key]: event.target.checked ? 'true' : 'false' })
+    });
+  };
+  const capabilityStatus = (key) => {
+    const mode = draft?.[key] ?? 'inherit';
+    if (mode !== 'inherit') return `已覆盖 · ${mode === 'true' ? '启用' : '禁用'}`;
+    const inherited = model?.defaults?.[key];
+    return `继承 · 目录默认：${typeof inherited === 'boolean' ? (inherited ? '启用' : '禁用') : '未知'}`;
+  };
+  const restoreCapability = (key, label) => (draft?.[key] ?? 'inherit') === 'inherit' ? null : h('button', {
+    type: 'button', style: { ...style.btn, flex: '0 0 auto' }, disabled,
+    'aria-label': label, onClick: () => onChange({ [key]: 'inherit' })
+  }, '恢复继承');
+  const checkboxLabel = (key, label, text) => h('label', { className: 'vcp-plan-toggle' },
+    capabilityCheckbox(key, label), h('span', null, text));
   return h('div', { className: 'vcp-editor' },
     h('div', { style: { fontWeight: 650, fontSize: 13 } }, `模型参数：${model?.name || model?.id}`),
     h('div', { className: 'vcp-fields vcp-fields-three' },
@@ -937,6 +973,29 @@ function ModelSettingsEditor({ model, draft, error, disabled, onChange, onSave, 
       numberField('maxTokens', MODEL_FIELD_LABELS.maxTokens),
       numberField('temperature', MODEL_FIELD_LABELS.temperature)),
     h('p', { style: style.muted }, TEMPERATURE_HINT),
+    h('section', { className: 'vcp-section', 'aria-label': '模型输入与工具调用' },
+      h('div', { className: 'vcp-actions' },
+        h('strong', { style: { fontSize: 13 } }, '输入类型'),
+        h('label', { className: 'vcp-plan-toggle' },
+          h('input', {
+            type: 'checkbox', checked: true, disabled: true, 'aria-label': '文本输入（固定开启）',
+            style: { width: 18, height: 18, margin: 0, flex: '0 0 auto', accentColor: 'var(--dsw-alias-brand-primary, Highlight)' }
+          }),
+          h('span', null, '文本')),
+        checkboxLabel('imageInput', '图片输入', '图片')),
+      h('div', { className: 'vcp-actions' },
+        h('span', { style: style.chip }, capabilityStatus('imageInput')),
+        restoreCapability('imageInput', '恢复图片输入默认')),
+      h('div', { className: 'vcp-actions' },
+        checkboxLabel('toolsEnabled', '工具调用', '工具调用'),
+        h('span', { style: style.chip }, capabilityStatus('toolsEnabled')),
+        restoreCapability('toolsEnabled', '恢复工具调用默认')),
+      draft?.imageInput === 'true'
+        ? h('p', { style: style.warn }, '强制启用图片输入仅是本地能力声明，服务端可能仍不支持图片。') : null,
+      draft?.toolsEnabled === 'false'
+        ? h('p', { style: style.muted }, '禁用后模型不能发起新工具调用；历史消息中的工具调用回放保留。') : null,
+      h('p', { style: style.muted }, '音频 / 视频：本 DSH 通道不可用，不提供能力覆盖开关。'),
+      h('p', { style: style.muted }, '独立 JSON Schema 结构化输出：本 DSH 通道暂不可用，不提供配置开关。')),
     h('label', { style: stackedField },
       h('span', { style: style.label }, '思考档位映射 reasoningEfforts'),
       h('select', {

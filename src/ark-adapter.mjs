@@ -23,13 +23,24 @@ function abortOnReturn(iterator, cancellation) {
   return iterator;
 }
 
+/** 工具被逐模型关闭时，服务端返回的任何工具调用块都视为违约。 */
+function carriesToolCall(chunk) {
+  if (!chunk || typeof chunk !== 'object') return false;
+  if (chunk.type === 'tool-call-delta') return true;
+  if (chunk.type === 'block-start') return chunk.blockType === 'tool-call';
+  if (chunk.type === 'block-end') return chunk.block?.type === 'tool-call';
+  return chunk.type === 'finish' && chunk.reason?.kind === 'tool-calls';
+}
+
 /**
  * Build an isolated public PiAiAdapter composition for one route generation.
  * deps supplies LlmAdapter, LlmError, PiAiAdapter, InMemoryCredentialStore,
  * anthropicMessagesApi and optionally the Core's public resolveRetryPolicy.
  * config.providers is the plain profilesFor result. factsByProvider is a
- * Map<route, Map<exactModelId, row>>; only row.messagesThinkingMode and
- * row.canDisableThinking enter request controls. resolveApiKey(route) is the
+ * Map<route, Map<exactModelId, row>>; row.messagesThinkingMode,
+ * row.canDisableThinking and row.effective.toolsEnabled enter request
+ * controls. The tool switch is per model: false asks the API for
+ * tool_choice none and blocks any tool call the server returns anyway. resolveApiKey(route) is the
  * sole credential source; the attachment hooks use PiAiAdapterOptions shapes.
  * The returned LlmAdapter also exposes idempotent dispose().
  */
@@ -86,6 +97,10 @@ export function createArkAdapter(deps, config) {
       seen.add(entry.id);
       const fact = facts.get(entry.id);
       if (!object(fact)) invalid();
+      if (fact.effective !== undefined && !object(fact.effective)) invalid();
+      if (fact.effective?.toolsEnabled !== undefined && typeof fact.effective.toolsEnabled !== 'boolean') invalid();
+      // 目录里缺少该开关的旧数据按开启处理。
+      const toolsEnabled = fact.effective?.toolsEnabled ?? true;
       const mode = fact.messagesThinkingMode ?? 'server-default';
       if (!MODES.has(mode) || (fact.canDisableThinking != null && typeof fact.canDisableThinking !== 'boolean')) invalid();
       if (entry.api !== undefined && entry.api !== input.api) invalid();
@@ -146,7 +161,8 @@ export function createArkAdapter(deps, config) {
         supportsOff: reasoning && Object.hasOwn(effort, 'off'),
         offWire: reasoning ? effort.off : undefined,
         offCarrier: reasoning ? Object.keys(effort).find(level => level !== 'off') : undefined,
-        forceAdaptiveThinking: compat.forceAdaptiveThinking
+        forceAdaptiveThinking: compat.forceAdaptiveThinking,
+        toolsEnabled
       });
     }
     specifications.set(route, { profile, models, controls, configuredMaxTokens });
@@ -169,7 +185,8 @@ export function createArkAdapter(deps, config) {
     const profiles = new Map();
     for (const [route, spec] of specifications) {
       const optionsFor = (options, model) => messagesStreamOptions(options, {
-        ...spec.controls.get(model.id), reasoningEffort: control?.reasoningEffort
+        ...spec.controls.get(model.id), reasoningEffort: control?.reasoningEffort,
+        toolsEnabled: control?.toolsEnabled ?? spec.controls.get(model.id).toolsEnabled
       });
       profiles.set(route, {
         ...spec.profile,
@@ -224,7 +241,7 @@ export function createArkAdapter(deps, config) {
     async prepareCall(provider, model, signal) {
       ensureLive(); const spec = own(provider, model);
       if (signal?.aborted) fail('方舟请求已取消', 'ABORTED');
-      const control = { reasoningEffort: undefined };
+      const control = { reasoningEffort: undefined, toolsEnabled: spec.controls.get(model).toolsEnabled };
       const key = { value: undefined };
       const callDelegate = delegate(control, key);
       const prepared = await callDelegate.prepareCall(provider, model, signal);
@@ -258,6 +275,10 @@ export function createArkAdapter(deps, config) {
                   : options.reasoningEffort,
                 signal: requestSignal
               })) {
+                // 关闭工具调用时不得向上游释放任何完整或增量工具调用。
+                if (control.toolsEnabled === false && carriesToolCall(chunk)) {
+                  fail('该模型已关闭工具调用，但服务端仍返回了工具调用', 'TOOL_CALL_DISABLED');
+                }
                 if (chunk.type === 'finish' && chunk.reason?.failure) {
                   yield { ...chunk, reason: { ...chunk.reason, failure: { ...chunk.reason.failure, message: redact(chunk.reason.failure.message, key.value) } } };
                 } else yield chunk;

@@ -68,7 +68,7 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
         active: { 'agent-plan': 'default', 'coding-plan': 'default' },
         enabled: { 'agent-plan': true, 'coding-plan': true },
         catalogs: ['agent-plan', 'coding-plan'].map(plan => {
-          const defaults = { contextWindow: 32768, maxTokens: 8192, reasoningEfforts: { off: null, low: 'low', high: 'high' }, defaultReasoning: 'low', forceAdaptiveThinking: true };
+          const defaults = { contextWindow: 32768, maxTokens: 8192, imageInput: true, toolsEnabled: true, reasoningEfforts: { off: null, low: 'low', high: 'high' }, defaultReasoning: 'low', forceAdaptiveThinking: true };
           return { plan, accountId: 'default', count: 1, enabledCount: 1, source: 'local-snapshot', models: [{ id: 'demo-reasoning-model', name: '示例模型（假数据）', enabled: true, capabilityUnverified: true, settings: {}, defaults, effective: { ...defaults } }] };
         }),
         routes: { 'agent-plan': 'volcengine-agent-plan', 'coding-plan': 'volcengine-coding-plan' }, login: { jobId: null, state: 'idle', message: '' }
@@ -203,12 +203,54 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
       const box = await page.getByLabel(label, { exact: true }).locator('..').boundingBox();
       assert.ok(box && box.height < 150, `${label} should not inherit a row's 220px flex basis`);
     }
+    const imageCapability = page.getByRole('checkbox', { name: '图片输入', exact: true });
+    const toolCapability = page.getByRole('checkbox', { name: '工具调用', exact: true });
+    const textCapability = page.getByRole('checkbox', { name: '文本输入（固定开启）', exact: true });
+    assert.equal(await textCapability.isChecked(), true, '文本输入必须始终保留');
+    assert.equal(await textCapability.isDisabled(), true, '文本输入不应被关闭');
+    assert.equal(await imageCapability.isChecked(), true, '默认图片能力应与目录一致');
+    assert.equal(await toolCapability.isChecked(), true, '默认工具能力应与目录一致');
+    await imageCapability.uncheck();
+    await toolCapability.uncheck();
     await page.getByLabel('温度 temperature', { exact: true }).fill('0.4');
     await page.getByRole('button', { name: '保存参数', exact: true }).click();
     await page.waitForFunction(() => window.fixtureRequests.some(request => request.op === 'saveModelSettings'));
     const save = await page.evaluate(() => window.fixtureRequests.find(request => request.op === 'saveModelSettings'));
     assert.equal(save.settings.temperature, 0.4);
+    assert.equal(save.settings.imageInput, false);
+    assert.equal(save.settings.toolsEnabled, false);
     assert.equal(await page.evaluate(() => window.fixtureState.catalogs[0].models[0].enabled), false);
+    assert.equal(await imageCapability.isChecked(), false);
+    assert.equal(await toolCapability.isChecked(), false);
+    await page.getByRole('button', { name: '恢复图片输入默认', exact: true }).click();
+    assert.equal(await imageCapability.isChecked(), true, '恢复后应显示目录默认');
+    assert.equal(await toolCapability.isChecked(), false, '恢复图片不应影响工具覆盖');
+    await page.getByRole('button', { name: '恢复工具调用默认', exact: true }).click();
+    assert.equal(await toolCapability.isChecked(), true, '恢复后应显示目录默认');
+    await page.getByRole('button', { name: '保存参数', exact: true }).click();
+    await page.waitForFunction(() => window.fixtureRequests.filter(request => request.op === 'saveModelSettings').length === 2);
+    const inherited = await page.evaluate(() => window.fixtureRequests.filter(request => request.op === 'saveModelSettings').at(-1));
+    assert.equal(Object.hasOwn(inherited.settings, 'imageInput'), false);
+    assert.equal(Object.hasOwn(inherited.settings, 'toolsEnabled'), false);
+    assert.equal(await page.evaluate(() => window.fixtureState.catalogs[0].models[0].enabled), false);
+    await page.evaluate(() => {
+      const model = window.fixtureState.catalogs[0].models[0];
+      delete model.defaults.imageInput;
+      delete model.effective.imageInput;
+    });
+    await page.getByRole('button', { name: '刷新状态', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('input[aria-label="图片输入"]')?.indeterminate === true);
+    assert.equal(await imageCapability.getAttribute('aria-checked'), 'mixed', '未知目录默认不能显示成确定的禁用状态');
+    await imageCapability.check();
+    assert.equal(await imageCapability.evaluate(node => node.indeterminate), false, '手动选择后不应仍为未定态');
+    await page.getByRole('button', { name: '恢复图片输入默认', exact: true }).click();
+    assert.equal(await imageCapability.evaluate(node => node.indeterminate), true, '恢复未知默认应回到未定态');
+    await page.evaluate(() => {
+      const model = window.fixtureState.catalogs[0].models[0];
+      model.defaults.imageInput = true;
+      model.effective.imageInput = true;
+    });
+    await page.getByRole('button', { name: '刷新状态', exact: true }).click();
     await modelToggle.check();
     await page.getByRole('button', { name: '恢复默认 demo-reasoning-model', exact: true }).first().click();
     await page.waitForFunction(() => window.fixtureRequests.some(request => request.op === 'resetModelSettings'));
@@ -377,7 +419,12 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
       const box = await page.getByLabel(label, { exact: true }).boundingBox();
       assert.ok(box && box.height < 64 && box.x >= 0 && box.x + box.width <= 391, `${label} must fit the expanded narrow form`);
     }
+    for (const label of ['图片输入', '工具调用']) {
+      const box = await page.getByLabel(label, { exact: true }).boundingBox();
+      assert.ok(box && box.height < 64 && box.x >= 0 && box.x + box.width <= 391, `${label} must fit the expanded narrow form`);
+    }
     await namedSection.screenshot({ path: screenshot.replace(/\.png$/, '-mobile-models.png') });
+    await namedSection.locator('.vcp-editor').screenshot({ path: screenshot.replace(/\.png$/, '-model-capabilities.png') });
     // ── 暗浅色配色可读性 ────────────────────────────────────────────────
     // 宿主用 body[data-ds-dark-theme] 标记深色，并提供 state-*-secondary 令牌。
     // 这里同时模拟「宿主给出实色 secondary 令牌」与「宿主缺少该令牌」两种配置，

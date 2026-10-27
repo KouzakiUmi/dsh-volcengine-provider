@@ -95,6 +95,16 @@ test('dynamic and unknown catalogs remain distinct without guessing a low or off
   assert.equal(row.defaults.defaultReasoning, null);
 });
 
+test('K2.7 thinking disclosure remains scoped to the documented plan', () => {
+  const state = initialState();
+  const agent = getModelRows(state, 'default', 'agent-plan').find(row => row.id === 'kimi-k2.7-code');
+  const coding = getModelRows(state, 'default', 'coding-plan').find(row => row.id === 'kimi-k2.7-code');
+  assert.match(agent.capabilityNote, /尚未单独确认/);
+  assert.match(coding.capabilityNote, /思考能力已确认/);
+  assert.equal(agent.messagesThinkingMode, 'server-default');
+  assert.equal(coding.messagesThinkingMode, 'server-default');
+});
+
 test('legacy off overrides remain saved but cannot disable a documented always-thinking model', () => {
   const state=initialState(),key='default:agent-plan';
   state.modelSettings[key]={'kimi-k3-1-pro-261024':{reasoningEfforts:{off:null,low:'low'},defaultReasoning:'off'}};

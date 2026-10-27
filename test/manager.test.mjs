@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
 
 import { ArkController, planProfiles } from '../src/manager.mjs';
-import { revision } from '../src/state.mjs';
+import { StateStore, revision } from '../src/state.mjs';
 import { snapshot } from '../src/catalog.mjs';
 import { approvedLoginUrl } from '../src/oauth.mjs';
 
@@ -732,6 +732,69 @@ test('拉取模型目录保留已保存的模型设置', async () => {
 	view = await controller.invoke({ op: 'models', accountId: 'second', plan: 'agent-plan', revision: view.revision });
 	const row = view.catalogs.find(item => item.accountId === 'second' && item.plan === 'agent-plan').models.find(item => item.id === 'agent-model');
 	assert.equal(row.effective.temperature, 0.6, '目录刷新不应丢失模型设置');
+});
+
+test('saveModelSettings 保存图片输入与工具开关，并按账号与套餐隔离', async () => {
+	const { controller, statePath } = await setup();
+	const view = await controller.read();
+	// doubao-seed-evolving 在两个套餐里都声明支持图片输入。
+	const next = await controller.invoke({
+		op: 'saveModelSettings',
+		accountId: 'default',
+		plan: 'agent-plan',
+		modelId: 'doubao-seed-evolving',
+		settings: { imageInput: false, toolsEnabled: false },
+		revision: view.revision
+	});
+	const agent = next.catalogs.find(row => row.accountId === 'default' && row.plan === 'agent-plan').models.find(row => row.id === 'doubao-seed-evolving');
+	const coding = next.catalogs.find(row => row.accountId === 'default' && row.plan === 'coding-plan').models.find(row => row.id === 'doubao-seed-evolving');
+	assert.equal(agent.defaults.imageInput, true, '目录默认仍反映模型实际能力');
+	assert.equal(agent.effective.imageInput, false);
+	assert.equal(agent.effective.toolsEnabled, false);
+	assert.equal(coding.effective.imageInput, true, '另一个套餐不应被污染');
+	assert.equal(coding.effective.toolsEnabled, true, '另一个套餐不应被污染');
+	const raw = JSON.parse(await readFile(statePath, 'utf8'));
+	assert.equal(raw.version, 2);
+	assert.equal(raw.modelSettings['default:agent-plan']['doubao-seed-evolving'].imageInput, false);
+	assert.equal(raw.modelSettings['default:agent-plan']['doubao-seed-evolving'].toolsEnabled, false);
+	const reloaded = await new StateStore(statePath).load();
+	assert.equal(reloaded.modelSettings['default:agent-plan']['doubao-seed-evolving'].toolsEnabled, false);
+});
+
+test('saveModelSettings 拒绝非布尔值的图片与工具开关', async () => {
+	const { controller } = await setup();
+	const view = await controller.read();
+	for (const settings of [{ imageInput: 'yes' }, { imageInput: 1 }, { toolsEnabled: 'false' }, { toolsEnabled: null }]) {
+		await assert.rejects(
+			() => controller.invoke({ op: 'saveModelSettings', accountId: 'default', plan: 'agent-plan', modelId: 'doubao-seed-evolving', settings, revision: view.revision }),
+			/必须是布尔值/,
+			`应当拒绝 ${JSON.stringify(settings)}`
+		);
+	}
+	assert.equal((await controller.read()).revision, view.revision, '被拒绝的保存不应改变状态');
+});
+
+test('resetModelSettings 让图片与工具开关回到目录默认继承', async () => {
+	const { controller } = await setup();
+	let view = await controller.read();
+	view = await controller.invoke({ op: 'saveModelSettings', accountId: 'default', plan: 'agent-plan', modelId: 'doubao-seed-evolving', settings: { imageInput: false, toolsEnabled: false }, revision: view.revision });
+	view = await controller.invoke({ op: 'resetModelSettings', accountId: 'default', plan: 'agent-plan', modelId: 'doubao-seed-evolving', revision: view.revision });
+	const row = view.catalogs.find(item => item.plan === 'agent-plan').models.find(item => item.id === 'doubao-seed-evolving');
+	assert.deepEqual(row.settings, {});
+	assert.equal(row.effective.imageInput, true, '恢复默认后重新继承目录的图片能力');
+	assert.equal(row.effective.toolsEnabled, true, '恢复默认后工具重新开启');
+});
+
+test('拉取模型目录保留已保存的图片与工具开关', async () => {
+	const { controller } = await setup();
+	let view = await controller.read();
+	view = await controller.invoke({ op: 'saveAccount', revision: view.revision, account: { id: 'second', label: '第二账号', cliProfile: 'work-1' } });
+	view = await controller.invoke({ op: 'models', accountId: 'second', plan: 'agent-plan', revision: view.revision });
+	view = await controller.invoke({ op: 'saveModelSettings', accountId: 'second', plan: 'agent-plan', modelId: 'agent-model', settings: { imageInput: true, toolsEnabled: false }, revision: view.revision });
+	view = await controller.invoke({ op: 'models', accountId: 'second', plan: 'agent-plan', revision: view.revision });
+	const row = view.catalogs.find(item => item.accountId === 'second' && item.plan === 'agent-plan').models.find(item => item.id === 'agent-model');
+	assert.equal(row.effective.imageInput, true, '目录刷新不应丢失图片开关');
+	assert.equal(row.effective.toolsEnabled, false, '目录刷新不应丢失工具开关');
 });
 
 test('removeAccount 同时清理该账号的模型设置', async () => {
