@@ -372,6 +372,7 @@ function createHarness(options = {}) {
   // 复选框也是 input：表单用例只关心文本框，按类型过滤避免被开关挤位。
   const textInputs = () => inputs().filter((node) => node.props.type !== 'checkbox');
   const selects = () => find(tree, (node) => node.type === 'select');
+  const quotaBars = () => find(tree, (node) => node.props?.role === 'progressbar');
   const anchors = () => find(tree, (node) => node.type === 'a');
   const dispose = () => {
     // 组件卸载（清掉组件内的轮询定时器）+ 插件级清理（远端挂载、兜底等待）
@@ -381,7 +382,7 @@ function createHarness(options = {}) {
 
   return {
     backend, ctx, exported, mini, flush, render, find, buttons, buttonByText, click, texts, joined,
-    inputs, textInputs, selects, anchors, dispose,
+    inputs, textInputs, selects, quotaBars, anchors, dispose,
     get tree() { return tree; },
     get mountedRemote() { return mountedRemote; },
     get unmounted() { return unmounted; },
@@ -422,8 +423,8 @@ test('首次读取渲染：标题、双套餐卡片、账号、路由与 authMod
   const text = harness.joined();
   assert.match(text, /火山方舟 Provider/);
   assert.doesNotMatch(text, /dsh-volcengine-provider/);
-  assert.match(text, /火山方舟 · Agent 套餐/);
-  assert.match(text, /火山方舟 · 编程套餐/);
+  assert.match(text, /Agent 套餐/);
+  assert.match(text, /编程套餐/);
   assert.match(text, /现有方舟账号/);
   assert.match(text, /模型路由：volcengine-agent-plan/);
   assert.match(text, /凭据来源：凭据引用名/);
@@ -442,7 +443,7 @@ test('拉取模型与刷新额度：目录来源、剩余百分比、AFP 绝对�
   await harness.click('刷新额度');
   assert.ok(harness.backend.calls.some((call) => call.op === 'quota' && call.plan === 'agent-plan' && call.force === true));
   const text = harness.joined();
-  assert.match(text, /剩余 87\.5%/);
+  assert.ok(harness.quotaBars().some(bar => bar.props['aria-valuetext'] === '剩余 87.5%'));
   assert.match(text, /已用 3 \/ 24 AFP/);
   assert.match(text, /重置于/);
   assert.match(text, /每日能力限额/);
@@ -465,7 +466,7 @@ test('网页登录：确认前不发起、确认后发起、轮询进度、成�
   const harness = createHarness();
   await harness.flush();
   await harness.click('刷新额度');
-  assert.match(harness.joined(), /剩余 87\.5%/);
+  assert.ok(harness.quotaBars().some(bar => bar.props['aria-valuetext'] === '剩余 87.5%'));
   await harness.click('网页登录');
   const text = harness.joined();
   assert.match(text, /本插件为该账号准备的隔离目录/);
@@ -499,8 +500,9 @@ test('网页登录：确认前不发起、确认后发起、轮询进度、成�
   await harness.flush();
   assert.match(harness.joined(), /登录成功，凭据已保存。/);
   assert.equal(harness.backend.calls.filter((call) => call.op === 'read').length, readsBefore + 1, '登录成功后应刷新一次 read');
-  assert.match(harness.joined(), /当前账号：刚登录的官方账号/);
-  assert.doesNotMatch(harness.joined(), /剩余 87\.5%/, '同账号重新登录必须清理旧身份的额度');
+  assert.equal(harness.selects()[0].props.value, 'default');
+  assert.match(String(harness.selects()[0].props.children[1][0].props.children), /刚登录的官方账号/);
+  assert.equal(harness.quotaBars().some(bar => bar.props['aria-valuetext'] === '剩余 87.5%'), false, '同账号重新登录必须清理旧身份的额度');
   await harness.flush();
   assert.equal(harness.backend.calls.filter((call) => call.op === 'read').length, readsBefore + 1, '成功后的普通渲染不能反复 read');
   harness.dispose();
@@ -633,7 +635,7 @@ test('官方身份优先、本地备注独立，OAuth 按套餐展示绑定与�
   const harness = createHarness({ backend });
   await harness.flush();
   const text = harness.joined();
-  assert.match(text, /当前账号：官方小明/);
+  assert.equal(harness.selects()[0].props.value, 'default');
   assert.match(text, /本地备注：默认账号/);
   assert.match(text, /官方账号 ID：account-456/);
   assert.match(text, /官方用户 ID：user-123/);
@@ -666,17 +668,35 @@ test('额度空值不伪造 100%，仅有效百分比提供可访问进度与更
   await harness.flush();
   await harness.click('刷新额度');
   const text = harness.joined();
-  assert.equal((text.match(/剩余 100%/g) || []).length, 1, '只有真实的零用量可显示剩余100%');
+  const progress = harness.quotaBars();
+  assert.equal(progress.length, 1, '只有真实的零用量可显示剩余100%');
+  assert.equal(harness.find(harness.tree, node => node.props.className === 'vcp-quota-percent').length, 1);
   assert.doesNotMatch(text, /已用 null/);
   assert.match(text, /已用 0 \/ 10 AFP/);
-  assert.match(text, /额度数据暂不可用/);
+  assert.match(text, /百分比未提供/);
   assert.match(text, /额度更新时间：/);
-  const progress = harness.find(harness.tree, (node) => node.type === 'progress');
-  assert.equal(progress.length, 1);
-  assert.equal(progress[0].props.value, 100);
+  assert.equal(progress[0].props['aria-valuenow'], 100);
   assert.equal(progress[0].props['aria-label'], '每日剩余额度');
   assert.equal(progress[0].props['aria-valuetext'], '剩余 100%');
   harness.dispose();
+});
+
+test('额度重置时间已过时不把旧用尽状态冒充当前状态', async t => {
+  const backend = new FakeBackend();
+  const original = backend.handle.bind(backend);
+  backend.handle = request => request.op === 'quota' ? { ok: true, value: {
+    accountId: request.accountId, plan: request.plan, state: 'ok',
+    windows: [
+      { kind: '5h', percent: 100, resetsAt: new Date(Date.now() + 60_000).toISOString() },
+      { kind: 'week', percent: 100, resetsAt: new Date(Date.now() - 60_000).toISOString() }
+    ]
+  } } : original(request);
+  const harness = createHarness({ backend }); t.after(() => harness.dispose());
+  await harness.flush(); await harness.click('刷新额度');
+  const rows = harness.find(harness.tree, node => node.props.className === 'vcp-quota-window');
+  const textOf = row => harness.find(row, node => node.props.className === 'vcp-status-chip')[0]?.props.children;
+  assert.deepEqual(rows.map(textOf), ['已用尽', '待刷新']);
+  assert.equal(harness.quotaBars().filter(bar => bar.props['aria-valuenow'] === 0).length, 2);
 });
 
 test('首次读取失败停止加载提示，重试可恢复且普通重渲染不重复 read', async () => {
@@ -723,7 +743,7 @@ test('额度请求展示具体忙态，失败后可直接重试', async () => {
   assert.ok(harness.buttonByText('重试额度查询'));
   delayed = false;
   await harness.click('重试额度查询');
-  assert.match(harness.joined(), /剩余 87\.5%/);
+  assert.ok(harness.quotaBars().some(bar => bar.props['aria-valuetext'] === '剩余 87.5%'));
   assert.doesNotMatch(harness.joined(), /额度查询失败/);
   harness.dispose();
 });
@@ -789,7 +809,8 @@ test('额度请求期间切换账号立即解锁查询且迟到响应不会覆�
   await h.click('刷新额度');
   pending.get('second')({ ok: true, value: { plan: 'agent-plan', accountId: 'second', state: 'ok', windows: [{ kind: '5h', percent: 60 }] } }); await h.flush();
   pending.get('default')({ ok: true, value: { plan: 'agent-plan', accountId: 'default', state: 'ok', windows: [{ kind: '5h', percent: 99 }] } }); await h.flush();
-  assert.match(h.joined(), /剩余 40%/); assert.doesNotMatch(h.joined(), /剩余 1%/);
+  assert.ok(h.quotaBars().some(bar => bar.props['aria-valuetext'] === '剩余 40%'));
+  assert.ok(!h.quotaBars().some(bar => bar.props['aria-valuetext'] === '剩余 1%'));
 });
 
 test('已有账号可登录其他身份，不覆盖原账号或套餐选择', async t => {
@@ -915,7 +936,7 @@ test('未绑定套餐和缺少隔离 Profile 不提供必失败的目录或额�
 test('布局回归：统一页头、账号与双套餐分区并存，技术细节默认折叠', async t => {
   const h = createHarness(); t.after(() => h.dispose()); await h.flush();
   assert.equal(h.tree.props.className, 'vcp-settings');
-  assert.match(h.joined(), /MODEL PROVIDER/);
+  assert.match(h.joined(), /火山方舟 Provider/);
   assert.match(h.joined(), /1 个账号 · 2 个套餐/);
   for (const label of ['账号管理', '火山方舟 · Agent 套餐', '火山方舟 · 编程套餐']) {
     assert.equal(h.find(h.tree, node => node.type === 'section' && node.props['aria-label'] === label).length, 1, label);
@@ -924,16 +945,16 @@ test('布局回归：统一页头、账号与双套餐分区并存，技术细�
   const accountSelectFields = h.find(h.tree, node => node.type === 'label'
     && h.find(node, child => child.type === 'select' && /使用账号$/.test(child.props['aria-label'] ?? '')).length > 0);
   assert.equal(accountSelectFields.length, 2);
-  assert.ok(accountSelectFields.every(field => field.props.style.flex === 'none'), '垂直账号字段不得用 220px flex-basis 撑高');
+  assert.ok(accountSelectFields.every(field => field.props.style.minWidth === 0), '账号字段须允许窄屏收缩');
   const cards = h.find(h.tree, node => String(node.props.className ?? '').split(' ').includes('vcp-card'));
   assert.ok(cards.length >= 3);
-  assert.ok(cards.every(card => card.props.style.padding === undefined), '卡片 padding 必须交给可响应断点的 scoped CSS');
+  assert.ok(cards.every(card => card.props.style?.padding === undefined), '卡片 padding 必须交给可响应断点的 scoped CSS');
   assert.match(h.buttonByText('登录其他账号').props.style.background, /#2563eb/, '主按钮实色回退必须保证白字对比度');
   assert.ok(h.buttons().every(button => String(button.props.className).includes('vcp-button')), '按钮应共享统一主次与焦点样式');
   const details = h.find(h.tree, node => node.type === 'details');
   assert.ok(details.length >= 3);
   assert.ok(details.every(node => node.props.open !== true), '高级信息和模型列表默认不应强制展开');
-  assert.equal(h.find(h.tree, node => node.props.className === 'vcp-plans').length, 1, '双套餐应随可用宽度并列');
+  assert.equal(h.find(h.tree, node => String(node.props.className ?? '').split(' ').includes('vcp-plans')).length, 1, '双套餐应随可用宽度并列');
   assert.match(h.joined(), /账号高级配置与标识/);
   assert.equal(h.find(h.tree, node => node.props['aria-label'] === '火山方舟 · Agent 套餐额度').length, 1);
   assert.equal(h.find(h.tree, node => node.props['aria-label'] === '火山方舟 · 编程套餐额度').length, 1);
@@ -1007,6 +1028,55 @@ test('额度倒计时按实际时间刷新，缺失与过期不伪造重置', as
   assert.doesNotMatch(h.joined(), /距重置/);
   assert.equal(intervals.size, 0, '全部到期后停止定时器');
   assert.equal(backend.calls.filter(call => call.op === 'quota').length, 2, '到期不会自动触发网络查询');
+});
+
+test('两套餐各自共享倒计时时钟，刷新目标时仅回收对应套餐的旧时钟', async t => {
+  const originalNow = Date.now;
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  const clock = Date.parse('2026-10-27T08:00:00Z');
+  let intervalId = 0;
+  const intervals = new Map();
+  Date.now = () => clock;
+  globalThis.setInterval = (callback, delay) => { assert.equal(delay, 1000); intervals.set(++intervalId, callback); return intervalId; };
+  globalThis.clearInterval = id => intervals.delete(id);
+  let harness;
+  t.after(() => { harness?.dispose(); Date.now = originalNow; globalThis.setInterval = originalSetInterval; globalThis.clearInterval = originalClearInterval; });
+  const backend = new FakeBackend();
+  const handle = backend.handle.bind(backend);
+  let agentReset = clock + 120_000;
+  backend.handle = request => {
+    const result = handle(request);
+    if (request.op === 'quota' && result.ok) result.value.windows = [
+      { kind: '5h', percent: 10, resetsAt: new Date(request.plan === 'agent-plan' ? agentReset : clock + 300_000).toISOString() },
+      { kind: 'week', percent: 20, resetsAt: new Date(request.plan === 'agent-plan' ? agentReset : clock + 300_000).toISOString() }
+    ];
+    return result;
+  };
+  harness = createHarness({ backend });
+  await harness.flush();
+  const refreshPlan = async label => {
+    const section = harness.find(harness.tree, node => node.type === 'section' && node.props['aria-label'] === label)[0];
+    assert.ok(section, `缺少套餐分区：${label}`);
+    const button = harness.find(section, node => node.type === 'button' && node.props.children === '刷新额度')[0];
+    assert.ok(button && !button.props.disabled, `套餐额度刷新不可用：${label}`);
+    button.props.onClick();
+    await harness.flush();
+  };
+  await refreshPlan('火山方舟 · Agent 套餐');
+  const agentTimer = [...intervals.keys()][0];
+  assert.equal(intervals.size, 1, '同套餐的多个窗口只创建一个时钟');
+  await refreshPlan('火山方舟 · 编程套餐');
+  assert.equal(intervals.size, 2, '两个套餐独立维护时钟');
+  const codingTimer = [...intervals.keys()].find(id => id !== agentTimer);
+  agentReset = clock + 180_000;
+  await refreshPlan('火山方舟 · Agent 套餐');
+  assert.equal(intervals.size, 2);
+  assert.equal(intervals.has(agentTimer), false, '重置目标变化时回收旧时钟');
+  assert.equal(intervals.has(codingTimer), true, '另一套餐的时钟不受影响');
+  assert.equal(backend.calls.filter(call => call.op === 'quota').length, 3);
+  harness.dispose(); harness = null;
+  assert.equal(intervals.size, 0, '卸载后回收两个套餐的时钟');
 });
 
 test('空闲与成功登录状态保持紧凑，进行中仍保留状态和取消入口', async t => {

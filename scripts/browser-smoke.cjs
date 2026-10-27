@@ -213,10 +213,16 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     await page.getByRole('button', { name: '恢复默认 demo-reasoning-model', exact: true }).first().click();
     await page.waitForFunction(() => window.fixtureRequests.some(request => request.op === 'resetModelSettings'));
     await page.getByRole('button', { name: '刷新额度', exact: true }).first().click();
-    await page.getByText('剩余 75%').waitFor();
+    const agentQuota = page.locator('section[aria-label="火山方舟 · Agent 套餐额度"]');
+    const agentBar = agentQuota.locator('[role="progressbar"][aria-valuetext="剩余 75%"]');
+    await agentBar.waitFor();
+    assert.equal(await agentBar.getAttribute('aria-valuenow'), '75', '可访问进度应表达真实剩余百分比');
+    assert.ok((await agentBar.boundingBox()).height >= 6, '额度条应有足够的视觉厚度');
+    const mainPercent = agentQuota.locator('.vcp-quota-percent').first();
+    assert.equal((await mainPercent.innerText()).trim(), '75%');
+    assert.ok(await mainPercent.evaluate(node => parseFloat(getComputedStyle(node).fontSize)) >= 18, '剩余比例应成为窗口的主要数字');
     // ── 额度倒计时与分组 ────────────────────────────────────────────────
     // 未来重置时间给出秒级倒计时，并随真实时间实时变动；已到期、无法解析与未提供各有独立文案。
-    const agentQuota = page.locator('section[aria-label="火山方舟 · Agent 套餐额度"]');
     const textGroup = agentQuota.locator('section[aria-label="文本 / 向量模型额度"]');
     await textGroup.waitFor();
     assert.equal(await textGroup.locator('.vcp-quota-window').count(), 2, '文本分组只应包含自己的额度窗口');
@@ -254,13 +260,16 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     assert.equal(await accountsDisclosure.evaluate(node => node.open), true, '登录进行中时账号区应强制展开');
     assert.equal((await page.evaluate(() => window.fixtureCalls)).includes('startLogin'), true);
     await page.getByText('身份与套餐已更新（离线测试）').waitFor();
-    await page.getByText('当前账号：方舟体验账号（假数据）', { exact: true }).first().waitFor();
+    await page.waitForFunction(() => {
+      const select = document.querySelector('select[aria-label="火山方舟 · Agent 套餐使用账号"]');
+      return select?.selectedOptions[0]?.textContent.includes('方舟体验账号（假数据）');
+    });
     assert.match((await disclosureSummary.innerText()).trim(), /^管理账号 · /, '登录后账号摘要仍应是管理入口');
     assert.match(await disclosureSummary.innerText(), /方舟体验账号（假数据）/, '登录后账号摘要应更新为最新身份');
-    assert.equal(await page.getByText('剩余 75%', { exact: true }).count(), 0, 'Login invalidates previous identity quota');
+    assert.equal(await agentQuota.locator('[role="progressbar"][aria-valuetext="剩余 75%"]').count(), 0, 'Login invalidates previous identity quota');
     await page.getByRole('button', { name: '刷新额度', exact: true }).first().click();
     await page.getByRole('button', { name: '刷新额度', exact: true }).nth(1).click();
-    await page.getByText('剩余 87.5%', { exact: true }).waitFor();
+    await page.locator('section[aria-label="火山方舟 · 编程套餐额度"] [role="progressbar"][aria-valuetext="剩余 87.5%"]').waitFor();
     // 编程套餐：三个窗口归入同一分组，缺少重置时间时给出「未提供」文案而非空白。
     const codingQuota = page.locator('section[aria-label="火山方舟 · 编程套餐额度"]');
     assert.equal(await codingQuota.locator('.vcp-quota-window').count(), 3, '编程套餐应展示三个额度窗口');
@@ -276,6 +285,21 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     await page.screenshot({ path: screenshot, fullPage: true });
     await setFixtureTheme('dark');
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-dark.png'), fullPage: true });
+    // 宿主窗口可以很宽，但设置内容栏仍可能很窄：单独验证容器宽度而非只看 viewport。
+    await page.evaluate(() => { document.getElementById('fixture-root').style.maxWidth = '390px'; });
+    const panelAgent = await agentCard.boundingBox();
+    const panelCoding = await codingCard.boundingBox();
+    assert.ok(panelAgent && panelCoding && panelCoding.y >= panelAgent.y + panelAgent.height - 1, 'A narrow settings panel must stack plans even in a wide window');
+    assert.equal(await page.locator('.vcp-settings').evaluate(node => node.scrollWidth <= node.clientWidth), true, 'Narrow host panel must not overflow horizontally');
+    await page.screenshot({ path: screenshot.replace(/\.png$/, '-narrow-panel-dark.png'), fullPage: true });
+    await page.evaluate(() => { document.getElementById('fixture-root').style.maxWidth = '1000px'; });
+    await page.setViewportSize({ width: 768, height: 900 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Settings must fit an intermediate viewport');
+    for (const panel of [agentCard, codingCard]) {
+      const box = await panel.boundingBox();
+      assert.ok(box && box.x >= 0 && box.x + box.width <= 769, 'Both plans must remain visible within the intermediate viewport');
+    }
+    await page.screenshot({ path: screenshot.replace(/\.png$/, '-tablet-dark.png'), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-compact-mobile-dark.png'), fullPage: true });
     await disclosureSummary.click();
@@ -296,7 +320,7 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
       const box = await reset.boundingBox();
       assert.ok(box && box.x >= 0 && box.x + box.width <= 391, '额度重置行不得溢出窄屏');
     }
-    assert.equal(await page.locator('.vcp-card').first().evaluate(node => getComputedStyle(node).paddingLeft), '12px', 'Narrow card padding must override the desktop rule');
+    assert.equal(await agentCard.evaluate(node => getComputedStyle(node).paddingLeft), '12px', 'Narrow plan padding must override the desktop rule');
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-mobile-dark.png'), fullPage: true });
     await setFixtureTheme('light');
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-mobile.png'), fullPage: true });
@@ -311,6 +335,12 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     await page.getByText('还没有账号。', { exact: false }).waitFor();
     assert.equal(await accountsDisclosure.evaluate(node => node.open), true, '没有账号时账号区应始终展开');
     assert.equal((await disclosureSummary.innerText()).trim(), '添加账号', '没有账号时摘要应提示添加账号');
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const emptyAccountBox = await page.locator('section[aria-label="账号管理"]').boundingBox();
+    const emptyPlanBox = await agentCard.boundingBox();
+    const firstLoginBox = await page.getByRole('button', { name: '网页登录', exact: true }).boundingBox();
+    assert.ok(emptyAccountBox && emptyPlanBox && emptyAccountBox.y < emptyPlanBox.y, '空账号时登录区应排在套餐区前');
+    assert.ok(firstLoginBox && firstLoginBox.y >= 0 && firstLoginBox.y + firstLoginBox.height <= 844, '首次登录入口应在窄屏首屏可见');
     await disclosureSummary.click();
     assert.equal(await accountsDisclosure.evaluate(node => node.open), true, '没有账号时摘要点击不应折叠账号区');
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-empty.png'), fullPage: true });
@@ -323,7 +353,7 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     assert.equal(await page.evaluate(() => window.fixtureState.enabled['agent-plan']), true);
     assert.equal(await page.evaluate(() => window.fixtureState.active['coding-plan']), null);
     await page.getByRole('button', { name: '刷新额度', exact: true }).first().click();
-    await page.getByText('剩余 75%').waitFor();
+    await agentQuota.locator('[role="progressbar"][aria-valuetext="剩余 75%"]').waitFor();
     // Render a few real pinned names through the same RPC fixture, with IDs folded.
     const { getModelRows } = await import('../src/catalog.mjs');
     const { initialState } = await import('../src/state.mjs');

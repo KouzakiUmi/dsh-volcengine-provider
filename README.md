@@ -33,7 +33,9 @@ dsh plugin --profile web add dsh-volcengine-provider
 
 ## 功能介绍
 
-<img src="docs/client-settings-preview.png" width="1000" alt="火山方舟 Provider 重构后的账号、双套餐、模型与额度分区">
+套餐区集中显示额度、重置时间和模型入口；已有账号时可在下方展开账号管理。
+
+<img src="docs/client-settings-preview.png" width="1000" alt="火山方舟 Provider 的套餐额度与账号管理">
 
 <sub>真实组件离线预览，使用受控 DSW 主题令牌，账号与额度均为示例数据。另见<a href="docs/client-settings-preview-dark.png">深色预览</a>与<a href="docs/client-settings-preview-mobile-dark.png">390px 窄屏预览</a>。</sub>
 

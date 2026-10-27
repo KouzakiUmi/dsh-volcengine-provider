@@ -429,7 +429,7 @@ test('套餐启用开关：发 setProviderEnabled，关闭后仍保留账号选�
   assert.equal(harness.select()[0].props.value, 'default');
   // The redesigned layout separates the state badge from the routing hint.
   assert.match(harness.joined(), /套餐已停用/);
-  assert.match(harness.joined(), /不注册模型路由/);
+  assert.match(harness.joined(), /路由已停用/);
 
   // Coding 套餐不受影响。
   assert.equal(harness.backend.enabled['coding-plan'], true);
