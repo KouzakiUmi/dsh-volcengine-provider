@@ -20,7 +20,7 @@
 ## 采用方案与关键取舍
 
 - Client 构建产物注册懒加载工厂 `factory(require)`，直接返回 `{ name, inject, apply }`；宿主不传入 CommonJS 的 `module` 或 `exports`。隔离和浏览器测试使用相同的单参数调用契约。
-- Host 使用目标 Core 的 pi-ai 传输能力；Client 通过统一 RPC 调用 Host。源代码分别位于 [Host 入口](src/index.mjs) 和 [设置页](src/client.js)，共享契约位于 [RPC 定义](src/remote.mjs)。
+- Host 使用目标 Core 的公开 `PiAiAdapter` 与其消费的 `@earendil-works/pi-ai@1.1.0`。插件为每个已准备调用建立独立 Provider 请求钩子，区分原始 off 与未设置档位；V4.1 使用 adaptive+effort，其余已确认可调模型使用 enabled+effort，未指定档位保持服务端默认。Client 通过统一 RPC 调用 Host。入口见 [Host](src/index.mjs)、[模型级适配器](src/ark-adapter.mjs)、[载荷处理](src/messages-payload.mjs)、[设置页](src/client.js)及[RPC](src/remote.mjs)。
 - 两套套餐分别保存启用状态与所选账号，关闭套餐保留账号选择；逐模型开关和参数按账号、套餐、模型隔离。账号元数据与凭据引用由 [状态模块](src/state.mjs) 管理；版本 1 状态兼容迁移为版本 2，修改采用 revision 校验与原子写入。
 - 网页登录使用官方 `arkcli auth login --login-mode broker --credential-store encrypted-file` 同设备流程，原样打开官方方舟 `/region:cn-beijing/arkcli/login` 链接，回调、会话及凭据均由 CLI 管理。每次登录使用独立 session CLI home，身份和个人套餐核验完成后原子切换绑定；取消、失败或冲突不覆盖上次可用身份。旧绑定没有 homeId 时继续使用原账号目录；已准备请求固定其绑定目录。
 - CLI 私有 PATH 中的浏览器启动桥拦截系统 URL opener，通过随机令牌鉴权的 127.0.0.1 IPC 将链接交给 Host；不修改系统 opener、注册表或默认浏览器。Playwright 驱动在净化环境的独立 Worker 中加载，丢弃驱动输出，使用正常系统 HOME/USERPROFILE 和独立临时 Chrome 配置，只打开链接，不读取网页、密码、Cookie 或授权码。CLI 成功核验后及取消/超时/失败时关闭所属浏览器和 IPC；不回退到日常浏览器或 cross-device 授权码流程。
@@ -37,7 +37,7 @@
 - 模型清单优先采用官方返回的 `output_name`，能力参数从可追溯 Plan Pi 文档与官方目录固化；来源优先级、整数值与冲突见 [能力快照来源](docs/model-capabilities.md)。只匹配逐条声明的 aliases，不去日期猜版本；别名元数据进入 Core 前剥离。模型名称使用固化可读标签修正代码式缓存名，可读服务端名称保留；请求及配置键始终使用原 ID，技术 ID 在设置页默认折叠。旧缓存能力在读取时与快照合并，不改写生产状态或清除用户 modelSettings；显式用户覆盖优先，继承输出不超过用户缩小后的上下文。继承能力变化导致默认档位失效时保留原设置、有效调用不强制该档位，并向页面返回可修复提示。Auto/未知版本保守标记；空目录、损坏缓存和读取错误分别处理。
 - Coding 额度沿用上游百分比单位；Agent 额度保留 AFP 绝对量并按能力范围分组。缺数据或请求失败时报告状态。
 - 路由更新先构造和校验新配置，再原子替换；更新失败时保留此前可用路由与模型默认参数。已准备的调用固定其配置快照。卸载时回收服务、适配器、进程、定时器和缓存。
-- Provider 不设置全局默认思考档位；默认档位按单个模型的有效能力选择。未知或非思考模型不强制 low。显式请求参数优先于保存的默认参数，预算模式和原生 effort 模式分别说明。详细契约见 [模型管理设计](docs/model-management.md)。
+- Provider 不设置全局默认思考档位；仅采用模型明确声明且受有效映射支持的默认值，未声明或显式不强制时继承服务端。思考能力、动态路由和未公开控制分项记录，依据见[逐模型核验表](docs/model-thinking-audit.md)；调用测试状态不代替文档能力判定。显式请求优先于保存默认；旧预算设置保留为兼容模式，读取时过滤继承映射中的预算不可表达档，新保存仍校验原映射。常驻思考不提供真正关闭，旧无效设置保留原值并提示修复。原生映射仅 off:null 表示关闭；off 的非空字符串值仍是用户 wire 别名，经每调用钩子独立发送，不得被 Core 的 off 省略规则吞掉；预算模式仍只接受 off:null。详见[模型管理设计](docs/model-management.md)。
 
 ## 验收标准
 

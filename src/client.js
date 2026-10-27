@@ -109,13 +109,13 @@ const MODEL_FIELD_LABELS = {
 
 /**
  * 思考模式文案。必须区分两种上游行为：
- *   原生 effort（adaptive）——档位原样交给上游，由上游决定思考量；
+ *   原生 effort——按模型接口传递档位，由上游决定思考量；
  *   固定预算（budget_tokens）——档位先映射成固定 token 预算。
  */
 const ADAPTIVE_MODE_OPTIONS = [
   { value: 'inherit', label: '继承目录默认' },
-  { value: 'true', label: '原生 effort 模式（adaptive）：档位交给上游决定思考量' },
-  { value: 'false', label: '固定预算模式（budget_tokens）：档位映射为固定 token 预算' }
+  { value: 'true', label: '模型原生档位：由模型决定思考量' },
+  { value: 'false', label: '预算兼容模式：使用固定 token 预算' }
 ];
 
 /**
@@ -125,7 +125,7 @@ const ADAPTIVE_MODE_OPTIONS = [
  * 底层可能根本不发 thinking 字段，不能说成强制关闭思考；
  * 真正关闭思考是默认档位选 off、且映射里声明 off:null。
  */
-const EFFORTS_HINT = '键是界面档位，值是发往上游的档位字符串；只有 off 可写 null（真正的关闭思考是默认档位选 off 且映射声明 off:null）；reasoningEfforts=false 只表示不提供可选思考档位，底层可能不发 thinking 字段，不等于强制关闭思考。';
+const EFFORTS_HINT = '键是界面档位，值是发往上游的档位字符串；只有 off 可写 null（模型支持关闭时，默认档位选 off 且映射声明 off:null）；reasoningEfforts=false 只表示不提供可选思考档位，底层可能不发 thinking 字段，不等于强制关闭思考。';
 
 /**
  * 固定预算模式上游真正消费的档位。
@@ -136,8 +136,8 @@ const BUDGET_EFFORTS = ['off', 'minimal', 'low', 'medium', 'high'];
 
 /** 两种思考模式对档位映射的不同要求，切换模式时要说清楚差别。 */
 const ADAPTIVE_MODE_HINTS = {
-  true: '原生 effort 模式：按 JSON 里声明的映射值原样发给上游。',
-  false: `固定预算模式：上游只消费 ${BUDGET_EFFORTS.join('/')}，xhigh/max 会被折叠成 high，非 off 档位的映射值必须与档位同名；已有映射不会被自动删除，需要时请手工调整 JSON。`
+  true: '原生 effort 模式：按模型接口传递 JSON 中声明的档位，自动匹配 enabled 或 adaptive 请求方式。',
+  false: `预算兼容模式：SDK 将 ${BUDGET_EFFORTS.join('/')} 转成预算，xhigh/max 会被折叠成 high，非 off 映射值须与档位同名；方舟官方档位使用原生模式。已有映射可手工调整 JSON。`
 };
 
 /** 温度与输出 token 的已知约束：思考开启时上游可能忽略温度。 */
@@ -650,13 +650,13 @@ function draftTiers(draft, model) {
   if (mode === 'map') {
     try {
       const parsed = JSON.parse(String(draft?.effortsText ?? '').trim() || 'null');
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return Object.keys(parsed);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return Object.keys(parsed).filter(tier => tier !== 'off' || model?.canDisableThinking !== false || typeof parsed.off === 'string');
     } catch {
       // 非法 JSON：交由校验环节报错，这里回退到目录里的有效档位。
     }
   }
   const inherited = inheritedEfforts(model);
-  if (inherited && typeof inherited === 'object') return Object.keys(inherited);
+  if (inherited && typeof inherited === 'object') return Object.keys(inherited).filter(tier => tier !== 'off' || model?.canDisableThinking !== false || typeof inherited.off === 'string');
   return [];
 }
 
@@ -745,6 +745,7 @@ function parseModelSettings(draft, model) {
     if (badOff.length) problems.push(`预算模式下 off 档位只能为空值（null）${suffix}`);
   }
 
+  if (model?.canDisableThinking === false && effortsMap?.off === null) problems.push('该模型为常驻思考，请移除 off 映射或继承模型默认。');
   const defaultReasoning = draft?.defaultReasoning ?? 'inherit';
   if (defaultReasoning === 'none') {
     settings.defaultReasoning = null;
@@ -898,7 +899,7 @@ function ModelSettingsEditor({ model, draft, error, disabled, onChange, onSave, 
         onChange: (event) => onChange({ defaultReasoning: event.target.value })
       },
         h('option', { value: 'inherit' }, '继承目录默认'),
-        h('option', { value: 'none' }, '不强制默认档位（null）'),
+        h('option', { value: 'none' }, '不强制档位（使用服务端默认）'),
         staleDefault ? h('option', { value: selectedDefault, disabled: true }, `${selectedDefault}（已失效，请重选）`) : null,
         tiers.map((tier) => h('option', { key: tier, value: tier }, tier)))),
     h('label', { style: stackedField },
@@ -929,6 +930,8 @@ function ModelRow({ model, disabled, routingError, editor, draftError, onToggle,
   const enabled = model?.enabled !== false;
   const editing = editor?.modelId === model?.id;
   const effective = describeEffective(model);
+  const capabilityLabel = ({ dynamic: '动态路由', partial: '部分参数未公开', unknown: '参数待确认' })[model?.capabilityStatus]
+    || (model?.capabilityUnverified ? '参数待确认' : '');
   return h('div', { className: 'vcp-model' },
     h('div', { className: 'vcp-heading' },
       h('div', { className: 'vcp-actions', style: { flex: '1 1 260px' } },
@@ -941,7 +944,8 @@ function ModelRow({ model, disabled, routingError, editor, draftError, onToggle,
           }),
           h('span', { className: 'vcp-model-name', title: model?.id }, model?.name || model?.id)),
         h('span', { className: 'vcp-chip-row' },
-          model?.capabilityUnverified ? h('span', { style: style.chip }, '能力未核实') : null,
+          capabilityLabel ? h('span', { style: style.chip }, capabilityLabel) : null,
+          model?.canDisableThinking === false ? h('span', { style: style.chip }, '常驻思考') : null,
           enabled ? null : h('span', { style: style.chip }, '已停用'))),
       h('div', { className: 'vcp-actions' },
         h('button', { type: 'button', style: style.btn, disabled, 'aria-label': `模型参数 ${model?.id ?? ''}`, onClick: () => (editing ? onCloseEditor() : onOpenEditor(model)) }, editing ? '收起参数' : '参数'),
@@ -951,6 +955,7 @@ function ModelRow({ model, disabled, routingError, editor, draftError, onToggle,
       h('p', { className: 'vcp-model-id', style: style.muted }, `调用 ID：${model?.id ?? ''}`)),
     h('p', { style: style.muted }, `当前参数：${describeModelSettings(model)}`),
     effective ? h('p', { style: routingError ? style.warn : style.muted }, `${routingError ? '已保存配置（路由尚未生效）' : '生效值'}：${effective}`) : null,
+    model?.capabilityNote ? h('p', { style: style.muted }, model.capabilityNote) : null,
     model?.settingsWarning ? h('p', { role: 'alert', style: style.warn }, model.settingsWarning) : null,
     editing
       ? h(ModelSettingsEditor, {
@@ -1117,7 +1122,7 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
       account && !auth.oauth && !canPullModels
         ? h('p', { style: style.muted }, '当前可使用本地模型快照；远端目录需要官方网页登录或该账号隔离目录内的 CLI Profile，配置前无法拉取。') : null,
       catalog?.error ? h('p', { role: 'alert', style: style.error }, describeError(catalog.error)) : null,
-      models.some(model => model?.settingsWarning) ? h(Notice, { tone: 'warn', role: 'alert' }, '部分已保存的默认思考档位已失效，当前未强制这些档位；展开模型列表可重新选择。') : null,
+      models.some(model => model?.settingsWarning) ? h(Notice, { tone: 'warn', role: 'alert' }, '部分模型设置需要确认，展开模型列表可查看原因并调整。') : null,
       models.length
         ? h('details', { className: 'vcp-details', open: modelsOpen },
           h('summary', {

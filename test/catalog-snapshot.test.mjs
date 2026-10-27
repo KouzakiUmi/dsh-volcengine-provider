@@ -110,10 +110,11 @@ test('refreshed input and token capacities reach Core without metadata-only alia
   const kimi=models.find(model=>model.id==='kimi-k3-1-pro-261024');assert.equal(kimi.contextWindow,1048576);assert.deepEqual(kimi.input,['text','image']);
   for (const model of models) { assert.equal(model.aliases,undefined);assert.equal(model.capabilityUnverified,undefined); }
 });
-test('snapshot aliases are unique within each plan and do not invent unconfirmed Messages effort modes', () => {
+test('snapshot aliases are unique and partial capability notes do not erase documented effort maps', () => {
   for (const plan of ['agent-plan','coding-plan']) {
     const seen=new Set();for(const model of snapshot[plan].models)for(const id of [model.id,...model.aliases]){assert.equal(seen.has(id),false,id);seen.add(id);}
-    for(const id of ['kimi-k2.7-code','minimax-m3']){const model=snapshot[plan].models.find(row=>row.id===id);assert.equal(model.reasoningEfforts,false);assert.equal(model.capabilityUnverified,true);}
+    const kimi=snapshot[plan].models.find(row=>row.id==='kimi-k2.7-code');assert.equal(kimi.reasoningEfforts,false);assert.equal(kimi.capabilityStatus,'partial');assert.match(kimi.capabilityNote,/思考能力已确认/);
+    const minimax=snapshot[plan].models.find(row=>row.id==='minimax-m3');assert.deepEqual(minimax.reasoningEfforts,{low:'low',medium:'medium',high:'high'});assert.equal(minimax.defaultReasoning,'medium');assert.equal(minimax.capabilityStatus,'partial');
     assert.deepEqual(Object.keys(snapshot[plan].models.find(model=>model.id==='glm-5.3').reasoningEfforts),['low','high','max']);
   }
 });

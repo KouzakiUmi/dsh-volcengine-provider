@@ -53,12 +53,27 @@
 
 ## 思考档位与传输边界
 
-本插件仍使用现有 Plan `anthropic-messages` 传输。Pi 文档和官方插件的 Plan 目录使用 OpenAI 协议，不能因此直接证明 Plan Messages 的原生 effort 或 `budget_tokens` 行为。
+Plan 使用 `anthropic-messages`，原生档位字段为 `output_config.effort`。[Messages 文档](https://ark.volcengine.com/region:cn-beijing/docs/messages-api.md)明确将支持模型、默认与折叠规则链接到[深度思考表](https://ark.volcengine.com/region:cn-beijing/docs/deep-thinking.md)。逐模型证据、来源层级、精确缺项及验证状态见[模型思考审计](<model-thinking-audit.md>)；已确认的能力与线上请求验证分别记录。
 
-- 已有模型的兼容传输配置保留。GLM 5.3 的公开有效枚举纠正为 low/high/max，不把 medium 当作独立原生档；其 Plan Messages 控制仍保留未核实标记。
-- 新增模型在未核实 Plan Messages 控制时保留 `reasoningEfforts:false` 与未核实标记，不凭名字复制其他模型的档位或强制原生/预算模式。`false` 只是不给出可选档位、沿用模型默认，不等于强制关闭思考。
-- [Platform 深度思考文档](https://ark.volcengine.com/region:cn-beijing/docs/deep-thinking.md)和 [V4.1 Messages 说明](https://ark.volcengine.com/region:cn-beijing/docs/deepseek-v4-1-flash.md)可作能力参考，但不是 Plan 逐模型请求契约。medium/xhigh 等折叠档不应伪装成独立能力。
-- 本轮没有发起真实推理来验证预算或原生 effort。上下文/输出配置已固化，不等于所有思考控制均已验收。
+| 模型 | 独立思考强度 / 其他状态 | 插件继承默认 | 默认关闭入口 | Messages 原生模式 |
+|---|---|---|---|---|
+| Doubao Evolving、2.1 Pro、2.1 Lite | low/medium/high；minimal 为不思考 | high | 提供 | enabled + effort |
+| Doubao 2.0 Mini 260428 | low/medium/high；minimal 为不思考 | medium | 提供 | enabled + effort |
+| DeepSeek V4.1 Flash / Economy 261017 | low/high/max；minimal 折为 low | high | 提供 | adaptive + effort |
+| DeepSeek V4 Pro / Flash GA | low/high/max；minimal 折为关闭 | high | 提供 | enabled + effort |
+| Kimi K3.1 Pro | low/high/max；常驻思考 | max | 不提供 | enabled + effort |
+| Kimi K3 | low/high/max；常驻思考 | 服务端默认，官方未列档位默认 | 不提供 | enabled + effort |
+| Kimi K2.8 Preview | low/high/max | 服务端默认，官方未列 | 不提供，关闭未单列 | enabled + effort |
+| Kimi K2.7 Code | 思考已确认，可调独立档未列 | 服务端默认 | 不提供，关闭未单列 | server-default |
+| GLM 5.3 | low/high/max；常驻思考 | 服务端默认；原厂为 max，火山未单列 | 不提供 | enabled + effort |
+| GLM 5.3 Flash | low/high/max；常驻思考 | max，依据 Platform 260828；Plan backend260901 未另列 | 不提供 | enabled + effort |
+| MiniMax M3 | low/medium/high | medium，官方 Plan 目录 | 不提供；官方 off→minimal 不单独证明完全关闭 | enabled + effort |
+| Auto / ark-code-latest | 动态目标，无固定统一档位 | 服务端默认 | 不提供统一保证 | server-default |
+
+- 模型级请求载荷适配将 Core 档位选择与最终 `thinking.type` 分开：V4.1 两款采用专页要求的 adaptive，其余已知可调模型采用 enabled；二者均使用 `output_config.effort`，不附带 Claude 预算/显示字段。关闭请求使用 disabled；未指定且官方默认未列时不补 effort。server-default 不注入思考控制。
+- [官方插件 0.8.4 transport](https://unpkg.com/dsh-volcengine-plugin@0.8.4/transport.js)通用地把 adaptive 改为 enabled，与 [V4.1 专页](https://ark.volcengine.com/region:cn-beijing/docs/deepseek-v4-1-flash.md#reasoning-effort)“adaptive 才使 effort 生效”冲突；项目采用模型专页优先，不统一改写 V4.1。
+- 兼容别名不增加独立强度；none/minimal 在常驻模型上可能折为 low，而非关闭。具体折叠按[逐模型规则](<model-thinking-audit.md#兼容别名折叠>)处理。
+- 旧用户显式预算覆盖保留为兼容模式，与模型原生 effort 分开；Core 的 minimal=1024 预算仍开启思考，不等价于 Doubao 的 minimal 不思考。`reasoningEfforts:false` 仅表示不提供可调档，不表示模型无思考或强制关闭。
 
 ## 缓存与用户覆盖
 

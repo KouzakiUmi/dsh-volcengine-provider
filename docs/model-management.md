@@ -25,9 +25,9 @@
 
 所有模型设置字段均可省略。版本 1 迁移时，有所选账号的套餐默认为启用，原来未选择账号的套餐默认为停用。迁移只在内存中读取；下一次有效修改才写回。关闭套餐保留所选账号与模型设置；关闭模型保留其他参数；目录刷新保留设置；删除账号清理其设置。
 
-模型参数按账号、套餐、模型隔离。`defaultReasoning`：省略表示使用兼容默认（支持 low 时采用 low，否则不强制）；`null` 表示不强制默认档位；其他值必须由有效的 `reasoningEfforts` 声明支持。`reasoningEfforts: false` 表示无可选思考档位；字典只接受 Core 已有档位，只有 off 可为 null，且至少声明一个非 off 档位。
+模型参数按账号、套餐、模型隔离。`defaultReasoning`：省略表示继承模型已声明默认，声明缺失时采用服务端默认；`null` 表示不强制档位，实际请求省略思考控制字段。其他值必须由有效的 `reasoningEfforts` 支持。`reasoningEfforts: false` 只表示无可选档位，不等于不支持思考；字典只接受 Core 已有档位，只有 off 可为 null，且至少声明一个非 off 档位。
 
-参数校验：正安全整数 contextWindow/maxTokens，maxTokens 不得超过有效 contextWindow；temperature 为 0 到 1 的有限数；forceAdaptiveThinking 为布尔值。预算模式只接受 off/minimal/low/medium/high，非 off 的映射值必须与档位同名、off 为 null，避免底层将 xhigh/max 折叠为 high 而产生虚假档位。原生 effort 模式按声明的映射值发送。拒绝未知字段、非法模型 ID、数组和敏感凭据字段。设置不会创建目录里不存在的模型。
+参数校验：正安全整数 contextWindow/maxTokens，maxTokens 不得超过有效 contextWindow；temperature 为 0 到 1 的有限数；forceAdaptiveThinking 为布尔值。预算模式只接受 off/minimal/low/medium/high，非 off 的映射值必须与档位同名、off 为 null，避免底层将 xhigh/max 折叠为 high 而产生虚假档位。原生 effort 模式按声明的映射值发送：`off:null` 才是真正关闭，`off:"low"` 等非空字符串是用户自定义原生档位别名，仍按该值开启思考；后者可用于常驻思考模型。拒绝未知字段、非法模型 ID、数组和敏感凭据字段。设置不会创建目录里不存在的模型。
 
 ## 固化能力与缓存
 
@@ -50,13 +50,15 @@
 { id, name, enabled, capabilityUnverified, settings, defaults, effective }
 ```
 
-其中 defaults/effective 含 contextWindow、maxTokens、reasoningEfforts、defaultReasoning（无默认时为 null）、forceAdaptiveThinking，temperature 可省略。settings 是原始覆盖值；需处理目录兼容问题时另含 settingsWarning。count 仍为完整目录数量。
+其中 defaults/effective 含 contextWindow、maxTokens、reasoningEfforts、defaultReasoning（无默认时为 null）、forceAdaptiveThinking，temperature 可省略。根字段另有 messagesThinkingMode、canDisableThinking、capabilityStatus 和可选 capabilityNote；它们不进入 Core 模型描述。settings 是原始覆盖值，settingsWarning 表示需修复的兼容配置。count 仍为完整目录数量。
 
 ## 路由与请求
 
 - 仅启用套餐且存在所选账号时注册路由；仅启用模型进入 Core 目录。
 - `providerProfile` 移除全局 `reasoning: low`，避免未知/非思考模型被强制送入不支持的档位。
 - 模型能力覆盖进入 Core 模型描述；temperature 和逐模型 defaultReasoning 由 Host 请求包装器应用，显式请求参数优先。
+- 使用公开 PiAiAdapter 与 SDK Provider 的 onPayload 钩子生成逐模型请求；原生 enabled/adaptive 两种模式均传 output_config.effort，关闭只传 disabled。原始 off 与未设置档位在每个 prepared call 的局部闭包内区分，避免 SDK 将服务端默认误变为关闭。序列化、工具、图片与思考历史回放继续由 Core/SDK 处理。
+- 显式旧预算配置保持兼容；读取时只过滤继承映射中预算不可表达的档位并提示，显式自定义映射保留。新保存仍校验未过滤的继承映射。常驻思考模型拒绝新增 off 配置；旧关闭覆盖不改写原文件，有效映射移除 off 并提示修复。
 - 已准备的调用捕获当时适配器和默认参数，并持有其上下文直到调用结束或被回收；设置更新不改变在途调用。流结束、取消和错误均释放持有，插件卸载强制中止并清理全部代际；清理错误仅记录，不覆盖请求结果。路由更新失败保留此前路由与默认参数。
 - 未知模型保持保守能力，不通过补造思考档位解决调用错误。
 

@@ -464,7 +464,8 @@ test('旧默认档位失效时显示修复入口，重新选择后更新配置',
   };
   const h = createHarness({ backend }); t.after(() => h.dispose()); await h.flush();
   assert.match(h.joined(), /已保存的默认思考档位 medium/);
-  assert.match(h.joined(), /展开模型列表可重新选择/);
+  assert.match(h.joined(), /部分模型设置需要确认/);
+  assert.match(h.joined(), /展开模型列表可查看原因并调整/);
   await h.clicks(h.byLabel('button', `模型参数 ${modelId}`));
   const select = h.byLabel('select', '默认思考档位 defaultReasoning');
   const oldOption = h.find(select, node => node.type === 'option' && node.props.value === 'medium')[0];
@@ -473,6 +474,25 @@ test('旧默认档位失效时显示修复入口，重新选择后更新配置',
   await h.clicks(h.find(h.tree, node => node.type === 'button' && node.props.children === '保存参数')[0]);
   assert.equal(backend.calls.find(call => call.op === 'saveModelSettings').settings.defaultReasoning, 'high');
   assert.doesNotMatch(h.joined(), /已保存的默认思考档位 medium/);
+});
+
+test('能力状态区分文档缺项和动态路由，常驻模型不提供关闭档位', async t => {
+  const backend=new FakeBackend(),state=initialState(),key='default:agent-plan';
+  state.catalogs[key]={models:[{id:'kimi-k3-1-pro-261024'},{id:'kimi-k2.7-code'},{id:'auto'}]};
+  const read=backend.readShape.bind(backend);
+  backend.readShape=()=>{const shape=read(),catalog=shape.catalogs.find(row=>row.plan==='agent-plan');catalog.models=getModelRows(state,'default','agent-plan');catalog.count=3;catalog.enabledCount=3;return shape;};
+  const h=createHarness({backend});t.after(()=>h.dispose());await h.flush();
+  assert.doesNotMatch(h.joined(),/能力未核实/);assert.match(h.joined(),/动态路由/);assert.match(h.joined(),/部分参数未公开/);assert.match(h.joined(),/常驻思考/);assert.match(h.joined(),/默认档位 max/);
+  await h.clicks(h.byLabel('button','模型参数 kimi-k3-1-pro-261024'));
+  assert.ok(!h.find(h.byLabel('select','默认思考档位 defaultReasoning'),node=>node.type==='option').some(node=>node.props.value==='off'));
+  await h.change(h.byLabel('select','思考档位映射 reasoningEfforts'),'map');
+  await h.change(h.byLabel('textarea','JSON 映射'),'{"off":null,"low":"low"}');
+  await h.clicks(h.find(h.tree,node=>node.type==='button'&&node.props.children==='保存参数')[0]);
+  assert.match(h.joined(),/请移除 off 映射/);assert.equal(backend.calls.some(call=>call.op==='saveModelSettings'),false);
+  await h.change(h.byLabel('textarea','JSON 映射'),'{"off":"low","low":"high"}');
+  await h.change(h.byLabel('select','默认思考档位 defaultReasoning'),'off');
+  await h.clicks(h.find(h.tree,node=>node.type==='button'&&node.props.children==='保存参数')[0]);
+  const saved=backend.calls.find(call=>call.op==='saveModelSettings');assert.equal(saved.settings.defaultReasoning,'off');assert.deepEqual(saved.settings.reasoningEfforts,{off:'low',low:'high'});
 });
 
 test('旧快照缺少 enabled 时按启用处理', async () => {

@@ -36,21 +36,21 @@ test('saved model defaults are isolated by account, plan and enabled status', ()
   const state = initialState();
   state.enabled = { 'agent-plan': true, 'coding-plan': true };
   state.modelSettings = {
-    'default:agent-plan': { 'ark-code-latest': { temperature: 0.2, defaultReasoning: 'off' } },
-    'default:coding-plan': { 'ark-code-latest': { temperature: 0.8, defaultReasoning: 'low' } }
+    'default:agent-plan': { 'doubao-seed-evolving': { temperature: 0.2, defaultReasoning: 'off' } },
+    'default:coding-plan': { 'doubao-seed-evolving': { temperature: 0.8, defaultReasoning: 'low' } }
   };
   const before = captureModelDefaults(state);
-  const agent = getModelDefaults(before, ROUTES['agent-plan'], 'ark-code-latest');
-  const coding = getModelDefaults(before, ROUTES['coding-plan'], 'ark-code-latest');
+  const agent = getModelDefaults(before, ROUTES['agent-plan'], 'doubao-seed-evolving');
+  const coding = getModelDefaults(before, ROUTES['coding-plan'], 'doubao-seed-evolving');
   assert.deepEqual(agent, { temperature: 0.2, reasoningEffort: 'off' });
   assert.deepEqual(coding, { temperature: 0.8, reasoningEffort: 'low' });
   assert.ok(Object.isFrozen(agent));
-  state.modelSettings['default:agent-plan']['ark-code-latest'].temperature = 0.7;
+  state.modelSettings['default:agent-plan']['doubao-seed-evolving'].temperature = 0.7;
   state.enabled['coding-plan'] = false;
   const after = captureModelDefaults(state);
-  assert.equal(getModelDefaults(before, ROUTES['agent-plan'], 'ark-code-latest').temperature, 0.2);
-  assert.equal(getModelDefaults(after, ROUTES['agent-plan'], 'ark-code-latest').temperature, 0.7);
-  assert.equal(getModelDefaults(after, ROUTES['coding-plan'], 'ark-code-latest'), undefined);
-  state.modelSettings['default:agent-plan']['ark-code-latest'].enabled = false;
-  assert.equal(getModelDefaults(captureModelDefaults(state), ROUTES['agent-plan'], 'ark-code-latest'), undefined);
+  assert.equal(getModelDefaults(before, ROUTES['agent-plan'], 'doubao-seed-evolving').temperature, 0.2);
+  assert.equal(getModelDefaults(after, ROUTES['agent-plan'], 'doubao-seed-evolving').temperature, 0.7);
+  assert.equal(getModelDefaults(after, ROUTES['coding-plan'], 'doubao-seed-evolving'), undefined);
+  state.modelSettings['default:agent-plan']['doubao-seed-evolving'].enabled = false;
+  assert.equal(getModelDefaults(captureModelDefaults(state), ROUTES['agent-plan'], 'doubao-seed-evolving'), undefined);
 });

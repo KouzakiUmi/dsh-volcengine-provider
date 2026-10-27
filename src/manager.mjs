@@ -279,13 +279,15 @@ export class ArkController {
         assertPlan(plan); this.owner(accountId); assertModelId(request.modelId);
         const settings = normalizeModelSettings(request.settings ?? {});
         const row = modelRow(next, accountId, plan, request.modelId);
+        const selectedEfforts = settings.reasoningEfforts === undefined ? row.defaults.reasoningEfforts : settings.reasoningEfforts;
+        if (row.canDisableThinking === false && (selectedEfforts?.off === null || (settings.defaultReasoning === 'off' && typeof selectedEfforts?.off !== 'string'))) throw new Error('该模型为常驻思考，不支持关闭档位；请移除 off:null 映射或继承模型默认。');
         const effective = effectiveModel(row.defaults, settings);
         if (effective.maxTokens > effective.contextWindow) throw new Error('maxTokens 不得超过有效 contextWindow');
         if (settings.defaultReasoning !== undefined && settings.defaultReasoning !== null) {
           const efforts = effective.reasoningEfforts;
           if (!efforts || efforts === false || !(settings.defaultReasoning in efforts)) throw new Error('默认思考档位未被有效思考档位映射支持');
         }
-        assertBudgetCompatibleEfforts(effective.reasoningEfforts, effective.forceAdaptiveThinking);
+        assertBudgetCompatibleEfforts(settings.reasoningEfforts === undefined ? row.defaults.reasoningEfforts : settings.reasoningEfforts, effective.forceAdaptiveThinking);
         const key = `${accountId}:${plan}`;
         const bucket = { ...(next.modelSettings[key] ?? {}) };
         const previous = bucket[request.modelId] ?? {};

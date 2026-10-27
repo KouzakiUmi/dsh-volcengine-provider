@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { assertModelId, assertPlan, LABELS, ROUTES } from './state.mjs';
+import { assertModelId, assertPlan, LABELS, ROUTES, BUDGET_THINKING_LEVELS } from './state.mjs';
 export const snapshot = JSON.parse(await readFile(new URL('./catalog-snapshot.json', import.meta.url), 'utf8'));
 const modelId = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,199}$/;
 function validateModelRows(rows) {
@@ -23,6 +23,24 @@ function pinnedCapabilities(model) {
 	const { aliases: _aliases, ...capabilities } = structuredClone(model);
 	return capabilities;
 }
+function fallbackCapabilities(id) {
+	const dynamic = id === 'auto';
+	return {
+		contextWindow: 32768, maxTokens: 8192, input: ['text'], reasoningEfforts: false,
+		compat: { forceAdaptiveThinking: false }, defaultReasoning: null,
+		messagesThinkingMode: 'server-default', canDisableThinking: null,
+		capabilityStatus: dynamic ? 'dynamic' : 'unknown', capabilityUnverified: true,
+		capabilityNote: dynamic ? '智能调度的能力随目标模型变化，未声明统一思考档位。' : '该精确版本尚无固化能力资料，采用保守配置。'
+	};
+}
+function coreCapabilities(model) {
+	const {
+		aliases: _aliases, capabilityUnverified: _unverified, defaultReasoning: _default,
+		messagesThinkingMode: _mode, canDisableThinking: _disable,
+		capabilityStatus: _status, capabilityNote: _note, ...capabilities
+	} = model;
+	return capabilities;
+}
 function displayName(id, candidate, pinned) {
 	const fallback = id === 'auto' ? 'Auto（智能调度）' : pinned?.name || id;
 	if (typeof candidate !== 'string' || !candidate.trim() || candidate.length > 200 || /[\u0000-\u001f\u007f]/.test(candidate)) return fallback;
@@ -36,7 +54,13 @@ function displayName(id, candidate, pinned) {
 }
 function reconcileModel(plan, row) {
 	const pinned = snapshotModel(plan, row.id);
-	if (!pinned) return { ...structuredClone(row), name: displayName(row.id, row.name) };
+	if (!pinned) {
+		const fallback = fallbackCapabilities(row.id);
+		const reconciled = { ...fallback, ...structuredClone(row), name: displayName(row.id, row.name) };
+		// Auto is a routing policy, not the reasoning declaration of a stale target.
+		if (row.id === 'auto') Object.assign(reconciled, fallback, { contextWindow: row.contextWindow ?? fallback.contextWindow, maxTokens: row.maxTokens ?? fallback.maxTokens, name: displayName(row.id, row.name) });
+		return reconciled;
+	}
 	return { ...pinnedCapabilities(pinned), id: row.id, name: displayName(row.id, row.name, pinned) };
 }
 export function normalizeCatalog(plan, response) {
@@ -52,9 +76,8 @@ export function normalizeCatalog(plan, response) {
 		seen.add(id);
 		const known = snapshotModel(plan, id) ?? snapshotModel(plan, row.model_id);
 		return {
-			...(known ? pinnedCapabilities(known) : { contextWindow: 32768, maxTokens: 8192, input: ['text'], reasoningEfforts: false, compat: { forceAdaptiveThinking: false } }),
-			id, name: displayName(id, row.model_name, known),
-			...(known ? {} : { capabilityUnverified: true })
+			...(known ? pinnedCapabilities(known) : fallbackCapabilities(id)),
+			id, name: displayName(id, row.model_name, known)
 		};
 	});
 	return { models, source: 'arkcli', updatedAt: new Date().toISOString() };
@@ -62,24 +85,24 @@ export function normalizeCatalog(plan, response) {
 export function usableModels(catalog, plan) {
 	assertPlan(plan);
 	const rows = catalog === undefined || catalog === null ? snapshot[plan].models : catalog.models;
-	return validateModelRows(rows).map(row => {
-		const { capabilityUnverified: _unverified, aliases: _aliases, ...model } = reconcileModel(plan, row);
-		return model;
-	});
+	return validateModelRows(rows).map(row => coreCapabilities(reconcileModel(plan, row)));
 }
 
 // ── 目录默认值与用户覆盖 ────────────────────────────────────────────────────────
 
 const positiveInteger = value => typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 
-/**
- * 兼容默认档位：有效思考档位里支持 low 时采用 low，否则不强制任何档位。
- * 未知模型与非思考模型因此不会被塞进不支持的档位。
- */
-export function defaultReasoningFor(efforts) {
+/** Only an explicitly documented and currently supported default is applied. */
+export function defaultReasoningFor(efforts, declared = null) {
 	if (!efforts || efforts === false || typeof efforts !== 'object' || Array.isArray(efforts)) return null;
-	const low = efforts.low;
-	return typeof low === 'string' && low.trim() ? 'low' : null;
+	return typeof declared === 'string' && Object.hasOwn(efforts, declared) ? declared : null;
+}
+
+const budgetCompatible = ([level, wire]) => BUDGET_THINKING_LEVELS.includes(level) && (level === 'off' ? wire === null : wire === level);
+function inheritedBudgetMap(efforts) {
+	if (!efforts || typeof efforts !== 'object') return efforts;
+	const entries = Object.entries(efforts).filter(budgetCompatible);
+	return entries.some(([level]) => level !== 'off') ? Object.fromEntries(entries) : false;
 }
 
 /** 目录自身的默认能力；provider 级缺省在这里解析成具体数字。 */
@@ -91,7 +114,7 @@ export function modelDefaults(plan, model) {
 	const forceAdaptiveThinking = typeof model?.compat?.forceAdaptiveThinking === 'boolean'
 		? model.compat.forceAdaptiveThinking
 		: typeof base.compat?.forceAdaptiveThinking === 'boolean' ? base.compat.forceAdaptiveThinking : false;
-	return { contextWindow, maxTokens, reasoningEfforts: efforts, defaultReasoning: defaultReasoningFor(efforts), forceAdaptiveThinking };
+	return { contextWindow, maxTokens, reasoningEfforts: efforts, defaultReasoning: defaultReasoningFor(efforts, model?.defaultReasoning), forceAdaptiveThinking };
 }
 
 /** 目录默认与用户覆盖合并后的有效参数。 */
@@ -102,9 +125,9 @@ export function effectiveModel(defaults, settings = {}) {
 	else if (effective.maxTokens > effective.contextWindow) effective.maxTokens = effective.contextWindow;
 	if (settings.reasoningEfforts !== undefined) effective.reasoningEfforts = settings.reasoningEfforts;
 	if (settings.forceAdaptiveThinking !== undefined) effective.forceAdaptiveThinking = settings.forceAdaptiveThinking;
+	if (settings.forceAdaptiveThinking === false && settings.reasoningEfforts === undefined) effective.reasoningEfforts = inheritedBudgetMap(effective.reasoningEfforts);
 	if (settings.temperature !== undefined) effective.temperature = settings.temperature;
-	effective.defaultReasoning = settings.defaultReasoning === undefined ? defaultReasoningFor(effective.reasoningEfforts) : settings.defaultReasoning;
-	if (typeof effective.defaultReasoning === 'string' && (!effective.reasoningEfforts || !Object.hasOwn(effective.reasoningEfforts, effective.defaultReasoning))) effective.defaultReasoning = null;
+	effective.defaultReasoning = defaultReasoningFor(effective.reasoningEfforts, settings.defaultReasoning === undefined ? defaults.defaultReasoning : settings.defaultReasoning);
 	return effective;
 }
 
@@ -141,13 +164,28 @@ export function getModelRows(state, accountId, plan) {
 		const settings = override && typeof override === 'object' && !Array.isArray(override) ? override : {};
 		const defaults = modelDefaults(plan, model);
 		const effective = effectiveModel(defaults, settings);
-		const settingsWarning = typeof settings.defaultReasoning === 'string' && settings.defaultReasoning !== effective.defaultReasoning
-			? `已保存的默认思考档位 ${settings.defaultReasoning} 不在当前目录中；暂不强制该档位，请重新选择。` : undefined;
+		const warnings = [];
+		if (model.canDisableThinking === false && effective.reasoningEfforts?.off === null) {
+			const { off: _off, ...levels } = effective.reasoningEfforts;
+			effective.reasoningEfforts = Object.keys(levels).length ? levels : false;
+			effective.defaultReasoning = defaultReasoningFor(effective.reasoningEfforts, effective.defaultReasoning);
+			warnings.push('该模型为常驻思考，已保存的关闭选项不生效；原设置保留，请调整档位映射。');
+		}
+		if (settings.forceAdaptiveThinking === false && settings.reasoningEfforts === undefined && defaults.reasoningEfforts) {
+			const omitted = Object.entries(defaults.reasoningEfforts).filter(entry => !budgetCompatible(entry)).map(([level]) => level);
+			if (omitted.length) warnings.push(`已保存的固定预算模式无法表达继承档位 ${omitted.join('/')}；暂不提供这些档位，原设置保留，请调整思考模式或显式映射。`);
+		}
+		if (typeof settings.defaultReasoning === 'string' && settings.defaultReasoning !== effective.defaultReasoning) warnings.push(`已保存的默认思考档位 ${settings.defaultReasoning} 不在当前目录中；暂不强制该档位，请重新选择。`);
+		const settingsWarning = warnings.join(' ');
 		return {
 			id: model.id,
 			name: typeof model.name === 'string' && model.name ? model.name : model.id,
 			enabled: settings.enabled !== false,
 			capabilityUnverified: model.capabilityUnverified === true,
+			messagesThinkingMode: model.messagesThinkingMode ?? 'server-default',
+			canDisableThinking: model.canDisableThinking ?? null,
+			capabilityStatus: model.capabilityStatus ?? 'unknown',
+			...(model.capabilityNote ? { capabilityNote: model.capabilityNote } : {}),
 			settings: structuredClone(settings),
 			...(settingsWarning ? { settingsWarning } : {}),
 			defaults,
@@ -160,15 +198,15 @@ export function providerProfile(plan, models) {
 	const base = snapshot[assertPlan(plan)];
 	// 不再下发 provider 级 reasoning：未知与非思考模型不得被强制送入 low 档位。
 	const { reasoning: _globalReasoning, ...rest } = base;
-	return { ...rest, models, displayName: LABELS[plan] };
+	return { ...rest, models: models.map(coreCapabilities), displayName: LABELS[plan] };
 }
 
 /** 把有效参数写回 Core 的模型描述；只写 Core 认识的字段。 */
 function coreModel(model, row) {
-	if (!row) return { ...model };
+	if (!row) return coreCapabilities(model);
 	const compat = { ...(model.compat ?? {}) };
 	if (typeof row.effective.forceAdaptiveThinking === 'boolean') compat.forceAdaptiveThinking = row.effective.forceAdaptiveThinking;
-	return { ...model, contextWindow: row.effective.contextWindow, maxTokens: row.effective.maxTokens, reasoningEfforts: row.effective.reasoningEfforts, compat };
+	return { ...coreCapabilities(model), contextWindow: row.effective.contextWindow, maxTokens: row.effective.maxTokens, reasoningEfforts: row.effective.reasoningEfforts, compat };
 }
 
 export function profilesFor(state) {

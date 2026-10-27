@@ -1,18 +1,20 @@
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import z from '@deepseek-ai/schemastery';
-import { Service } from '@deepseek-ai/cordis';
-import { CredentialProvider, credentialRef } from '@deepseek-ai/dsh-credentials';
+import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment';
-import { LlmAdapter } from '@deepseek-ai/dsh-llm';
-import * as piAi from '@deepseek-ai/dsh-llm-pi-ai';
+import { LlmAdapter, LlmError, resolveImageAttachmentAccess, resolveRetryPolicy } from '@deepseek-ai/dsh-llm';
+import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai';
+import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
+import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import { ArkController } from './manager.mjs';
 import { ROUTES, PLANS } from './state.mjs';
-import { profilesFor } from './catalog.mjs';
+import { profilesFor, getModelRows } from './catalog.mjs';
 import { arkRemote } from './remote.mjs';
 import { captureModelDefaults, getModelDefaults, applyModelDefaults, describeModelDefaults } from './model-defaults.mjs';
 import { createAdapterLease, leasedStream } from './adapter-lease.mjs';
+import { createArkAdapter } from './ark-adapter.mjs';
 
 export const name = 'dsh-volcengine-provider';
 export const inject = ['llm'];
@@ -91,77 +93,44 @@ export function apply(ctx, config) {
     const state = structuredClone(controller.store.current);
     const providers = profilesFor(state);
     const nextDefaults = captureModelDefaults(state);
-    const staged = { adapter: undefined, routes: [], released: false };
-    class AccountCredentials extends CredentialProvider {
-      async resolve(ref) {
-        const plan = PLANS.find(p => `ARK_PROVIDER_${p === 'agent-plan' ? 'AGENT' : 'CODING'}` === ref);
-        if (plan) {
-          const owner = state.accounts.find(a => a.id === state.active[plan]);
-          const value = owner ? await controller.inferenceKey(owner, plan, { binding: state.oauth[owner.id] }) : undefined;
-          return value ? { value, source: 'dsh-volcengine-provider' } : undefined;
-        }
-        const value = await controller.resolveRef(ref);
-        return value ? { value, source: 'inherited' } : undefined;
-      }
-      async listRecords() { return []; }
-      async readRecord() { return undefined; }
-      async modifyRecord() { throw new Error('请通过火山方舟 Provider 的网页登录管理账号'); }
-      async describe(ref) { return { configured: Boolean(await this.resolve(ref)) }; }
-    }
-    for (const plan of PLANS) if (providers[ROUTES[plan]]) providers[ROUTES[plan]].apiKeyEnv = `ARK_PROVIDER_${plan === 'agent-plan' ? 'AGENT' : 'CODING'}`;
-    // Stage only the public transport. Generic pi-ai settings/discovery belong to the host's
-    // existing instance; this plugin has a separate account/model management UI.
-    class StagingRegistry extends Service {
-      constructor(scope) { super(scope, 'llm'); }
-      registerAdapter(routes, adapter) {
-        staged.adapter = adapter; staged.routes = [...routes];
-        const release = () => { staged.released = true; };
-        release.replace = next => { staged.routes = [...next]; };
-        this.ctx.effect(() => release);
-        return release;
-      }
-      registerConfigurableProviders() {
-        const release = () => {};
-        release.replace = () => {};
-        return release;
-      }
-      registerModelDiscovery() { return () => {}; }
-    }
-    const isolated = ctx.isolate('credentials').isolate('llm');
-    const nextFork = isolated.plugin({
-      name: 'dsh-volcengine-provider-routing',
-      async apply(child) {
-        await child.plugin(AccountCredentials);
-        await child.plugin(StagingRegistry);
-        await child.inject(['credentials', 'llm'], async scope => { await scope.plugin(piAi, { providers }); });
-      }
-    });
+    const routes = Object.keys(providers);
+    const factsByProvider = new Map(PLANS.filter(plan => providers[ROUTES[plan]]).map(plan => [
+      ROUTES[plan], new Map(getModelRows(state, state.active[plan], plan).map(row => [row.id, row]))
+    ]));
     const previous = currentGeneration;
-    let nextGeneration;
+    let nextGeneration, nextAdapter;
     try {
-      await nextFork;
-      if (controller.disposed) { await nextFork.dispose(); return; }
-      if (Object.keys(providers).length && (!staged.adapter || staged.released)) throw new Error('Core 适配器未完成校验');
-      nextGeneration = { adapter: staged.adapter, defaults: nextDefaults };
+      nextAdapter = await createArkAdapter({ LlmAdapter, LlmError, PiAiAdapter, InMemoryCredentialStore, anthropicMessagesApi, resolveRetryPolicy }, {
+        providers, factsByProvider,
+        resolveApiKey: async provider => {
+          const plan = PLANS.find(value => ROUTES[value] === provider);
+          const owner = plan && state.accounts.find(account => account.id === state.active[plan]);
+          return owner ? controller.inferenceKey(owner, plan, { binding: state.oauth[owner.id] }) : undefined;
+        },
+        resolveAttachments: () => ctx.get('attachments'),
+        resolveImageAccess: (attachments, ref) => resolveImageAttachmentAccess(attachments, hostPath => ctx.get('fs')?.processPathFromHostPath(hostPath), ref)
+      });
+      if (controller.disposed) { await nextAdapter.dispose(); return; }
+      nextGeneration = { adapter: nextAdapter, defaults: nextDefaults };
       nextGeneration.lease = createAdapterLease(async () => {
-        try { await nextFork.dispose(); } finally { generations.delete(nextGeneration); }
+        try { await nextAdapter.dispose(); } finally { generations.delete(nextGeneration); }
       }, () => ctx.logger.error('旧模型适配器清理失败'));
       generations.add(nextGeneration);
       currentGeneration = nextGeneration;
       try {
-        if (registration) registration.replace(staged.routes);
-        else if (staged.routes.length) registration = ctx.llm.registerAdapter(staged.routes, managedAdapter);
+        if (registration) registration.replace(routes);
+        else if (routes.length) registration = ctx.llm.registerAdapter(routes, managedAdapter);
       } catch (error) { currentGeneration = previous; throw error; }
       controller.appliedAccounts = Object.fromEntries(PLANS.map(plan => {
         const owner = state.accounts.find(a => a.id === state.active[plan]);
         const identity = owner && state.oauth[owner.id]?.identity;
-        return [plan, owner && staged.routes.includes(ROUTES[plan])
+        return [plan, owner && routes.includes(ROUTES[plan])
           ? { id: owner.id, displayName: identity?.name || (identity?.accountId ? `方舟账号 ${identity.accountId}` : owner.label) }
           : null];
       }));
       controller.routingError = undefined;
     } catch {
-      if (nextGeneration) await nextGeneration.lease.dispose(); else await nextFork.dispose();
+      if (nextGeneration) await nextGeneration.lease.dispose(); else await nextAdapter?.dispose();
       controller.routingError = '模型路由更新失败；已保留此前可用路由。请检查路由冲突、模型缓存或 Core 兼容性后重试。';
       throw new Error(controller.routingError);
     }

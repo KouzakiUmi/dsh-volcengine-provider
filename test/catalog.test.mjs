@@ -164,23 +164,24 @@ test('modelDefaults 把 provider 级缺省解析成具体数字', () => {
 	assert.equal(defaults.defaultReasoning, null);
 });
 
-test('defaultReasoningFor 只在支持 low 时给出 low，否则不强制', () => {
-	assert.equal(defaultReasoningFor({ low: 'low', high: 'high' }), 'low');
-	assert.equal(defaultReasoningFor({ off: null, high: 'high' }), null);
-	assert.equal(defaultReasoningFor({ off: null, low: 'low' }), 'low');
+test('defaultReasoningFor 只采用已声明且被支持的默认档位', () => {
+	assert.equal(defaultReasoningFor({ low: 'low', high: 'high' }), null);
+	assert.equal(defaultReasoningFor({ low: 'low', high: 'high' }, 'high'), 'high');
+	assert.equal(defaultReasoningFor({ off: null, high: 'high' }, 'low'), null);
+	assert.equal(defaultReasoningFor({ off: null, low: 'low' }, 'off'), 'off');
 	assert.equal(defaultReasoningFor(false), null);
 	assert.equal(defaultReasoningFor(undefined), null);
 });
 
 test('effectiveModel 合并覆盖值，默认档位跟随有效思考能力', () => {
-	const defaults = modelDefaults('agent-plan', { id: 'm', reasoningEfforts: { low: 'low', high: 'high' } });
+	const defaults = modelDefaults('agent-plan', { id: 'm', reasoningEfforts: { low: 'low', high: 'high' }, defaultReasoning: 'high' });
 	const effective = effectiveModel(defaults, { temperature: 0.3 });
 	assert.equal(effective.temperature, 0.3);
-	assert.equal(effective.defaultReasoning, 'low');
+	assert.equal(effective.defaultReasoning, 'high');
 	const forced = effectiveModel(defaults, { defaultReasoning: null });
 	assert.equal(forced.defaultReasoning, null);
-	const withoutLow = effectiveModel(defaults, { reasoningEfforts: { high: 'high' } });
-	assert.equal(withoutLow.defaultReasoning, null, '有效能力不支持 low 时不强制默认档位');
+	const withoutHigh = effectiveModel(defaults, { reasoningEfforts: { low: 'low' } });
+	assert.equal(withoutHigh.defaultReasoning, null, '有效能力不支持声明默认时不强制该档位');
 });
 
 test('getModelRows 给出完整目录：开关、原始覆盖、默认值与有效值', () => {
@@ -191,7 +192,7 @@ test('getModelRows 给出完整目录：开关、原始覆盖、默认值与有�
 			'acct-a:agent-plan': {
 				source: 'arkcli',
 				models: [
-					{ id: 'known-model', name: '已知模型', maxTokens: 8192, input: ['text'], reasoningEfforts: { low: 'low', high: 'high' } },
+					{ id: 'known-model', name: '已知模型', maxTokens: 8192, input: ['text'], reasoningEfforts: { low: 'low', high: 'high' }, defaultReasoning: 'high', capabilityStatus: 'documented', capabilityUnverified: false },
 					{ id: 'unknown-model', capabilityUnverified: true, contextWindow: 32768, maxTokens: 8192, input: ['text'], reasoningEfforts: false }
 				]
 			}
@@ -208,8 +209,8 @@ test('getModelRows 给出完整目录：开关、原始覆盖、默认值与有�
 	assert.deepEqual(known.settings, {});
 	assert.equal(typeof known.defaults.contextWindow, 'number');
 	assert.equal(typeof known.defaults.maxTokens, 'number');
-	assert.equal(known.defaults.defaultReasoning, 'low');
-	assert.equal(known.effective.defaultReasoning, 'low');
+	assert.equal(known.defaults.defaultReasoning, 'high');
+	assert.equal(known.effective.defaultReasoning, 'high');
 	const unknown = rows[1];
 	assert.equal(unknown.enabled, false);
 	assert.equal(unknown.capabilityUnverified, true);

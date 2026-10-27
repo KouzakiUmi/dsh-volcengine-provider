@@ -217,6 +217,14 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     const namedSection = page.locator('section[aria-label="火山方舟 · Agent 套餐模型目录"]');
     for (const details of await namedSection.locator('.vcp-model details').all()) assert.equal(await details.getAttribute('open'), null);
     await namedSection.screenshot({ path: screenshot.replace(/\.png$/, '-models.png') });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole('button', { name: '模型参数 kimi-k3-1-pro-261024', exact: true }).click();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Expanded native model parameters must fit 390px');
+    for (const label of ['上下文长度 contextWindow', '最大输出 token maxTokens', '默认思考档位 defaultReasoning', '思考模式 forceAdaptiveThinking']) {
+      const box = await page.getByLabel(label, { exact: true }).boundingBox();
+      assert.ok(box && box.height < 64 && box.x >= 0 && box.x + box.width <= 391, `${label} must fit the expanded narrow form`);
+    }
+    await namedSection.screenshot({ path: screenshot.replace(/\.png$/, '-mobile-models.png') });
     await page.evaluate(() => window.fixtureDispose());
     assert.deepEqual(errors, []);
     console.log('Browser smoke passed: real React/Chrome, provider/model toggles, model parameters/reset, quota grouping, login confirmation and dispose; fake RPC, HTTP(S) blocked.');

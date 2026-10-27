@@ -148,13 +148,14 @@ test('未知模型保持保守能力：没有思考档位也没有默认 low', (
 	assert.equal(row.effective.defaultReasoning, null);
 });
 
-test('目录缺省在有效值里解析成数字，默认档位只按有效能力决定', () => {
+test('目录容量解析为数字，默认档位仅采用模型明确声明', () => {
 	const defaults = modelDefaults('agent-plan', { id: 'no-size', reasoningEfforts: { high: 'high' } });
 	assert.equal(typeof defaults.contextWindow, 'number');
 	assert.equal(typeof defaults.maxTokens, 'number');
-	assert.equal(defaults.defaultReasoning, null, '有效能力不支持 low 时不强制默认档位');
+	assert.equal(defaults.defaultReasoning, null, '未声明默认值时继承服务端');
 	const withLow = modelDefaults('agent-plan', { id: 'with-low', reasoningEfforts: { low: 'low', high: 'high' } });
-	assert.equal(withLow.defaultReasoning, 'low');
+	assert.equal(withLow.defaultReasoning, null, '支持 low 不等于默认 low');
+	assert.equal(modelDefaults('agent-plan', { id: 'declared-high', reasoningEfforts: { low: 'low', high: 'high' }, defaultReasoning: 'high' }).defaultReasoning, 'high');
 });
 
 test('快照里的模型都满足 Core 已核实的档位消费约定', () => {

@@ -679,6 +679,12 @@ test('saveModelSettings 拒绝非法参数与目录里不存在的模型', async
 	);
 });
 
+test('saveModelSettings 不为常驻思考模型保存关闭选项', async () => {
+  const {controller}=await setup();const view=await controller.read();
+  await assert.rejects(()=>controller.invoke({op:'saveModelSettings',accountId:'default',plan:'agent-plan',modelId:'kimi-k3-1-pro-261024',settings:{reasoningEfforts:{off:null,low:'low'},defaultReasoning:'off'},revision:view.revision}),/常驻思考/);
+  assert.equal((await controller.read()).revision,view.revision);
+});
+
 test('saveModelSettings 在预算模式下拒绝会被 Core 折叠的思考档位', async () => {
 	const { controller } = await setup();
 	const view = await controller.read();
