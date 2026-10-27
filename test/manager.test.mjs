@@ -138,7 +138,7 @@ async function setup({
 				return { Result: { AFPFiveHour: { Quota: 1000, Used: 250, ResetTime: 1704070800000 } } };
 			}
 			if (action === 'usage.get_coding_plan_usage') {
-				return { Result: { QuotaUsage: [{ Level: 'session', Percent: 0.39 }] } };
+				return { QuotaUsage: [{ Level: 'session', Percent: 0.39, ResetTimestamp: 1704070800 }] };
 			}
 			throw new Error(`意外的 CLI 调用: ${args.join(' ')}`);
 		}
@@ -180,7 +180,7 @@ async function setup({
 function defaultResponder(url) {
 	const action = new URL(url).searchParams.get('Action');
 	if (action === 'GetCodingPlanUsage') {
-		return jsonResponse({ Result: { QuotaUsage: [{ Level: 'session', Percent: 0.39 }] } });
+		return jsonResponse({ Result: { QuotaUsage: [{ Level: 'session', Percent: 0.39, ResetTimestamp: 1704070800 }] } });
 	}
 	if (action === 'GetAFPUsage') {
 		return jsonResponse({
@@ -343,6 +343,7 @@ test('quota 通过 IAM AK/SK 取回 Coding Plan 额度', async () => {
 	//（无 PlanType 时为 undefined），于是把请求里的 plan 覆盖掉了。
 	assert.equal(quota.plan, 'coding-plan');
 	assert.equal(quota.windows[0].percent, 0.39);
+	assert.equal(quota.windows[0].resetsAt, new Date(1704070800 * 1000).toISOString());
 	assert.ok(quota.updatedAt);
 	assert.equal(fetchCalls.length, 1);
 	assert.equal(new URL(fetchCalls[0].url).hostname, 'open.volcengineapi.com');
@@ -517,6 +518,10 @@ test('绑定后的额度读取走 CLI 并带上对应 profile', async () => {
 	assert.equal(quota.windows[0].kind, '5h');
 	assert.equal(quota.windows[0].group, 'text');
 	assert.equal(quota.windows[0].detail.limit, 1000);
+	assert.equal(quota.windows[0].resetsAt, new Date(1704070800000).toISOString());
+	const coding = await controller.invoke({ op: 'quota', plan: 'coding-plan', accountId: 'default' });
+	assert.equal(coding.state, 'ok');
+	assert.equal(coding.windows[0].resetsAt, new Date(1704070800 * 1000).toISOString());
 	const runCall = cliCalls.find(call => call[0] === 'run' && call[2] === 'api');
 	assert.ok(runCall, '应通过 CLI 的 api 动作取额度');
 	assert.equal(runCall[3], 'usage.get_afp_usage');

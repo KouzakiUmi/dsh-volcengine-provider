@@ -140,6 +140,18 @@ test("parseCodingUsage 保留已用百分比，小数值不放大", () => {
 	assert.equal(result.windows[0].resetsAt, new Date(1704070800 * 1000).toISOString());
 });
 
+test("编程套餐重置哨兵或缺失不会伪造时间，字符串秒值正常解析", () => {
+	const result = parseCodingUsage({ QuotaUsage: [
+		{ Level: "session", Percent: 0, ResetTimestamp: -1 },
+		{ Level: "weekly", Percent: 10 },
+		{ Level: "monthly", Percent: 20, ResetTimestamp: "1791734400" }
+	] });
+	assert.equal(result.windows.length, 3);
+	assert.equal(result.windows[0].resetsAt, undefined);
+	assert.equal(result.windows[1].resetsAt, undefined);
+	assert.equal(result.windows[2].resetsAt, new Date(1791734400 * 1000).toISOString());
+});
+
 test("parseCodingUsage 只接受有限非负的百分比，非法值不当作 0", () => {
 	for (const bad of ["abc", null, -1, NaN, {}]) {
 		assert.throws(
@@ -191,6 +203,16 @@ test("parseAgentUsage 归一化四个 AFP 窗口并保留绝对 used/limit", () 
 	assert.deepEqual(result.windows[0].detail, { used: 250, limit: 1000, unit: "AFP" });
 	assert.deepEqual(result.windows[2].detail, { used: 10000, limit: 20000, unit: "AFP" });
 	assert.equal(result.windows[0].resetsAt, new Date(1704070800000).toISOString());
+});
+
+test("Agent 套餐缺失或无效重置时间不会删除有效额度窗口", () => {
+	const result = parseAgentUsage({ Result: {
+		AFPFiveHour: { Quota: 100, Used: 10, ResetTime: 0 },
+		AFPWeekly: { Quota: 100, Used: 20, ResetTime: -1 },
+		AFPMonthly: { Quota: 100, Used: 30 }
+	} });
+	assert.equal(result.windows.length, 3);
+	assert.ok(result.windows.every(window => window.resetsAt === undefined));
 });
 
 test("parseAgentUsage 把 Quota 为 0 的窗口视为不适用，而不是 0% 额度", () => {

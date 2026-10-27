@@ -933,9 +933,80 @@ test('布局回归：统一页头、账号与双套餐分区并存，技术细�
   const details = h.find(h.tree, node => node.type === 'details');
   assert.ok(details.length >= 3);
   assert.ok(details.every(node => node.props.open !== true), '高级信息和模型列表默认不应强制展开');
+  assert.equal(h.find(h.tree, node => node.props.className === 'vcp-plans').length, 1, '双套餐应随可用宽度并列');
   assert.match(h.joined(), /账号高级配置与标识/);
   assert.equal(h.find(h.tree, node => node.props['aria-label'] === '火山方舟 · Agent 套餐额度').length, 1);
   assert.equal(h.find(h.tree, node => node.props['aria-label'] === '火山方舟 · 编程套餐额度').length, 1);
+});
+
+test('账号管理默认收起，展开编辑或登录进行中仍可访问', async t => {
+  const backend = new FakeBackend();
+  const h = createHarness({ backend }); t.after(() => h.dispose()); await h.flush();
+  const accountDetails = () => h.find(h.tree, node => node.type === 'details' && node.props.className === 'vcp-accounts-disclosure')[0];
+  assert.equal(accountDetails().props.open, false);
+  const summary = h.find(accountDetails(), node => node.type === 'summary')[0];
+  let prevented = false;
+  summary.props.onClick({ preventDefault() { prevented = true; } });
+  await h.flush();
+  assert.equal(prevented, true);
+  assert.equal(accountDetails().props.open, true);
+  await h.click('编辑');
+  assert.equal(accountDetails().props.open, true);
+  await h.click('取消');
+  backend.login = { jobId: 'waiting', state: 'waiting', accountId: 'default', message: '等待授权（测试）' };
+  await h.click('刷新状态');
+  assert.equal(accountDetails().props.open, true);
+  assert.ok(h.buttonByText('取消登录'));
+});
+
+test('额度倒计时按实际时间刷新，缺失与过期不伪造重置', async t => {
+  const originalNow = Date.now;
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  let clock = Date.parse('2026-10-27T08:00:00Z');
+  let intervalId = 0;
+  const intervals = new Map();
+  Date.now = () => clock;
+  globalThis.setInterval = (callback, delay) => { assert.equal(delay, 1000); intervals.set(++intervalId, callback); return intervalId; };
+  globalThis.clearInterval = id => intervals.delete(id);
+  let h;
+  t.after(() => { h?.dispose(); Date.now = originalNow; globalThis.setInterval = originalSetInterval; globalThis.clearInterval = originalClearInterval; });
+  const backend = new FakeBackend();
+  const handle = backend.handle.bind(backend);
+  backend.handle = request => {
+    const result = handle(request);
+    if (request.op === 'quota' && result.ok) result.value.windows = [
+      { kind: '5h', percent: 10, resetsAt: '2026-10-27T08:02:00Z', group: 'text' },
+      { kind: 'week', percent: 20, group: 'text' },
+      { kind: 'month', percent: 30, resetsAt: 'not-a-date', group: 'all' },
+      { kind: 'day', percent: 40, resetsAt: '2026-10-27T07:59:00Z', group: 'daily-capabilities' }
+    ];
+    return result;
+  };
+  h = createHarness({ backend });
+  await h.flush();
+  await h.click('刷新额度');
+  assert.match(h.joined(), /距重置 2分 0秒/);
+  assert.match(h.joined(), /重置时间未提供/);
+  assert.match(h.joined(), /重置时间不可用/);
+  assert.match(h.joined(), /已到重置时间，请刷新额度/);
+  assert.equal(intervals.size, 1, '页面对多个额度窗口共用一个定时器');
+  clock += 61000;
+  for (const callback of [...intervals.values()]) callback();
+  await h.flush();
+  assert.match(h.joined(), /距重置 59秒/);
+  assert.equal(backend.calls.filter(call => call.op === 'quota').length, 1, '倒计时不能自动刷新额度');
+  h.dispose(); h = null;
+  assert.equal(intervals.size, 0, '页面卸载后停止倒计时');
+  h = createHarness({ backend });
+  await h.flush(); await h.click('刷新额度');
+  assert.equal(intervals.size, 1);
+  clock += 59000;
+  for (const callback of [...intervals.values()]) callback();
+  await h.flush();
+  assert.doesNotMatch(h.joined(), /距重置/);
+  assert.equal(intervals.size, 0, '全部到期后停止定时器');
+  assert.equal(backend.calls.filter(call => call.op === 'quota').length, 2, '到期不会自动触发网络查询');
 });
 
 test('空闲与成功登录状态保持紧凑，进行中仍保留状态和取消入口', async t => {
@@ -969,7 +1040,7 @@ test('作用域样式：使用 DSW 变量、焦点和 390px 内断点，并随�
     assert.match(appended.textContent, /\.vcp-select\{[^}]*flex:none/);
     assert.ok(!/\.vcp-select\{[^}]*flex(?:-basis)?:[^}]*220px/.test(appended.textContent), '选择框本身也不能有垂直 220px basis');
     assert.match(appended.textContent, /@media\(max-width:420px\)/);
-    assert.match(appended.textContent, /\.vcp-card\{padding:16px 18px\}/);
+    assert.match(appended.textContent, /\.vcp-card\{padding:12px 14px\}/);
     assert.match(appended.textContent, /@media\(max-width:420px\)\{[^}]*\.vcp-settings[^}]*\}\.vcp-card\{padding:12px\}/);
     assert.match(appended.textContent, /\.vcp-fields,\.vcp-fields-three\{grid-template-columns:1fr\}/);
     h.dispose(); h = null;

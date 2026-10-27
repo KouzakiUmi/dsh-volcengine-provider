@@ -167,23 +167,23 @@ const LOGIN_POLL_MS = 1000;
 // ── 主题样式（只用设计令牌与继承，兼容深浅色） ───────────────────────────────
 
 const style = {
-  root: { display: 'flex', flexDirection: 'column', gap: 14 },
+  root: { display: 'flex', flexDirection: 'column', gap: 10 },
   title: { margin: 0, fontSize: 21, fontWeight: 650, lineHeight: 1.35, letterSpacing: '-.02em' },
   card: {
-    display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0,
+    display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0,
     border: '1px solid var(--dsw-alias-border-l4, var(--dsw-alias-border-l2, rgba(128,128,128,.2)))',
-    borderRadius: 14,
+    borderRadius: 10,
     background: 'var(--dsw-alias-bg-layer-1, rgba(128,128,128,.025))'
   },
-  cardTitle: { margin: 0, fontSize: 14, lineHeight: 1.4, fontWeight: 650 },
+  cardTitle: { margin: 0, fontSize: 15, lineHeight: 1.4, fontWeight: 650 },
   row: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 },
   field: { display: 'flex', flexDirection: 'column', gap: 6, flex: '1 1 220px', minWidth: 0 },
-  label: { fontSize: 11, lineHeight: 1.6, color: 'var(--dsw-alias-label-secondary, inherit)' },
+  label: { fontSize: 12, lineHeight: 1.5, color: 'var(--dsw-alias-label-secondary, inherit)' },
   input: {
     width: '100%', minWidth: 0, minHeight: 34, boxSizing: 'border-box', padding: '7px 9px',
     borderRadius: 8, fontSize: 12,
     border: '1px solid var(--dsw-alias-border-l3, var(--dsw-alias-border-l2, rgba(128,128,128,.35)))',
-    background: 'var(--dsw-alias-bg-layer-2, rgba(128,128,128,.035))', color: 'inherit', font: 'inherit'
+    background: 'var(--dsw-alias-bg-layer-2, Canvas)', color: 'inherit', font: 'inherit'
   },
   btn: {
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minHeight: 34,
@@ -203,15 +203,15 @@ const style = {
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minHeight: 34,
     padding: '7px 12px', borderRadius: 8, fontSize: 12,
     border: '1px solid var(--dsw-alias-state-error-primary, rgba(220,38,38,.55))',
-    background: 'transparent', color: 'var(--dsw-alias-state-error-primary, #dc2626)',
+    background: 'transparent', color: 'var(--dsw-alias-label-primary, inherit)',
     cursor: 'pointer', font: 'inherit'
   },
-  muted: { margin: 0, lineHeight: 1.6, fontSize: 11, color: 'var(--dsw-alias-label-secondary, inherit)', overflowWrap: 'anywhere' },
-  error: { margin: 0, fontSize: 12, lineHeight: 1.6, color: 'var(--dsw-alias-state-error-primary, #dc2626)', overflowWrap: 'anywhere' },
-  warn: { margin: 0, fontSize: 12, lineHeight: 1.6, color: 'var(--dsw-alias-state-warn-primary, #b45309)', overflowWrap: 'anywhere' },
-  success: { margin: 0, fontSize: 12, lineHeight: 1.6, color: 'var(--dsw-alias-state-success-primary, #16a34a)', overflowWrap: 'anywhere' },
+  muted: { margin: 0, lineHeight: 1.55, fontSize: 12, color: 'var(--dsw-alias-label-secondary, inherit)', overflowWrap: 'anywhere' },
+  error: { margin: 0, fontSize: 12, lineHeight: 1.6, fontWeight: 600, color: 'var(--dsw-alias-label-primary, inherit)', overflowWrap: 'anywhere' },
+  warn: { margin: 0, fontSize: 12, lineHeight: 1.6, fontWeight: 600, color: 'var(--dsw-alias-label-primary, inherit)', overflowWrap: 'anywhere' },
+  success: { margin: 0, fontSize: 12, lineHeight: 1.6, fontWeight: 600, color: 'var(--dsw-alias-label-primary, inherit)', overflowWrap: 'anywhere' },
   chip: {
-    display: 'inline-flex', alignItems: 'center', maxWidth: '100%', fontSize: 10, lineHeight: 1.7,
+    display: 'inline-flex', alignItems: 'center', maxWidth: '100%', fontSize: 11, lineHeight: 1.6,
     padding: '1px 8px', borderRadius: 999, whiteSpace: 'normal', overflowWrap: 'anywhere',
     border: '1px solid var(--dsw-alias-border-l3, rgba(128,128,128,.18))',
     color: 'var(--dsw-alias-label-secondary, inherit)',
@@ -226,17 +226,19 @@ const style = {
 
 // Scoped CSS supplies interaction states and responsive grids which inline styles cannot express.
 const CLIENT_STYLES = `
-.vcp-settings{color:var(--dsw-alias-label-primary,inherit);max-width:860px;padding:6px 2px 24px;font-size:13px;line-height:1.5}
-.vcp-settings *{box-sizing:border-box}.vcp-settings :focus-visible{outline:2px solid var(--dsw-alias-brand-primary,Highlight);outline-offset:3px}.vcp-card{padding:16px 18px}
-.vcp-header{display:flex;align-items:flex-start;gap:12px;padding:0 2px 2px}.vcp-header-copy{flex:1;min-width:0}.vcp-eyebrow{margin-bottom:5px;font-size:10px;font-weight:650;letter-spacing:.1em;color:var(--dsw-alias-label-secondary,inherit);opacity:.75}
+.vcp-settings{color:var(--dsw-alias-label-primary,inherit);color-scheme:light;max-width:860px;padding:6px 2px 24px;font-size:13px;line-height:1.5}
+body[data-ds-dark-theme] .vcp-settings{color-scheme:dark}
+.vcp-settings *{box-sizing:border-box}.vcp-settings :focus-visible{outline:2px solid var(--dsw-alias-brand-primary,Highlight);outline-offset:3px}.vcp-settings input::placeholder,.vcp-settings textarea::placeholder{color:var(--dsw-alias-label-secondary,GrayText);opacity:1}.vcp-card{padding:12px 14px}
+.vcp-content{display:flex;flex-direction:column;gap:10px}.vcp-plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:10px;align-items:start}.vcp-account-body{display:flex;flex-direction:column;gap:10px;margin-top:8px}.vcp-account-summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary,inherit)}
+.vcp-header{display:flex;align-items:flex-start;gap:12px;padding:0 2px 2px}.vcp-header-copy{flex:1;min-width:0}.vcp-eyebrow{margin-bottom:5px;font-size:11px;font-weight:650;letter-spacing:.08em;color:var(--dsw-alias-label-secondary,inherit)}
 .vcp-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}.vcp-heading-copy{flex:1 1 220px;min-width:0}.vcp-heading-copy p{margin-top:5px}.vcp-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
-.vcp-select{width:100%;min-width:0;max-width:100%;flex:none}.vcp-chip-row{display:flex;gap:6px;flex-wrap:wrap;min-width:0}.vcp-section{border-top:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.14));padding-top:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
-.vcp-notice{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;border-radius:10px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.06));overflow-wrap:anywhere}.vcp-notice[data-tone=error]{background:var(--dsw-alias-state-error-secondary,rgba(220,38,38,.08))}.vcp-notice[data-tone=warn]{background:var(--dsw-alias-state-warn-secondary,rgba(180,83,9,.08))}.vcp-notice[data-tone=success]{background:var(--dsw-alias-state-success-secondary,rgba(22,163,74,.08))}
-.vcp-account{padding:12px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.16));border-radius:10px;display:flex;flex-direction:column;gap:9px;min-width:0}.vcp-account-title{font-size:13px;font-weight:650;overflow-wrap:anywhere}.vcp-model{padding:10px 12px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.14));border-radius:9px;display:flex;flex-direction:column;gap:8px;min-width:0}.vcp-model-name{font-weight:600;min-width:0;overflow-wrap:anywhere}.vcp-model-id{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace;font-size:10px}
-.vcp-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.vcp-fields-three{grid-template-columns:repeat(3,minmax(0,1fr))}.vcp-quota{display:grid;gap:10px}.vcp-quota-group{display:grid;gap:10px}.vcp-quota-window{display:grid;gap:6px;min-width:0}.vcp-quota-line{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}.vcp-quota-value{text-align:right;min-width:0;font-variant-numeric:tabular-nums}.vcp-quota progress{width:100%;height:7px}
-.vcp-details>summary{cursor:pointer}.vcp-details-body{display:flex;flex-direction:column;gap:8px;margin-top:8px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.14))}.vcp-login{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:10px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.04))}
-.vcp-button:hover:not(:disabled){border-color:var(--dsw-alias-brand-primary,Highlight)}.vcp-button-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,var(--dsw-alias-brand-primary,Highlight))}.vcp-button:disabled{opacity:.55;cursor:not-allowed}.vcp-settings summary:hover{color:var(--dsw-alias-label-primary,inherit)}
-@media(max-width:680px){.vcp-fields,.vcp-fields-three{grid-template-columns:1fr}.vcp-card{padding:14px}.vcp-quota-value{text-align:left}.vcp-select{width:100%;min-width:0}}
+.vcp-select{width:100%;min-width:0;max-width:100%;flex:none}.vcp-settings select option{color:var(--dsw-alias-label-primary,CanvasText);background:var(--dsw-alias-bg-layer-1,Canvas)}.vcp-settings select option:disabled{color:var(--dsw-alias-label-secondary,GrayText)}.vcp-chip-row{display:flex;gap:6px;flex-wrap:wrap;min-width:0}.vcp-section{border-top:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.14));padding-top:10px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.vcp-notice{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;border-radius:8px;border-left:3px solid var(--dsw-alias-border-l3,rgba(128,128,128,.4));background:var(--dsw-alias-bg-layer-2,Canvas);overflow-wrap:anywhere}.vcp-notice>p{flex:1 1 180px;min-width:0}.vcp-notice[data-tone=error]{border-left-color:var(--dsw-alias-state-error-primary,#dc2626)}.vcp-notice[data-tone=warn]{border-left-color:var(--dsw-alias-state-warn-primary,#b45309)}.vcp-notice[data-tone=success]{border-left-color:var(--dsw-alias-state-success-primary,#16a34a)}.vcp-notice[data-tone=error]::before,.vcp-notice[data-tone=warn]::before,.vcp-notice[data-tone=success]::before{flex:none;width:16px;text-align:center;font-size:14px;font-weight:700}.vcp-notice[data-tone=error]::before{content:'×'}.vcp-notice[data-tone=warn]::before{content:'!'}.vcp-notice[data-tone=success]::before{content:'✓'}
+.vcp-account{padding:12px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.16));border-radius:10px;display:flex;flex-direction:column;gap:9px;min-width:0}.vcp-account-title{font-size:13px;font-weight:650;overflow-wrap:anywhere}.vcp-model{padding:10px 12px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.14));border-radius:9px;display:flex;flex-direction:column;gap:8px;min-width:0}.vcp-model-name{font-weight:600;min-width:0;overflow-wrap:anywhere}.vcp-model-id{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace;font-size:11px}
+.vcp-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.vcp-fields-three{grid-template-columns:repeat(3,minmax(0,1fr))}.vcp-quota{display:grid;gap:10px}.vcp-quota-group{display:grid;gap:10px}.vcp-quota-window{display:grid;gap:6px;min-width:0}.vcp-quota-line{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}.vcp-quota-value{text-align:right;min-width:0;font-variant-numeric:tabular-nums}.vcp-quota progress{width:100%;height:7px}.vcp-quota-reset{display:flex;justify-content:space-between;gap:4px 10px;flex-wrap:wrap;font-variant-numeric:tabular-nums}
+.vcp-details>summary{cursor:pointer}.vcp-details-body{display:flex;flex-direction:column;gap:8px;margin-top:8px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.14))}.vcp-model-meta{display:flex;flex-direction:column;gap:4px}.vcp-login{display:flex;flex-direction:column;gap:8px;padding:10px;border-radius:8px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.04))}
+.vcp-button:hover:not(:disabled){box-shadow:0 0 0 1px var(--dsw-alias-brand-primary,Highlight)}.vcp-button:disabled{opacity:.55;cursor:not-allowed}.vcp-settings summary:hover{color:var(--dsw-alias-label-primary,inherit)}
+@media(max-width:680px){.vcp-fields,.vcp-fields-three{grid-template-columns:1fr}.vcp-quota-value{text-align:left}.vcp-select{width:100%;min-width:0}}
 @media(max-width:420px){.vcp-settings{padding:2px 0 20px}.vcp-card{padding:12px}.vcp-header{flex-wrap:wrap}.vcp-header>.vcp-actions{width:100%;justify-content:space-between}.vcp-heading{gap:8px}.vcp-heading>.vcp-actions{width:100%}.vcp-actions .vcp-button{flex:1 1 auto}.vcp-account,.vcp-model{padding:10px}.vcp-section{padding-top:12px}}
 `;
 
@@ -355,6 +357,27 @@ function safeLoginUrl(value) {
 function formatTime(value) {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toLocaleString() : String(value ?? '');
+}
+
+/** 只使用接口返回的有效时间，不根据窗口类型猜测重置周期。 */
+function resetEpoch(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function resetCountdown(value, now) {
+  const target = resetEpoch(value);
+  if (target === null) return value ? '重置时间不可用' : '重置时间未提供';
+  const seconds = Math.ceil((target - now) / 1000);
+  if (seconds <= 0) return '已到重置时间，请刷新额度';
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor(seconds % 86400 / 3600);
+  const minutes = Math.floor(seconds % 3600 / 60);
+  const remainder = seconds % 60;
+  if (days) return `距重置 ${days}天${hours ? ` ${hours}小时` : ''}`;
+  if (hours) return `距重置 ${hours}小时${minutes ? ` ${minutes}分钟` : ''}`;
+  return `距重置 ${minutes ? `${minutes}分 ` : ''}${remainder}秒`;
 }
 
 /**
@@ -784,7 +807,6 @@ function windowSummary(window) {
   if (detail && finiteQuotaNumber(detail.used) !== null && finiteQuotaNumber(detail.limit) !== null) {
     parts.push(`已用 ${detail.used} / ${detail.limit} ${detail.unit ?? ''}`.trim());
   }
-  if (window?.resetsAt) parts.push(`重置于 ${formatTime(window.resetsAt)}`);
   if (detail?.scope) parts.push(`范围 ${detail.scope}`);
   return { text: parts.join(' · ') || '额度数据暂不可用', tone };
 }
@@ -796,6 +818,24 @@ function windowSummary(window) {
  * @returns {object} 元素树
  */
 function QuotaWindows({ quota }) {
+  const [now, setNow] = react.useState(() => Date.now());
+  // 每个套餐共享一个时钟；仅更新额度组件，不反复重绘模型列表。
+  const resetSignature = JSON.stringify((Array.isArray(quota?.windows) ? quota.windows : [])
+    .map(window => window?.resetsAt ?? null));
+  react.useEffect(() => {
+    const targets = JSON.parse(resetSignature).map(resetEpoch).filter(value => value !== null);
+    const current = Date.now();
+    setNow(current);
+    const future = targets.filter(value => value > current);
+    if (!future.length) return undefined;
+    const latest = Math.max(...future);
+    const timer = setInterval(() => {
+      const currentTime = Date.now();
+      setNow(currentTime);
+      if (currentTime >= latest) clearInterval(timer);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resetSignature]);
   if (!quota) return h('p', { style: style.muted }, '尚未查询额度，点击「刷新额度」获取当前账号的数据。');
   if (quota.state === 'no-key') {
     // no-key 有两种成因：OAuth 账号没绑定该套餐，或引用名账号缺 AK/SK。
@@ -834,7 +874,11 @@ function QuotaWindows({ quota }) {
             max: 100, value: Math.max(0, Math.min(100, 100 - percent)),
             'aria-label': `${label}剩余额度`, 'aria-valuetext': `剩余 ${formatPercent(Math.max(0, Math.min(100, 100 - percent)))}%`,
             style: { accentColor: summary.tone === 'error' ? 'var(--dsw-alias-state-error-primary, #dc2626)' : summary.tone === 'warn' ? 'var(--dsw-alias-state-warn-primary, #b45309)' : 'var(--dsw-alias-brand-primary, #3b82f6)' }
-          }) : null);
+          }) : null,
+          h('div', { className: 'vcp-quota-reset', style: style.muted },
+            h('span', null, resetCountdown(item?.resetsAt, now)),
+            resetEpoch(item?.resetsAt) !== null
+              ? h('time', { dateTime: item.resetsAt }, `重置于 ${formatTime(item.resetsAt)}`) : null));
       })
     ))
   );
@@ -951,11 +995,12 @@ function ModelRow({ model, disabled, routingError, editor, draftError, onToggle,
         h('button', { type: 'button', style: style.btn, disabled, 'aria-label': `模型参数 ${model?.id ?? ''}`, onClick: () => (editing ? onCloseEditor() : onOpenEditor(model)) }, editing ? '收起参数' : '参数'),
         h('button', { type: 'button', style: style.btn, disabled, 'aria-label': `恢复默认 ${model?.id ?? ''}`, title: '清除全部参数覆盖并恢复模型启用状态', onClick: () => onReset(model) }, enabled ? '恢复默认' : '恢复默认并启用'))),
     h('details', { className: 'vcp-details' },
-      h('summary', { style: style.summary }, '模型技术标识'),
-      h('p', { className: 'vcp-model-id', style: style.muted }, `调用 ID：${model?.id ?? ''}`)),
-    h('p', { style: style.muted }, `当前参数：${describeModelSettings(model)}`),
-    effective ? h('p', { style: routingError ? style.warn : style.muted }, `${routingError ? '已保存配置（路由尚未生效）' : '生效值'}：${effective}`) : null,
-    model?.capabilityNote ? h('p', { style: style.muted }, model.capabilityNote) : null,
+      h('summary', { style: style.summary }, '模型技术标识与参数详情'),
+      h('div', { className: 'vcp-model-meta' },
+        h('p', { className: 'vcp-model-id', style: style.muted }, `调用 ID：${model?.id ?? ''}`),
+        h('p', { style: style.muted }, `当前参数：${describeModelSettings(model)}`),
+        effective ? h('p', { style: routingError ? style.warn : style.muted }, `${routingError ? '已保存配置（路由尚未生效）' : '生效值'}：${effective}`) : null,
+        model?.capabilityNote ? h('p', { style: style.muted }, model.capabilityNote) : null)),
     model?.settingsWarning ? h('p', { role: 'alert', style: style.warn }, model.settingsWarning) : null,
     editing
       ? h(ModelSettingsEditor, {
@@ -1063,7 +1108,6 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
     h(SectionHeading, {
       eyebrow: plan === 'agent-plan' ? '02 · AGENT PLAN' : '03 · CODING PLAN',
       title: PLAN_TITLES[plan],
-      description: '账号、模型与额度均独立管理；停用套餐不会清除已保存的选择和参数。',
       action: h('span', { style: style.chip }, providerEnabled
         ? (!account ? '待选择账号' : !auth.inference ? '待完成鉴权' : '套餐已启用')
         : '套餐已停用')
@@ -1094,10 +1138,7 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
         },
           h('option', { value: '' }, '未选择'),
           accounts.map((item) => h('option', { key: item.id, value: item.id }, `${accountName(item)}${item.label && item.label !== accountName(item) ? ` · 备注：${item.label}` : ''}（${item.id}）`)))),
-      account ? h('div', { className: 'vcp-chip-row' },
-        h('span', { style: style.chip }, `鉴权来源：${auth.oauth ? '官方网页登录（OAuth）' : '凭据引用'}`),
-        h('span', { style: style.chip }, auth.oauth ? `套餐绑定：${auth.bound ? '已绑定' : '未绑定'}` : `推理凭据：${auth.inference ? '已配置' : '未配置'}`),
-        h('span', { style: style.chip }, `额度鉴权：${auth.oauth ? (auth.quota ? 'OAuth 已就绪' : 'OAuth 未就绪') : auth.quota ? 'AK/SK 已配置' : '未配置'}`)) : null),
+      ),
     !account ? h('p', { style: style.muted }, '该套餐尚未选择账号，请选择已登录的账号。') : null,
     account && auth.oauth && !auth.bound
       ? h(Notice, { tone: 'warn' }, '此账号尚未绑定该套餐，暂不能拉取模型或查询额度。请先确认已订阅此个人套餐，再到上方账号区重新网页登录更新绑定。')
@@ -1109,15 +1150,28 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
       h('summary', { style: style.summary }, '套餐高级信息与技术标识'),
       h('div', { className: 'vcp-details-body' },
         h('p', { style: style.muted }, PLAN_HINTS[plan]),
+        account ? h('p', { style: style.muted }, `鉴权来源：${auth.oauth ? '官方网页登录（OAuth）' : '凭据引用'} · ${auth.oauth ? `套餐绑定：${auth.bound ? '已绑定' : '未绑定'}` : `推理凭据：${auth.inference ? '已配置' : '未配置'}`} · 额度鉴权：${auth.oauth ? (auth.quota ? 'OAuth 已就绪' : 'OAuth 未就绪') : auth.quota ? 'AK/SK 已配置' : '未配置'}`) : null,
         account ? h('p', { style: style.muted }, `本地账号 ID：${account.id}${auth.oauth && auth.bound ? ` · 套餐 Profile：${account.oauthProfiles[plan]}` : ''}`) : null,
         route ? h('p', { style: style.muted }, `模型路由：${route}`) : null,
         catalog ? h('p', { style: style.muted }, `模型目录：${catalog.count} 个模型（来源 ${CATALOG_SOURCE_LABELS[catalog.source] ?? catalog.source}${catalog.updatedAt ? `，更新于 ${formatTime(catalog.updatedAt)}` : ''}）。`) : null,
         h('p', { style: style.muted }, '能力参数采用插件固化快照；拉取只更新可用模型清单，手动覆盖优先。'))),
+    h('section', { className: 'vcp-section', 'aria-busy': Boolean(quotaBusy), 'aria-label': `${PLAN_TITLES[plan]}额度` },
+      h('div', { className: 'vcp-heading' },
+        h('h4', { style: { margin: 0, fontSize: 13, fontWeight: 650 } }, '套餐额度'),
+        h('button', { type: 'button', style: style.btn, disabled: disabled || quotaBusy || !auth.quota, 'aria-busy': quotaBusy || undefined, onClick: () => onQuota(plan) }, quotaBusy ? '正在刷新额度…' : quota?.state === 'error' ? '重试额度查询' : '刷新额度')),
+      account && !auth.quota && (!auth.oauth || auth.bound)
+        ? h('p', { style: style.warn }, auth.oauth ? '该套餐的登录身份暂不可查询额度，请重新登录后重试。' : '该账号缺少 AK/SK 凭据引用，额度窗口无法查询。')
+        : null,
+      quotaBusy ? h('p', { role: 'status', style: style.muted }, `正在查询${PLAN_TITLES[plan]}的额度…`) : null,
+      quota?.updatedAt ? h('p', { style: style.muted }, `额度更新时间：${formatTime(quota.updatedAt)}`) : null,
+      !account ? h('p', { style: style.muted }, '请先登录或添加账号，再为此套餐选择账号。')
+        : !quota && !auth.quota ? h('p', { style: style.muted }, '完成此套餐的登录绑定或额度鉴权配置后，即可查询额度。')
+        : h(QuotaWindows, { quota })),
     h('section', { className: 'vcp-section', 'aria-label': `${PLAN_TITLES[plan]}模型目录` },
       h('div', { className: 'vcp-heading' },
         h('div', { className: 'vcp-heading-copy' },
           h('h4', { style: { margin: 0, fontSize: 13, fontWeight: 650 } }, '模型目录'),
-          h('p', { style: style.muted }, models.length ? `已启用 ${enabledCount} / 共 ${models.length} 个模型` : '拉取官方目录，或查看可用的本地快照。')),
+          !models.length ? h('p', { style: style.muted }, '拉取官方目录，或查看可用的本地快照。') : null),
         h('button', { type: 'button', style: style.btn, disabled: disabled || !canPullModels, 'aria-busy': busy === `models:${plan}` || undefined, onClick: () => onModels(plan) }, busy === `models:${plan}` ? '正在拉取模型…' : '拉取模型')),
       account && !auth.oauth && !canPullModels
         ? h('p', { style: style.muted }, '当前可使用本地模型快照；远端目录需要官方网页登录或该账号隔离目录内的 CLI Profile，配置前无法拉取。') : null,
@@ -1146,21 +1200,7 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
             }))))
         : h('p', { style: style.muted }, catalog
           ? '该目录暂无模型明细（旧缓存可能没有模型列表，重新拉取模型后可用）。'
-          : !account ? '选择账号后显示该套餐的模型目录。' : '模型目录：尚未拉取。')),
-    h('section', { className: 'vcp-section', 'aria-busy': Boolean(quotaBusy), 'aria-label': `${PLAN_TITLES[plan]}额度` },
-      h('div', { className: 'vcp-heading' },
-        h('div', { className: 'vcp-heading-copy' },
-          h('h4', { style: { margin: 0, fontSize: 13, fontWeight: 650 } }, '套餐额度'),
-          h('p', { style: style.muted }, '仅展示接口返回的有效数据；不同窗口与能力范围分别计量。')),
-        h('button', { type: 'button', style: style.btn, disabled: disabled || quotaBusy || !auth.quota, 'aria-busy': quotaBusy || undefined, onClick: () => onQuota(plan) }, quotaBusy ? '正在刷新额度…' : quota?.state === 'error' ? '重试额度查询' : '刷新额度')),
-      account && !auth.quota && (!auth.oauth || auth.bound)
-        ? h('p', { style: style.warn }, auth.oauth ? '该套餐的登录身份暂不可查询额度，请重新登录后重试。' : '该账号缺少 AK/SK 凭据引用，额度窗口无法查询。')
-        : null,
-      quotaBusy ? h('p', { role: 'status', style: style.muted }, `正在查询${PLAN_TITLES[plan]}的额度…`) : null,
-      quota?.updatedAt ? h('p', { style: style.muted }, `额度更新时间：${formatTime(quota.updatedAt)}`) : null,
-      !account ? h('p', { style: style.muted }, '请先登录或添加账号，再为此套餐选择账号。')
-        : !quota && !auth.quota ? h('p', { style: style.muted }, '完成此套餐的登录绑定或额度鉴权配置后，即可查询额度。')
-        : h(QuotaWindows, { quota }))
+          : !account ? '选择账号后显示该套餐的模型目录。' : '模型目录：尚未拉取。'))
   );
 }
 
@@ -1175,6 +1215,11 @@ function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, bu
   const disabled = busy !== null;
   const loginActive = LOGIN_ACTIVE_STATES.includes(login.state);
   const loginUrl = safeLoginUrl(login.url);
+  const [accountsOpen, setAccountsOpen] = react.useState(false);
+  const mustShowAccounts = !accounts.length || loginActive || Boolean(editor || confirmDelete || loginConfirm || loginUrl);
+  react.useEffect(() => {
+    if (loginActive || editor || confirmDelete || loginConfirm) setAccountsOpen(true);
+  }, [loginActive, editor, confirmDelete, loginConfirm]);
   // 登录方式挂在账号上（OAuth 绑定 / 凭据引用名），不是整个设置的属性。
   const loginAccount = accounts.find((item) => item?.id === login.accountId) ?? null;
   const authMode = loginAccount?.authMode ?? login.authMode ?? null;
@@ -1182,9 +1227,14 @@ function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, bu
   return h('section', { className: 'vcp-card', style: style.card, 'aria-label': '账号管理' },
     h(SectionHeading, {
       eyebrow: '01 · 账号', title: '账号与登录',
-      description: '官方身份用于鉴权，本地备注仅帮助识别；两个套餐可分别选择账号。',
       action: h('span', { style: style.chip }, `${accounts.length} 个账号`)
     }),
+    h('details', { className: 'vcp-accounts-disclosure', open: mustShowAccounts || accountsOpen },
+      h('summary', { className: 'vcp-account-summary', onClick: (event) => {
+        event?.preventDefault?.();
+        if (!mustShowAccounts) setAccountsOpen(previous => !previous);
+      } }, accounts.length ? `管理账号 · ${accounts.slice(0, 2).map(accountName).join('、')}${accounts.length > 2 ? ' 等' : ''}` : '添加账号'),
+      h('div', { className: 'vcp-account-body' },
     accounts.length
       ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
         accounts.map((account) => h('article', { key: account.id, className: 'vcp-account', 'aria-label': accountName(account) },
@@ -1268,7 +1318,7 @@ function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, bu
       loginUrl ? h('a', { href: loginUrl, target: '_blank', rel: 'noopener noreferrer', style: { fontSize: 12, color: 'var(--dsw-alias-link, inherit)' } }, '打开官方授权页面') : null,
       loginActive
         ? h('button', { type: 'button', style: style.btn, disabled: disabled || !login.jobId, onClick: onCancelLogin }, login.jobId ? '取消登录' : '同步状态后可取消登录')
-        : null)
+        : null)))
   );
 }
 
@@ -1693,7 +1743,7 @@ function VolcengineProviderSection({ client }) {
       h('div', { className: 'vcp-header-copy' },
         h('div', { className: 'vcp-eyebrow' }, 'MODEL PROVIDER'),
         h('h2', { style: style.title }, '火山方舟 Provider'),
-        h('p', { style: { ...style.muted, marginTop: 6 } }, '集中管理官方登录身份、双套餐模型与额度。套餐启停、账号选择和模型参数互不清空。')),
+        h('p', { style: { ...style.muted, marginTop: 4 } }, '管理账号、套餐与模型额度。')),
       h('div', { className: 'vcp-actions' },
         h('span', { role: 'status', style: style.chip }, headerStatus),
         h('button', { type: 'button', style: style.btn, disabled: busyAccount || loading, onClick: () => { void refresh(); } }, loading ? '正在刷新状态…' : '刷新状态'))),
@@ -1713,7 +1763,7 @@ function VolcengineProviderSection({ client }) {
       : null,
     !snapshot
       ? (loading ? h('p', { role: 'status', style: style.muted }, '正在读取方舟账号状态…') : null)
-      : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 16 } },
+      : h('div', { className: 'vcp-content' },
         h(AccountPanel, {
           snapshot, editor, confirmDelete, loginConfirm, login, busy,
           onNew: openNew, onEdit: openEdit, onCancelEdit: () => setEditor(null),
@@ -1727,6 +1777,7 @@ function VolcengineProviderSection({ client }) {
           onCancelLoginConfirm: () => setLoginConfirm(null),
           onCancelLogin: () => { void cancelLogin(); }
         }),
+        h('div', { className: 'vcp-plans' },
         h(PlanCard, {
           plan: 'agent-plan', snapshot, rawQuota: quotas['agent-plan'], busy: planBusy, quotaBusy: Boolean(quotaBusy['agent-plan']),
           onSelect: selectAccount, onModels: pullModels, onQuota: pullQuota,
@@ -1738,7 +1789,7 @@ function VolcengineProviderSection({ client }) {
           onSelect: selectAccount, onModels: pullModels, onQuota: pullQuota,
           onToggleProvider: toggleProvider, onToggleModel: toggleModel,
           onSaveModelSettings: saveModelSettings, onResetModelSettings: resetModelSettings
-        })));
+        }))));
 }
 
 // ── 插件装配 ─────────────────────────────────────────────────────────────────
