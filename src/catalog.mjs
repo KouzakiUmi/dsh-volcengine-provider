@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { assertModelId, assertPlan, LABELS, ROUTES, BUDGET_THINKING_LEVELS } from './state.mjs';
 export const snapshot = JSON.parse(await readFile(new URL('./catalog-snapshot.json', import.meta.url), 'utf8'));
+export const consumptionRates = JSON.parse(await readFile(new URL('./consumption-rates.json', import.meta.url), 'utf8'));
 const modelId = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,199}$/;
 function validateModelRows(rows) {
 	if (!Array.isArray(rows) || rows.length > 1000) throw new Error('本地模型缓存格式错误');
@@ -19,6 +20,33 @@ function snapshotModel(plan, id) {
 	if (typeof id !== 'string') return undefined;
 	return snapshot[plan].models.find(model => model.id === id || model.aliases?.includes(id));
 }
+
+/**
+ * Resolve the official model deduction coefficient for display only.
+ * Discount windows are evaluated at read time so an expired promotion never
+ * remains presented as the current rate. Unknown and account-routed models
+ * deliberately return null instead of inheriting a target model's rate.
+ */
+export function resolveConsumption(plan, id, now = Date.now()) {
+	assertPlan(plan);
+	const pinned = snapshotModel(plan, id);
+	const candidates = new Set([id, pinned?.id, ...(pinned?.aliases ?? [])].filter(Boolean));
+	const entry = Object.values(consumptionRates.models).find(row => row.ids.some(value => candidates.has(value)));
+	if (!entry) return null;
+	const discount = entry.discount;
+	const startsAt = discount ? Date.parse(discount.startsAt) : NaN;
+	const endsAt = discount ? Date.parse(discount.endsAt) : NaN;
+	const discounted = Boolean(discount && Number.isFinite(startsAt) && Number.isFinite(endsAt)
+		&& Number.isFinite(now) && now >= startsAt && now <= endsAt);
+	return {
+		plan,
+		multiplier: discounted ? discount.multiplier : entry.multiplier,
+		regularMultiplier: entry.multiplier,
+		discounted,
+		...(discounted ? { discountEndsAt: discount.endsAt } : {})
+	};
+}
+
 function pinnedCapabilities(model) {
 	const { aliases: _aliases, ...capabilities } = structuredClone(model);
 	return capabilities;
@@ -216,6 +244,7 @@ export function getModelRows(state, accountId, plan) {
 		return {
 			id: model.id,
 			name: typeof model.name === 'string' && model.name ? model.name : model.id,
+			consumption: resolveConsumption(plan, model.id),
 			enabled: settings.enabled !== false,
 			capabilityUnverified: model.capabilityUnverified === true,
 			messagesThinkingMode: model.messagesThinkingMode ?? 'server-default',

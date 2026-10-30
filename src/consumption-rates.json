@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-10-30",
+  "models": {
+    "doubao-seed-evolving": {
+      "ids": ["doubao-seed-evolving"],
+      "multiplier": 2.5
+    },
+    "doubao-seed-2.1-pro": {
+      "ids": ["doubao-seed-2-1-pro-260915", "doubao-seed-2-1-pro"],
+      "multiplier": 2.5
+    },
+    "doubao-seed-2.1-lite": {
+      "ids": ["doubao-seed-2-1-lite-260915", "doubao-seed-2-1-lite"],
+      "multiplier": 0.5
+    },
+    "doubao-seed-2.0-mini": {
+      "ids": ["doubao-seed-2-0-mini-260428", "doubao-seed-2-0-mini"],
+      "multiplier": 0.25
+    },
+    "kimi-k3.1-pro": {
+      "ids": ["kimi-k3-1-pro-261024", "kimi-k3.1-pro"],
+      "multiplier": 7,
+      "discount": {
+        "multiplier": 3.5,
+        "startsAt": "2026-10-24T00:00:00+08:00",
+        "endsAt": "2026-11-09T23:59:59+08:00"
+      }
+    },
+    "deepseek-v4.1-flash": {
+      "ids": ["deepseek-v4-1-flash-261017", "deepseek-v4-1-flash"],
+      "multiplier": 2.5,
+      "discount": {
+        "multiplier": 1.25,
+        "startsAt": "2026-09-15T00:00:00+08:00",
+        "endsAt": "2026-12-30T23:59:59+08:00"
+      }
+    },
+    "deepseek-v4.1-flash-economy": {
+      "ids": ["deepseek-v4-1-flash-economy-261017", "deepseek-v4-1-flash-economy"],
+      "multiplier": 2,
+      "discount": {
+        "multiplier": 1,
+        "startsAt": "2026-10-20T00:00:00+08:00",
+        "endsAt": "2026-12-30T23:59:59+08:00"
+      }
+    },
+    "kimi-k2.8-preview": {
+      "ids": ["kimi-k2-8-preview"],
+      "multiplier": 8,
+      "discount": {
+        "multiplier": 4.8,
+        "startsAt": "2026-09-17T00:00:00+08:00",
+        "endsAt": "2026-12-14T23:59:59+08:00"
+      }
+    },
+    "glm-5.3-flash": {
+      "ids": ["glm-5-3-flash-260828", "glm-5-3-flash"],
+      "multiplier": 0.5
+    },
+    "glm-5.3": {
+      "ids": ["glm-5.3"],
+      "multiplier": 4.5
+    },
+    "deepseek-v4-pro": {
+      "ids": ["deepseek-v4-pro-ga-260813", "deepseek-v4-pro"],
+      "multiplier": 5.5
+    },
+    "deepseek-v4-flash": {
+      "ids": ["deepseek-v4-flash-ga-260731", "deepseek-v4-flash"],
+      "multiplier": 0.5
+    },
+    "kimi-k3": {
+      "ids": ["kimi-k3"],
+      "multiplier": 10
+    },
+    "kimi-k2.7-code": {
+      "ids": ["kimi-k2.7-code"],
+      "multiplier": 4.5
+    },
+    "minimax-m3": {
+      "ids": ["minimax-m3"],
+      "multiplier": 2.5
+    }
+  }
+}

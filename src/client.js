@@ -241,6 +241,22 @@ body[data-ds-dark-theme] .vcp-settings{color-scheme:dark}
 @media(max-width:420px){.vcp-settings{padding:2px 0 20px}.vcp-card{padding:12px}.vcp-plan-workspace{padding:0}.vcp-plan{padding:12px}.vcp-header{flex-wrap:wrap}.vcp-header>.vcp-actions{width:100%;justify-content:space-between}.vcp-heading{gap:8px}.vcp-heading>.vcp-actions{width:100%}.vcp-actions .vcp-button{flex:1 1 auto}.vcp-account-body{padding:12px 0 0}.vcp-section{padding-top:12px}.vcp-quota-reset{flex-direction:column}.vcp-plan-account{flex-basis:100%}}
 @container vcp (max-width:680px){.vcp-fields,.vcp-fields-three{grid-template-columns:1fr}}
 @container vcp (max-width:420px){.vcp-settings{padding:2px 0 20px}.vcp-plan{padding:12px}.vcp-header{flex-wrap:wrap}.vcp-header>.vcp-actions{width:100%;justify-content:space-between}.vcp-heading>.vcp-actions{width:100%}.vcp-actions .vcp-button{flex:1 1 auto}.vcp-account-body{padding:12px 0 0}.vcp-quota-reset{flex-direction:column}.vcp-plan-account{flex-basis:100%}}
+
+/* Provider workspace: independent plan cards, compact quotas and model badges. */
+.vcp-settings{max-width:1080px;padding:4px 2px 32px;gap:16px;-webkit-font-smoothing:antialiased}
+.vcp-content{gap:16px}.vcp-hero{position:relative;overflow:hidden;padding:20px 22px;border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.2));border-radius:18px;background:linear-gradient(145deg,color-mix(in srgb,var(--dsw-alias-brand-primary,#2563eb) 8%,var(--dsw-alias-bg-layer-1,#fff)),var(--dsw-alias-bg-layer-1,#fff) 58%);box-shadow:0 8px 28px rgba(15,23,42,.05)}
+.vcp-brand-mark{display:flex;align-items:center;justify-content:center;flex:none;width:42px;height:42px;border-radius:13px;background:var(--dsw-alias-brand-primary,#2563eb);color:var(--dsw-alias-label-primary-foreground,#fff);font-size:20px;font-weight:750;box-shadow:0 6px 16px color-mix(in srgb,var(--dsw-alias-brand-primary,#2563eb) 24%,transparent)}
+.vcp-hero-subtitle{margin:5px 0 0;max-width:64ch;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-secondary,inherit)}.vcp-eyebrow{margin-bottom:3px;font-size:10px;font-weight:700;letter-spacing:.09em;color:var(--dsw-alias-label-secondary,inherit)}
+.vcp-plan-workspace{gap:14px;padding:0;border:0;background:transparent;overflow:visible;align-items:start}.vcp-plan{gap:14px;padding:18px;border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.2));border-radius:16px;background:var(--dsw-alias-bg-layer-1,Canvas);box-shadow:0 3px 14px rgba(15,23,42,.035)}.vcp-plan-setup{align-items:stretch}.vcp-plan-account{flex-basis:100%}.vcp-plan-toggle{display:inline-flex;align-items:center;gap:7px;min-height:28px;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer}
+.vcp-switch-input{appearance:none;-webkit-appearance:none;position:relative;flex:none;width:34px;height:20px;margin:0;border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.35));border-radius:999px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.12));color:var(--dsw-alias-label-primary,#1f2937);cursor:pointer}.vcp-switch-input::after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:currentColor;box-shadow:0 1px 3px rgba(0,0,0,.2)}.vcp-switch-input:checked{border-color:var(--dsw-alias-brand-primary,#2563eb);background:var(--dsw-alias-brand-primary,#2563eb);color:var(--dsw-alias-label-primary-foreground,#fff)}.vcp-switch-input:checked::after{transform:translateX(14px)}body[data-ds-dark-theme] .vcp-switch-input:checked{color:#11161e}.vcp-switch-input:disabled{opacity:.55;cursor:not-allowed}
+.vcp-status-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.18));border-radius:999px;font-size:10.5px;line-height:1.6;white-space:nowrap;color:var(--dsw-alias-label-secondary,inherit);background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.06))}.vcp-status-chip::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor}.vcp-status-chip[data-tone=success]{color:var(--dsw-alias-state-success-primary,#15803d);border-color:color-mix(in srgb,currentColor 30%,transparent);background:color-mix(in srgb,currentColor 8%,transparent)}.vcp-status-chip[data-tone=warn]{color:var(--dsw-alias-state-warn-primary,#b45309);border-color:color-mix(in srgb,currentColor 30%,transparent);background:color-mix(in srgb,currentColor 8%,transparent)}
+.vcp-quota{grid-template-columns:1fr;gap:8px}.vcp-quota-group{grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:8px}.vcp-quota-group-title{grid-column:1/-1}.vcp-quota-window{padding:10px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.12));background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.045))}.vcp-quota-track{height:6px}.vcp-quota-percent{font-size:18px}.vcp-quota-meta{font-size:11px}.vcp-section{gap:8px;padding-top:12px}
+.vcp-model-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:10px;margin-top:10px}.vcp-model{position:relative;display:flex;flex-direction:column;gap:10px;min-width:0;padding:13px;border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.18));border-radius:12px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.035));box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}.vcp-model:first-child{border-top:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.18))}.vcp-model[data-disabled=true]{opacity:.66}.vcp-model-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;min-width:0}.vcp-model-toggle{display:flex;align-items:flex-start;gap:9px;flex:1 1 auto;min-width:0;cursor:pointer}.vcp-model-toggle .vcp-switch-input{margin-top:1px}.vcp-model-heading{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0;font-size:13px;line-height:1.45}.vcp-model-name{font-size:13.5px;font-weight:650;overflow-wrap:anywhere}.vcp-model-tags{display:flex;gap:5px;flex-wrap:wrap}.vcp-model-tag{display:inline-flex;align-items:center;padding:2px 7px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.16));border-radius:999px;font-size:10px;line-height:1.55;white-space:nowrap;color:var(--dsw-alias-label-secondary,inherit);background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.04))}.vcp-model-tag[data-tone=accent]{color:var(--dsw-alias-brand-primary,#2563eb);border-color:color-mix(in srgb,currentColor 25%,transparent);background:color-mix(in srgb,currentColor 6%,transparent)}.vcp-model-tag[data-tone=warn]{color:var(--dsw-alias-state-warn-primary,#b45309)}
+.vcp-rate-badge{display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary,#2563eb) 35%,transparent);border-radius:999px;background:color-mix(in srgb,var(--dsw-alias-brand-primary,#2563eb) 8%,transparent);color:var(--dsw-alias-brand-primary,#2563eb);font-size:10.5px;font-weight:750;line-height:1.6;white-space:nowrap;font-variant-numeric:tabular-nums}.vcp-rate-badge small{font-size:8.5px;font-weight:650;opacity:1}.vcp-rate-badge[data-discount=true]{color:var(--dsw-alias-state-success-primary,#15803d);border-color:color-mix(in srgb,currentColor 35%,transparent);background:color-mix(in srgb,currentColor 9%,transparent)}
+.vcp-model-actions{display:flex;justify-content:flex-end;gap:7px;flex-wrap:wrap;margin-top:auto}.vcp-model-actions .vcp-button{min-height:29px;padding:4px 10px;font-size:11px}.vcp-model .vcp-details{padding-top:2px;border-top:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.12))}.vcp-model .vcp-details>summary{min-height:25px;padding:3px 0;font-size:11px}.vcp-account-panel{border-radius:16px;padding:16px 18px}.vcp-button{transition:border-color .15s ease,box-shadow .15s ease}.vcp-button-primary{border-color:var(--dsw-alias-brand-primary,#2563eb)}
+@media(max-width:680px){.vcp-hero{padding:16px}.vcp-plan{padding:15px}.vcp-model-list{grid-template-columns:1fr}}
+@media(max-width:420px){.vcp-plan{padding:12px}.vcp-brand-mark{width:36px;height:36px;border-radius:11px;font-size:17px}.vcp-hero .vcp-header-copy{flex:1 1 calc(100% - 52px)}.vcp-hero-subtitle{font-size:11px}.vcp-model-head{flex-direction:column}.vcp-model-head>.vcp-chip-row{padding-left:43px}.vcp-quota{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){.vcp-settings *{scroll-behavior:auto!important;transition:none!important}}
 `;
 
 function installStyles() {
@@ -277,6 +293,30 @@ function Notice({ tone = 'muted', role, children, action }) {
 
 function StatusChip({ tone = 'muted', children }) {
   return h('span', { className: 'vcp-status-chip', 'data-tone': tone }, children);
+}
+
+function ModelTag({ tone = 'muted', title, children }) {
+  return h('span', { className: 'vcp-model-tag', 'data-tone': tone, title }, children);
+}
+
+function formatRate(value) {
+  return Number.isFinite(value) ? String(Math.round(value * 100) / 100) : '';
+}
+
+function ConsumptionBadge({ plan, consumption }) {
+  const rate = formatRate(consumption?.multiplier);
+  if (!rate) return null;
+  const regular = formatRate(consumption.regularMultiplier);
+  const discount = consumption.discounted
+    ? `限时折扣至 ${formatTime(consumption.discountEndsAt)}，常规倍率 ${regular}×。`
+    : '当前按常规倍率展示。';
+  const title = plan === 'agent-plan'
+    ? `Agent Plan AFP 输入/输出抵扣系数均为 ${rate}。${discount}`
+    : `以官方 Agent Plan AFP 系数作相对消耗参考 ${rate}×；Coding Plan 不以此换算固定调用次数或 AFP 绝对量。${discount}`;
+  return h('span', {
+    className: 'vcp-rate-badge', 'data-discount': consumption.discounted ? 'true' : 'false',
+    title, 'aria-label': `消耗倍率 ${rate} 倍${consumption.discounted ? '，限时折扣' : ''}`
+  }, `${rate}×`, consumption.discounted ? h('small', null, '限时') : null);
 }
 
 // ── 纯函数小工具 ─────────────────────────────────────────────────────────────
@@ -396,6 +436,19 @@ function resetCountdown(value, now) {
 function formatPercent(value) {
   const rounded = Math.round(Number(value) * 10) / 10;
   return Number.isFinite(rounded) ? String(rounded) : '0';
+}
+
+function formatTokenCount(value) {
+  if (!Number.isFinite(value) || value <= 0) return '未知';
+  if (value >= 1024 * 1024) {
+    const amount = value / (1024 * 1024);
+    return `${Number.isInteger(amount) ? amount : amount.toFixed(1)}M`;
+  }
+  if (value >= 1024) {
+    const amount = value / 1024;
+    return `${Number.isInteger(amount) ? amount : amount.toFixed(1)}K`;
+  }
+  return String(value);
 }
 
 /**
@@ -1053,36 +1106,43 @@ function ModelSettingsEditor({ model, draft, error, disabled, onChange, onSave, 
  * @param {object} props 组件属性
  * @returns {object} 元素树
  */
-function ModelRow({ model, disabled, routingError, editor, draftError, onToggle, onOpenEditor, onCloseEditor, onChangeDraft, onSave, onReset }) {
+function ModelRow({ plan, model, disabled, routingError, editor, draftError, onToggle, onOpenEditor, onCloseEditor, onChangeDraft, onSave, onReset }) {
   const enabled = model?.enabled !== false;
   const editing = editor?.modelId === model?.id;
-  const effective = describeEffective(model);
+  const effectiveSummary = describeEffective(model);
+  const values = model?.effective ?? model?.defaults ?? {};
   const capabilityLabel = ({ dynamic: '动态路由', partial: '部分参数未公开', unknown: '参数待确认' })[model?.capabilityStatus]
     || (model?.capabilityUnverified ? '参数待确认' : '');
-  return h('div', { className: 'vcp-model' },
-    h('div', { className: 'vcp-heading' },
-      h('div', { className: 'vcp-actions', style: { flex: '1 1 260px' } },
-        h('label', { className: 'vcp-actions', style: { flex: '1 1 220px', minWidth: 0 } },
-          h('input', {
-            type: 'checkbox', checked: enabled, disabled,
-            'aria-label': `启用模型 ${model?.id ?? ''}`,
-            style: { width: 18, height: 18, margin: 0, flex: '0 0 auto', accentColor: 'var(--dsw-alias-brand-primary, Highlight)' },
-            onChange: (event) => onToggle(model, Boolean(event.target.checked))
-          }),
-          h('span', { className: 'vcp-model-name', title: model?.id }, model?.name || model?.id)),
-        h('span', { className: 'vcp-chip-row' },
-          capabilityLabel ? h('span', { style: style.chip }, capabilityLabel) : null,
-          model?.canDisableThinking === false ? h('span', { style: style.chip }, '常驻思考') : null,
-          enabled ? null : h('span', { style: style.chip }, '已停用'))),
-      h('div', { className: 'vcp-actions' },
-        h('button', { type: 'button', style: style.btn, disabled, 'aria-label': `模型参数 ${model?.id ?? ''}`, onClick: () => (editing ? onCloseEditor() : onOpenEditor(model)) }, editing ? '收起参数' : '参数'),
-        h('button', { type: 'button', style: style.btn, disabled, 'aria-label': `恢复默认 ${model?.id ?? ''}`, title: '清除全部参数覆盖并恢复模型启用状态', onClick: () => onReset(model) }, enabled ? '恢复默认' : '恢复默认并启用'))),
+  const thinkingLabel = model?.canDisableThinking === false ? '常驻思考' : values.reasoningEfforts ? '可调思考' : '思考按默认';
+  return h('article', { className: 'vcp-model', 'data-disabled': enabled ? 'false' : 'true' },
+    h('div', { className: 'vcp-model-head' },
+      h('label', { className: 'vcp-model-toggle' },
+        h('input', {
+          className: 'vcp-switch-input', type: 'checkbox', checked: enabled, disabled,
+          'aria-label': `启用模型 ${model?.id ?? ''}`,
+          onChange: (event) => onToggle(model, Boolean(event.target.checked))
+        }),
+        h('span', { className: 'vcp-model-heading' },
+          h('span', { className: 'vcp-model-name', title: model?.id }, model?.name || model?.id),
+          h(ConsumptionBadge, { plan, consumption: model?.consumption }))),
+      h('span', { className: 'vcp-chip-row' },
+        capabilityLabel ? h('span', { style: style.chip }, capabilityLabel) : null,
+        enabled ? null : h('span', { style: style.chip }, '已停用'))),
+    h('div', { className: 'vcp-model-tags' },
+      h(ModelTag, { tone: values.imageInput ? 'accent' : 'muted' }, values.imageInput ? '视觉' : '纯文本'),
+      h(ModelTag, { tone: values.reasoningEfforts ? 'accent' : 'muted' }, thinkingLabel),
+      h(ModelTag, { title: `上下文长度 ${values.contextWindow ?? '未知'} token` }, `上下文 ${formatTokenCount(values.contextWindow)}`),
+      h(ModelTag, { title: `最大输出 ${values.maxTokens ?? '未知'} token` }, `输出 ${formatTokenCount(values.maxTokens)}`),
+      values.toolsEnabled === false ? h(ModelTag, { tone: 'warn' }, '工具已停用') : null),
+    h('div', { className: 'vcp-model-actions' },
+      h('button', { type: 'button', style: style.btn, disabled, 'aria-label': `模型参数 ${model?.id ?? ''}`, onClick: () => (editing ? onCloseEditor() : onOpenEditor(model)) }, editing ? '收起参数' : '参数'),
+      h('button', { type: 'button', style: style.btn, disabled, 'aria-label': `恢复默认 ${model?.id ?? ''}`, title: '清除全部参数覆盖并恢复模型启用状态', onClick: () => onReset(model) }, enabled ? '恢复默认' : '恢复默认并启用')),
     h('details', { className: 'vcp-details' },
       h('summary', { style: style.summary }, '模型技术标识与参数详情'),
       h('div', { className: 'vcp-model-meta' },
         h('p', { className: 'vcp-model-id', style: style.muted }, `调用 ID：${model?.id ?? ''}`),
         h('p', { style: style.muted }, `当前参数：${describeModelSettings(model)}`),
-        effective ? h('p', { style: routingError ? style.warn : style.muted }, `${routingError ? '已保存配置（路由尚未生效）' : '生效值'}：${effective}`) : null,
+        effectiveSummary ? h('p', { style: routingError ? style.warn : style.muted }, `${routingError ? '已保存配置（路由尚未生效）' : '生效值'}：${effectiveSummary}`) : null,
         model?.capabilityNote ? h('p', { style: style.muted }, model.capabilityNote) : null)),
     model?.settingsWarning ? h('p', { role: 'alert', style: style.warn }, model.settingsWarning) : null,
     editing
@@ -1194,22 +1254,23 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
 
   return h('section', { className: 'vcp-plan vcp-card', 'data-section': plan === 'agent-plan' ? '02' : '03', 'aria-label': PLAN_TITLES[plan] },
     h(SectionHeading, {
+      eyebrow: plan === 'agent-plan' ? 'AGENT PLAN' : 'CODING PLAN',
       title: plan === 'agent-plan' ? 'Agent 套餐' : '编程套餐',
-      action: h(StatusChip, { tone: planTone }, planState)
+      action: h('div', { className: 'vcp-actions' },
+        h(StatusChip, { tone: planTone }, planState),
+        h('label', { className: 'vcp-plan-toggle', title: '停用后保留账号选择与模型参数' },
+          h('input', {
+            className: 'vcp-switch-input', type: 'checkbox', checked: providerEnabled, disabled,
+            'aria-label': `启用${PLAN_TITLES[plan]}`,
+            onChange: (event) => onToggleProvider(plan, Boolean(event.target.checked))
+          }),
+          h('span', null, '启用')))
     }),
     snapshot?.routingError ? h('p', { style: style.muted }, `所选账号：${account ? accountName(account) : '未选择'}`) : null,
     snapshot?.routingError ? h(Notice, { tone: 'warn', role: 'alert' }, appliedAccount === undefined
       ? '实际生效账号暂不可确认，请排除路由错误后重试。'
       : appliedAccount ? `实际生效账号：${accountName(appliedAccount)}（${appliedAccount.id}），路由更新尚未完成。` : '该套餐当前没有已生效的模型路由。') : null,
     h('div', { className: 'vcp-plan-setup' },
-      h('label', { className: 'vcp-plan-toggle' },
-        h('input', {
-          type: 'checkbox', checked: providerEnabled, disabled,
-          'aria-label': `启用${PLAN_TITLES[plan]}`,
-          style: { width: 18, height: 18, margin: 0, accentColor: 'var(--dsw-alias-brand-primary, Highlight)' },
-          onChange: (event) => onToggleProvider(plan, Boolean(event.target.checked))
-        }),
-        h('span', null, '启用套餐')),
       h('label', { className: 'vcp-plan-account', style: style.field },
         h('span', { style: style.label }, '使用账号'),
         h('select', {
@@ -1264,7 +1325,7 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
           h('div', { className: 'vcp-model-list' },
             models.map((model, index) => h(ModelRow, {
               key: model?.id ?? `model-${index}`,
-              model, disabled, routingError: snapshot?.routingError, editor, draftError,
+              plan, model, disabled, routingError: snapshot?.routingError, editor, draftError,
               onToggle: (item, enabled) => onToggleModel(plan, activeId, item.id, enabled),
               onOpenEditor: openEditor,
               onCloseEditor: closeEditor,
@@ -1822,9 +1883,11 @@ function VolcengineProviderSection({ client }) {
         : snapshot ? `${snapshot.accounts?.length ?? 0} 个账号 · 2 个套餐` : '等待连接';
 
   return h('div', { className: 'vcp-settings', style: style.root },
-    h('header', { className: 'vcp-header' },
+    h('header', { className: 'vcp-header vcp-hero' },
+      h('div', { className: 'vcp-brand-mark', 'aria-hidden': 'true' }, '火'),
       h('div', { className: 'vcp-header-copy' },
-        h('h2', { style: style.title }, '火山方舟 Provider')),
+        h('h2', { style: style.title }, '火山方舟 Provider'),
+        h('p', { className: 'vcp-hero-subtitle' }, '国内个人版 Agent Plan 与 Coding Plan，集中管理账号、模型与套餐额度。')),
       h('div', { className: 'vcp-actions' },
         h('span', { role: 'status', style: style.chip }, headerStatus),
         h('button', { type: 'button', style: style.btn, disabled: busyAccount || loading, onClick: () => { void refresh(); } }, loading ? '正在刷新状态…' : '刷新状态'))),
@@ -1842,7 +1905,7 @@ function VolcengineProviderSection({ client }) {
     !snapshot
       ? (loading ? h('p', { role: 'status', style: style.muted }, '正在读取方舟账号状态…') : null)
       : h('div', { className: 'vcp-content', 'data-empty': !(snapshot.accounts?.length) },
-        h('div', { className: 'vcp-plans vcp-plan-workspace vcp-card', style: style.card },
+        h('div', { className: 'vcp-plans vcp-plan-workspace' },
         h(PlanCard, {
           plan: 'agent-plan', snapshot, rawQuota: quotas['agent-plan'], busy: planBusy, quotaBusy: Boolean(quotaBusy['agent-plan']),
           onSelect: selectAccount, onModels: pullModels, onQuota: pullQuota,

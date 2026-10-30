@@ -34,7 +34,7 @@ def verify_package(directory, tag=None):
                 text = archive.extractfile(member).read().decode('utf-8')
                 if re.search(r'(?i)[a-z]:[\\/]Users[\\/][^\\/\s]+[\\/]', text):
                     raise ValueError('Development-machine path included')
-        required = {'package/package.json', 'package/lib/index.mjs', 'package/lib/client.js', 'package/cordis.patch.yml', 'package/README.md', 'package/LICENSE', 'package/NOTICE'}
+        required = {'package/package.json', 'package/lib/index.mjs', 'package/lib/client.js', 'package/lib/catalog-snapshot.json', 'package/lib/consumption-rates.json', 'package/cordis.patch.yml', 'package/README.md', 'package/LICENSE', 'package/NOTICE'}
         if not required.issubset(names):
             raise ValueError('Required plugin files missing')
         if 'package/lib/browser-bridge.mjs' in names:

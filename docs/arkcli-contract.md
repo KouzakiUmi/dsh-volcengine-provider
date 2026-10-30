@@ -2,7 +2,7 @@
 
 ## 版本与证据
 
-目标 DSH Core 为 **0.2.1-rc.3**；ArkCli 命令契约对照 **@volcengine/ark-cli 1.0.37** 的帮助、随包官方 Skills 与官方仓库文档。帮助、raw API 的 `--dry-run` 和 Windows 同设备真实登录已核验；真实额度和推理调用尚未执行。网页登录的启动器拦截契约仅对 Windows ArkCli 1.0.37 核验，其他平台/版本在登录前拒绝。
+目标 DSH Core 为 **0.2.1-rc.5**；ArkCli 命令契约对照 **@volcengine/ark-cli 1.0.37** 的帮助、随包官方 Skills 与官方仓库文档。帮助、raw API 的 `--dry-run` 和 Windows 同设备真实登录已核验；真实额度和推理调用尚未执行。网页登录的启动器拦截契约仅对 Windows ArkCli 1.0.37 核验，其他平台/版本在登录前拒绝。
 
 ## OAuth
 

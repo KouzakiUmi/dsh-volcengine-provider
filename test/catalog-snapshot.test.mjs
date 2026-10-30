@@ -1,7 +1,7 @@
 // Source-audited fixed model limits, not live API or inference tests.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { snapshot, normalizeCatalog, getModelRows, usableModels, profilesFor } from '../src/catalog.mjs';
+import { snapshot, normalizeCatalog, getModelRows, usableModels, profilesFor, resolveConsumption } from '../src/catalog.mjs';
 import { initialState, ROUTES } from '../src/state.mjs';
 const current = [
   ['auto','auto','auto'],
@@ -117,4 +117,36 @@ test('snapshot aliases are unique and partial capability notes do not erase docu
     const minimax=snapshot[plan].models.find(row=>row.id==='minimax-m3');assert.deepEqual(minimax.reasoningEfforts,{low:'low',medium:'medium',high:'high'});assert.equal(minimax.defaultReasoning,'medium');assert.equal(minimax.capabilityStatus,'partial');
     assert.deepEqual(Object.keys(snapshot[plan].models.find(model=>model.id==='glm-5.3').reasoningEfforts),['low','high','max']);
   }
+});
+
+test('consumption badges resolve aliases and active discounts without entering Core configuration', () => {
+  const now = Date.parse('2026-10-30T12:00:00+08:00');
+  for (const plan of ['agent-plan', 'coding-plan']) {
+    const id = plan === 'agent-plan' ? 'deepseek-v4-1-flash-261017' : 'deepseek-v4-1-flash';
+    assert.deepEqual(resolveConsumption(plan, id, now), {
+      plan, multiplier: 1.25, regularMultiplier: 2.5, discounted: true, discountEndsAt: '2026-12-30T23:59:59+08:00'
+    });
+    const state = initialState();
+    const row = getModelRows(state, 'default', plan).find(model => model.id === id);
+    assert.equal(row.consumption.regularMultiplier, 2.5);
+    const core = profilesFor(state)[ROUTES[plan]].models.find(model => model.id === id);
+    assert.equal(Object.hasOwn(core, 'consumption'), false);
+    for (const model of snapshot[plan].models) {
+      if (model.id === 'ark-code-latest') assert.equal(resolveConsumption(plan, model.id, now), null);
+      else assert.ok(resolveConsumption(plan, model.id, now)?.multiplier > 0, `${plan}:${model.id}`);
+    }
+    assert.equal(resolveConsumption(plan, 'auto', now), null);
+    assert.equal(resolveConsumption(plan, 'unknown-future-model', now), null);
+  }
+});
+
+test('consumption discounts apply only inside their explicit time windows', () => {
+  const id = 'deepseek-v4-1-flash-261017';
+  assert.equal(resolveConsumption('agent-plan', id, Date.parse('2026-09-14T23:59:59+08:00')).multiplier, 2.5);
+  assert.equal(resolveConsumption('agent-plan', id, Date.parse('2026-12-30T23:59:59+08:00')).multiplier, 1.25);
+  const expired = resolveConsumption('agent-plan', id, Date.parse('2026-12-31T00:00:00+08:00'));
+  assert.equal(expired.multiplier, 2.5);
+  assert.equal(expired.discounted, false);
+  assert.equal(expired.discountEndsAt, undefined);
+  assert.equal(resolveConsumption('agent-plan', 'kimi-k3', Date.parse('2026-10-30T12:00:00+08:00')).multiplier, 10);
 });

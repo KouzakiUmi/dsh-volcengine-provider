@@ -2,9 +2,17 @@
 
 ## 目标与范围
 
-- 实际目标 **DSH Core 0.2.1-rc.3**；兼容声明不扩展到未测试版本。
+- 实际目标 **DSH Core 0.2.1-rc.5**；兼容声明不扩展到未测试版本。
 - ArkCli **1.0.37** 的命令帮助、随包官方 Skills、raw action 注册及无网络预览。
 - 单元业务测试使用假凭据、假 CLI 与外部网络替身；真实本地桥 IPC、原生进程和独立账号 OAuth 验收另列，均使用临时目录。
+
+## 0.2.9 Core 适配、设置页与消耗倍率
+
+- 从桌面 `app.asar` 的产品与各包 manifest 核对实际 Core / llm / llm-pi-ai / credentials / launch-environment / typert-protocol 为 `0.2.1-rc.5`，其消费的 pi-ai 仍为 `1.1.0`；插件 peer 声明同步到 rc.5，没有改写宿主安装。
+- 真实 rc.5 隔离 Host 加载通过，覆盖 Core Schema、RPC、双路由、模型目录、路由失败保留和 dispose；模型管理、逐模型思考与能力矩阵使用同一真实 Core/SDK 和假 HTTP，未调用真实推理。
+- 设置页参考 Our Free Model 2.7.1 的卡片与标签信息层级，保留本插件原有账号、双套餐、额度、模型参数和异步保护。真实 React/Chrome 离线验证名称旁倍率、限时标记、能力标签、模型开关与参数、额度分组、登录路径、390px 窄屏和窄内容栏；HTTP(S) 全部阻断，RPC 为假数据。
+- 深浅色 ×（宿主实色 secondary 令牌 / 缺失令牌）四组对比度审计均通过 WCAG AA。首次审计发现按钮/开关主题过渡中间色与折扣小字对比不足，已去除相关颜色过渡并修正文字透明度后复验通过。
+- 倍率依据[官方 AFP 抵扣规则](https://ark.volcengine.com/region:cn-beijing/docs/agent-plan-personal-afp-credits-billing-rules)与[共享折扣活动](https://ark.volcengine.com/region:cn-beijing/docs/coding-plan-personal-model-discount)固化，逐模型来源和 Kimi K3 活动结束冲突见[能力参数](model-capabilities.md#消耗倍率)。测试覆盖两套套餐别名、活动开始前/截止/结束后、未知与动态路由无倍率，以及倍率元数据不进入 Core 配置；Coding 仅作相对消耗参考，未实测线上计费。
 
 ## 0.2.8 模型能力覆盖
 
@@ -55,7 +63,7 @@ node --test test/*.test.mjs
 - HMAC 签名测试使用独立 OpenSSL 推导的固定向量，不只比较实现自身的两次输出。
 - 构建生成 Host 模块与返回导出对象的惰性 Client 工厂；不新增安装构建依赖。
 
-当前结果：**360 项 JavaScript 测试、10 项 Python 归档测试通过**，50 个 JavaScript 源文件语法/边界检查通过，构建包含 18 个模块/Client 产物及 3 个浏览器桥辅助文件。模型管理测试覆盖旧状态迁移、套餐/模型开关、逐模型参数、请求默认值及适配器生命周期；发布测试覆盖 OIDC 身份、版本与渠道、归档校验、registry 错误分类及发布后完整性检查。
+当前结果：**363 项 JavaScript 测试、11 项 Python 归档测试通过**，50 个 JavaScript 源文件语法/边界检查通过，构建包含 19 个模块/Client 产物及 3 个浏览器桥辅助文件。模型管理测试覆盖旧状态迁移、套餐/模型开关、逐模型参数、请求默认值及适配器生命周期；发布测试覆盖 OIDC 身份、版本与渠道、归档校验（含 `catalog-snapshot.json` 与 `consumption-rates.json` 必需项）、registry 错误分类及发布后完整性检查。
 
 ### 实际 Core 隔离加载
 

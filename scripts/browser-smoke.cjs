@@ -69,7 +69,7 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
         enabled: { 'agent-plan': true, 'coding-plan': true },
         catalogs: ['agent-plan', 'coding-plan'].map(plan => {
           const defaults = { contextWindow: 32768, maxTokens: 8192, imageInput: true, toolsEnabled: true, reasoningEfforts: { off: null, low: 'low', high: 'high' }, defaultReasoning: 'low', forceAdaptiveThinking: true };
-          return { plan, accountId: 'default', count: 1, enabledCount: 1, source: 'local-snapshot', models: [{ id: 'demo-reasoning-model', name: '示例模型（假数据）', enabled: true, capabilityUnverified: true, settings: {}, defaults, effective: { ...defaults } }] };
+          return { plan, accountId: 'default', count: 1, enabledCount: 1, source: 'local-snapshot', models: [{ id: 'demo-reasoning-model', name: '示例模型（假数据）', enabled: true, capabilityUnverified: true, consumption: { plan, multiplier: 1.25, regularMultiplier: 2.5, discounted: true, discountEndsAt: '2026-12-30T23:59:59+08:00' }, settings: {}, defaults, effective: { ...defaults } }] };
         }),
         routes: { 'agent-plan': 'volcengine-agent-plan', 'coding-plan': 'volcengine-coding-plan' }, login: { jobId: null, state: 'idle', message: '' }
       };
@@ -190,6 +190,12 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     await advanced.click();
     assert.equal(await advanced.evaluate(node => node.parentElement.open), false, 'Native details closes');
     await page.getByText('模型列表（已启用 1 / 共 1）', { exact: true }).first().click();
+    const firstModelCard = page.locator('.vcp-model').first();
+    const rateBadge = firstModelCard.locator('.vcp-rate-badge');
+    assert.match((await rateBadge.innerText()).trim(), /^1\.25×/);
+    assert.match(await rateBadge.getAttribute('title'), /Agent Plan AFP 输入\/输出抵扣系数/);
+    assert.equal(await rateBadge.getAttribute('data-discount'), 'true');
+    for (const tag of ['视觉', '可调思考', '上下文 32K', '输出 8K']) await firstModelCard.locator('.vcp-model-tag', { hasText: tag }).waitFor();
     const modelToggle = page.getByRole('checkbox', { name: '启用模型 demo-reasoning-model', exact: true }).first();
     await modelToggle.uncheck();
     const modelIdentity = page.getByText('模型技术标识与参数详情', { exact: true }).first();

@@ -173,6 +173,7 @@ const CATALOG_MODELS = {
     {
       id: 'doubao-seed-2-1-pro-260915',
       name: 'Doubao Seed 2.1 Pro',
+      consumption: { plan: 'agent-plan', multiplier: 2.5, regularMultiplier: 2.5, discounted: false },
       capabilityUnverified: false,
       defaults: {
         contextWindow: 1048576, maxTokens: 256000,
@@ -269,6 +270,7 @@ class FakeBackend {
           return {
             id: row.id,
             name: row.name,
+            consumption: row.consumption ?? null,
             enabled: this.modelEnabled[key] !== false,
             capabilityUnverified: row.capabilityUnverified,
             settings,
@@ -467,6 +469,19 @@ test('模型行以友好名称为标题，调用 ID 收入默认折叠详情且�
   assert.equal(h.find(details, node => node.props.className === 'vcp-model-id')[0].props.children, `调用 ID：${id}`);
   await h.toggle(h.byLabel('input', `启用模型 ${id}`), false);
   assert.equal(h.backend.calls.find(call => call.op === 'setModelEnabled').modelId, id);
+  h.dispose();
+});
+
+test('模型卡片在名称旁展示倍率与能力标签，动态路由不伪造倍率', async () => {
+  const h = createHarness(); await h.flush();
+  const rows = h.find(h.tree, node => node.props.className === 'vcp-model');
+  const first = rows[0];
+  const badge = h.find(first, node => node.props.className === 'vcp-rate-badge')[0];
+  assert.equal(badge.props.children[0], '2.5×');
+  assert.match(badge.props.title, /Agent Plan AFP 输入\/输出抵扣系数/);
+  const tags = h.find(first, node => node.props.className === 'vcp-model-tag').map(node => node.props.children);
+  assert.deepEqual(tags, ['视觉', '可调思考', '上下文 1M', '输出 250K']);
+  assert.equal(h.find(rows[1], node => node.props.className === 'vcp-rate-badge').length, 0);
   h.dispose();
 });
 

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 const root = new URL('../', import.meta.url);
 const target = new URL('lib/', root);
 await mkdir(target, { recursive: true });
-const modules = ['index.mjs', 'state.mjs', 'catalog.mjs', 'catalog-snapshot.json', 'cli.mjs', 'oauth.mjs', 'oauth-browser.mjs', 'oauth-browser-worker.mjs', 'browser-bridge.mjs', 'browser-bridge-client.mjs', 'manager.mjs', 'quota.mjs', 'remote.mjs', 'model-defaults.mjs', 'adapter-lease.mjs', 'ark-adapter.mjs', 'messages-payload.mjs'];
+const modules = ['index.mjs', 'state.mjs', 'catalog.mjs', 'catalog-snapshot.json', 'consumption-rates.json', 'cli.mjs', 'oauth.mjs', 'oauth-browser.mjs', 'oauth-browser-worker.mjs', 'browser-bridge.mjs', 'browser-bridge-client.mjs', 'manager.mjs', 'quota.mjs', 'remote.mjs', 'model-defaults.mjs', 'adapter-lease.mjs', 'ark-adapter.mjs', 'messages-payload.mjs'];
 for (const name of modules) await copyFile(new URL(`src/${name}`, root), new URL(name, target));
 for (const [platform, command] of [['linux', 'xdg-open'], ['darwin', 'open']]) {
   const path = `browser-bridge/${platform}/${command}`;

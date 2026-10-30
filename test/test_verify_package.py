@@ -24,7 +24,7 @@ class VerifyPackageTests(unittest.TestCase):
             'name': 'dsh-volcengine-provider', 'version': '0.1.0', 'main': './lib/index.mjs', 'license': 'MIT',
             'exports': {'./client': './lib/client.js'}, 'dsh': {'bundle': {'patch': './cordis.patch.yml'}}
         }
-        files = {'package/package.json': json.dumps(manifest), 'package/lib/index.mjs': 'export const name = "fixture";', 'package/lib/client.js': '// fixture', 'package/cordis.patch.yml': '[]', 'package/README.md': '# Fixture', 'package/LICENSE': 'MIT fixture', 'package/NOTICE': 'fixture'}
+        files = {'package/package.json': json.dumps(manifest), 'package/lib/index.mjs': 'export const name = "fixture";', 'package/lib/client.js': '// fixture', 'package/lib/catalog-snapshot.json': '{}', 'package/lib/consumption-rates.json': '{}', 'package/cordis.patch.yml': '[]', 'package/README.md': '# Fixture', 'package/LICENSE': 'MIT fixture', 'package/NOTICE': 'fixture'}
         if extra:
             files.update(extra)
         if remove:
@@ -46,7 +46,7 @@ class VerifyPackageTests(unittest.TestCase):
         self.fixture()
         result = module.verify_package(self.directory, 'v0.1.0')
         self.assertEqual(result['version'], '0.1.0')
-        self.assertEqual(result['files'], 7)
+        self.assertEqual(result['files'], 9)
 
     def test_mismatched_tag(self):
         self.fixture()
@@ -74,6 +74,11 @@ class VerifyPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'missing'):
             module.verify_package(self.directory)
 
+    def test_missing_runtime_snapshot(self):
+        self.fixture(remove='package/lib/consumption-rates.json')
+        with self.assertRaisesRegex(ValueError, 'missing'):
+            module.verify_package(self.directory)
+
     def test_browser_bridge_requires_all_platform_helpers(self):
         self.fixture({'package/lib/browser-bridge.mjs': '// fixture'})
         with self.assertRaisesRegex(ValueError, 'Browser bridge files missing'):
@@ -88,7 +93,7 @@ class VerifyPackageTests(unittest.TestCase):
         files = {'package/lib/browser-bridge.mjs': '// fixture', 'package/lib/browser-bridge-client.mjs': '// fixture', 'package/lib/browser-bridge/win32/rundll32.exe': 'native fixture', 'package/lib/browser-bridge/linux/xdg-open': '#!/bin/sh\n', 'package/lib/browser-bridge/darwin/open': '#!/bin/sh\n'}
         modes = {name: 0o755 for name in files if name.endswith(('/xdg-open', '/open'))}
         self.fixture(files, modes=modes)
-        self.assertEqual(module.verify_package(self.directory)['files'], 12)
+        self.assertEqual(module.verify_package(self.directory)['files'], 14)
 
     def test_development_directory(self):
         self.fixture({'package/test/unwanted.mjs': '// fixture'})

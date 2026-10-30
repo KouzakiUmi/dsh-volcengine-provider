@@ -58,7 +58,7 @@ Agent Plan 与 Coding Plan 各有独立的启用开关、账号选择、模型�
 
 从官方套餐目录同步可用模型清单，按账号和套餐分别保存。能力参数依据官方 Plan Pi 文档和官方目录固化，显式匹配别名与版本，旧缓存默认值随快照更新，手动覆盖保留；来源与冲突见[能力参数](docs/model-capabilities.md)。每个模型可独立启停，目录刷新不清空设置；Auto/未知模型保守标记。
 
-设置页和模型选择器使用友好名称，原始调用 ID 可在模型技术详情中查看。查看[模型与思考配置预览](docs/client-model-thinking-preview.png)。
+设置页和模型选择器使用友好名称，原始调用 ID 可在模型技术详情中查看。模型卡片在名称旁展示消耗倍率与限时折扣，并汇总视觉、思考、上下文和输出能力；倍率来源与 Coding Plan 的参考语义见[能力参数](docs/model-capabilities.md#消耗倍率)。查看[模型卡片预览](docs/client-settings-preview-models.png)与[模型与思考配置预览](docs/client-model-thinking-preview.png)。
 
 ### 调整模型参数
 
@@ -72,7 +72,7 @@ Coding Plan 展示剩余百分比；Agent Plan 同时展示 AFP 已用量、上�
 
 ## 使用条件
 
-- **DSH Core**：`0.2.1-rc.3`。
+- **DSH Core**：`0.2.1-rc.5`。
 - **Node.js**：`>=22.19.0`。
 - **ArkCli**：当前按 `1.0.37` 命令契约适配；网页登录仅开放已核验的 Windows ArkCli `1.0.37`，其他平台/版本在登录前拒绝。
 - **Chrome**：网页登录需已安装 Google Chrome；插件的 `playwright-core` 依赖负责独立临时窗口，不下载浏览器。
