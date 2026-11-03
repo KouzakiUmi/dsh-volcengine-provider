@@ -85,8 +85,10 @@ test('dynamic and unknown catalogs remain distinct without guessing a low or off
     assert.equal(row.defaults.reasoningEfforts, false);
     assert.equal(row.messagesThinkingMode, 'server-default');
     assert.equal(row.canDisableThinking, null);
-    assert.equal(row.defaults.contextWindow, 32768);
-    assert.equal(row.defaults.maxTokens, 8192);
+    // 控制台路由采用固化保守容量，真正未知的版本才落到 32K/8K 回退。
+    const pinned = row.id === 'ark-code-latest';
+    assert.equal(row.defaults.contextWindow, pinned ? 256000 : 32768);
+    assert.equal(row.defaults.maxTokens, pinned ? 32000 : 8192);
   }
   state.catalogs['default:agent-plan'].models[0].reasoningEfforts = {off:null, low:'low'};
   state.catalogs['default:agent-plan'].models[0].defaultReasoning = 'low';

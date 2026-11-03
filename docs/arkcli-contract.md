@@ -66,6 +66,8 @@ arkcli plans model-list --plan coding-plan --profile <profile> --format json
 
 配置调用 ID 优先 `output_name`，空时才使用 `model_id`；`model_name` 仅展示。空数组表示当前目录为空，不能用旧列表掩盖。按账号和订阅分别缓存。
 
+控制台路由例外：清单把该条目的 `model_id`/`output_name` 都写成 `auto`，但它不能作为模型名调用（服务端返回 `UnsupportedModel`），官方要求改用 `ark-code-latest`。插件在目录归一阶段把 `auto` 映射为 `ark-code-latest`，展示名称保留上游的 Auto 语义；同一路由在清单出现两个名字时按首次出现合并，同一个名字重复仍是坏目录。证据见[验证记录](validation.md)。
+
 目录不包含完整能力规格。已知模型沿用兼容快照；未知模型默认声明文本输入、32768 上下文、8192 输出，不提供未核实的思考档位，也不强制默认 low。用户可在模型参数中按已确认的能力设置覆盖值。这些起始值不是官方模型能力承诺。
 
 Anthropic Messages 协议与 `/api/plan`、`/api/coding` 地址沿用既有 provider 配置；ArkCli 官方 Skills 常展示的是 OpenAI 兼容路径 `/api/plan/v3`、`/api/coding/v3`。不能把后者直接用于 Anthropic 适配器；当前兼容路径与能力快照仍需真实推理验证。

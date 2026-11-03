@@ -1,6 +1,6 @@
 # 固化模型参数与来源
 
-核验日期：2026-10-28（2026-10-27 首次核验，本次按官方原文复核并补充模态边界、来源冲突与实际开放档位的区分）。此表是插件采用的配置快照，不是推理边界实测。模型清单仍从所选账号的 ArkCli Plan 查询；上下文、输出和当前传输可表达的输入模态从本文件列明的一手资料固化，不在拉取清单时逐模型查询详情。
+核验日期：2026-11-03（2026-10-27 首次核验，2026-10-28 按官方原文复核模态边界与来源冲突，本次按官方 Pi 接入与套餐概览当前版本刷新参数量，并以真实账号探针核对控制台路由的可用请求 ID）。此表是插件采用的配置快照，不是推理边界实测。模型清单仍从所选账号的 ArkCli Plan 查询；上下文、输出和当前传输可表达的输入模态从本文件列明的一手资料固化，不在拉取清单时逐模型查询详情。
 
 ## 来源优先级
 
@@ -9,7 +9,7 @@
 3. 官方文档明确指向的 `dsh-volcengine-plugin@0.8.4` [Plan 目录](https://unpkg.com/dsh-volcengine-plugin@0.8.4/plan-models.json)补缺失整数、别名。其官方来源链见 [DeepSeek Harness 接入文档](https://ark.volcengine.com/region:cn-beijing/docs/agent-plan-personal-deepseek-harness.md#configure-via-plugin)。参考文件 SHA-256：`9d921b7a989af72c49ee69ad61d9ab4fc1863af6fc7c4f1c6c6b04968716a9ad`。
 4. 目标 Core `0.2.1-rc.5` 消费的 `@earendil-works/pi-ai@1.1.0` [发行元数据](https://registry.npmjs.org/@earendil-works/pi-ai/1.1.0)、[类型契约](https://unpkg.com/@earendil-works/pi-ai@1.1.0/dist/types.d.ts)与[模型源](https://github.com/earendil-works/pi/tree/main/packages/ai)。类型契约限定 `Model.input` 只含 `text`、`image`，并规定 `thinkingLevelMap` 的 `null` 表示该思考档位不受支持。其他 Provider 的原厂参数仅用于交叉核对，不覆盖更窄的 Plan 配置。旧 `@mariozechner/pi-ai` 不能冒充目标消费版本。
 
-同一 Pi 示例同时使用 `256000`、`262144`、`393216`、`1048576` 和 `1049000`，因此不做统一的“K 乘 1000/1024”转换。
+同一 Pi 示例同时使用 `256000`、`262144`、`393216`、`1024000` 和 `1048576`，因此不做统一的“K 乘 1000/1024”转换。
 
 ## 固化配置
 
@@ -21,9 +21,9 @@
 | Doubao Seed 2.1 Pro | 1048576 | 256000 | 256000 | text、image | 两套 Plan Pi |
 | Doubao Seed 2.1 Lite | 1048576 | 256000 | 256000 | text、image | 两套 Plan Pi |
 | Doubao Seed 2.0 Mini | 262144 | 128000 | 128000 | text、image | 两套 Plan Pi |
-| Kimi K3.1 Pro | 1048576 | 128000 | 128000 | text、image | 两套 Plan Pi；不采用原厂宣传的更高输出 |
+| Kimi K3.1 Pro | 1024000 | 1024000 | 1024000 | text、image | 两套 Plan Pi 当前版均为 1024k/1024k（原厂宣传不作依据） |
 | DeepSeek V4.1 Flash | 1048576 | 393216 | 393216 | text、image | 两套 Plan Pi |
-| DeepSeek V4.1 Flash Economy | 1049000 | 393216 | 393216 | text、image | 两套 Plan Pi，存在下列来源冲突 |
+| DeepSeek V4.1 Flash Economy | 1024000 | 393216 | 393216 | text、image | 两套 Plan Pi 当前版为 1024k 上下文 |
 | Kimi K2.8 Preview | 1048576 | 1048576 | 1048576 | text、image | 两套 Plan Pi；当前快照不沿用旧 131072 |
 | GLM 5.3 Flash | 1048576 | 128000 | 128000 | text、image | 两套 Plan Pi |
 | GLM 5.3 | 1048576 | 128000 | 128000 | text | 两套 Plan Pi |
@@ -32,9 +32,19 @@
 | Kimi K3 | 1048576 | 128000 | 65536 | text、image | 分别采用 Agent/Coding Pi；Coding 是保守示例配置 |
 | Kimi K2.7 Code | 262144 | 32768 | 32768 | text、image | Pi 未列；官方 Plan 插件精确整数，两套套餐概览均记 256k/32k |
 | MiniMax M3 | 1048576 | 131072 | 131072 | Agent: text；Coding: text、image | 官方 Plan 插件补容量；Coding 概览明确视觉，Agent 视觉未单独核实 |
-| ark-code-latest | 256000 | 32000 | 32000 | text | 官方插件的账号选择路由配置，不代表固定模型的真实边界 |
+| ark-code-latest（Auto） | 256000 | 32000 | 32000 | text | 官方插件的控制台路由配置，不代表固定模型的真实边界 |
 
-`auto` 是动态路由，没有已核实的统一容量/模态/档位，不能等同 `ark-code-latest`。若清单返回 `auto`，仍采用标有“能力未核实”的保守回退，而不伪造为 1M。真正未知的未来版本也保留回退。
+### 控制台路由：清单记 `auto`，调用用 `ark-code-latest`
+
+真实账号探针（2026-11-03）：两套套餐的 Anthropic Messages 入口把 `auto` 作为模型名调用时返回 `404 UnsupportedModel`（提示“该模型不支持 Agent/Coding Plan 功能”），而同一路径改用 `ark-code-latest` 返回 200，响应 `model` 字段为 `auto`。[Coding Plan Pi 文档](https://ark.volcengine.com/region:cn-beijing/docs/coding-plan-personal-ai-pi.md)也明确“Model Name 不支持配置为 `Auto`，如需使用请通过控制台切换”。因此：
+
+- 上游 `plans model-list` 仍把该条目列为 `model_id`/`output_name` = `auto`，但目录归一阶段把它映射为可用请求 ID `ark-code-latest`；设置页沿用上游语义显示为“Auto（智能调度）”，技术标识显示真实请求 ID。
+- 该条目仍是调度策略：目标模型由控制台选择（含 Auto 模式），能力随目标模型变化。容量沿用官方插件的配置值 256000/32000，并标记“能力未核实”——它是保守声明，不是目标模型的真实上限，也不代表所有目标都支持这个长度。
+- 旧缓存与目录归一前保存在 `auto` 名下的逐模型设置按只读方式继续生效；新写入使用 `ark-code-latest`，不改写用户状态文件。
+- 目录同时返回 `auto` 与 `ark-code-latest` 时按首次出现合并为一条；同一个原始名字重复出现仍判为坏目录。
+- 真正未知的未来版本仍走 32K/8K 保守回退，不按日期或名称猜测版本。
+
+官方概览把 `minimax-m3`、`kimi-k2.7-code` 标注为“即将下线”，快照保留其现有参数并在能力备注中说明；下线后清单不再返回，条目不会凭空保留。
 
 ### 模型层模态与当前传输边界
 
@@ -55,7 +65,8 @@
 ### 明确保留的冲突
 
 - Coding Kimi K3：Pi 明确为 `65536`；Coding 概览为 `128k`、官方插件为 `131072`。本次选择较保守且整数明确的 Pi 配置，不宣称已实测服务端硬上限。
-- Economy 上下文：两套 Plan Pi 为 `1049000`，两套套餐概览同写 `1049k`；官方插件目录为 `1048576`。按对应 Plan Pi 选值，不将两个数默认为相等。
+- Economy 上下文：两套 Plan Pi 当前版为 `1024000`、概览写 `1024k`，均与 1M 标称值不同；官方插件目录仍为 `1048576`。按对应 Plan Pi 选值，不把 `1024000` 与 `1048576` 默认为相等。
+- Kimi K3.1 Pro 输出：两套 Plan Pi 与概览当前版均为 `1024000`；旧版 Pi 曾写 `128000`，本次以当前版为准并同步更新快照。
 - Kimi K2.8 输出：当前两套 Plan Pi 为 `1048576`，旧官方插件为 `131072`；采用当前套餐接入文档。
 - Doubao 2.1/Evolving 输出：Pi 为 `256000`，官方插件为 `262144`；Mini 则是 `128000` 与 `131072`。逐字段按上述优先级保留，不统一二进制化。
 - GLM 输出：Pi 为 `128000`，官方插件/原厂 pi-ai 为 `131072`；采用套餐 Pi。
@@ -82,6 +93,7 @@
 - Agent Plan 的标识直接表示上述 AFP 抵扣系数。Coding Plan 界面沿用上述模型系数作相对消耗参考，但额度接口只给百分比，不能用该标识推算固定调用次数或 AFP 绝对量。
 - AFP 规则页与活动页的展示更新时间可能不同；Kimi K3 在活动页列明的 5 折窗口已经结束，本地快照不记录任何折扣起止时间，直接展示常规值 10，不继续沿用规则页残留的“限时 5”文案。
 - `auto`、`ark-code-latest` 和未知版本没有固定目标模型，不显示倍率。精确 ID 与两套套餐的别名映射保存在 `src/consumption-rates.json`；该元数据只用于设置页，不进入 Core 模型描述或请求载荷。
+- 官方概览另写 Auto 模式在活动期内的抵扣系数（Agent 0.5、Coding 1，至 2026-11-08 23:59:59）。该值按套餐不同、且目标模型由控制台切换，单一倍率字段无法如实表达，因此控制台路由仍不显示倍率，也不据活动值推算调用次数。
 
 ## 显示名称
 
@@ -118,10 +130,13 @@ Plan 使用 `anthropic-messages`，原生档位字段为 `output_config.effort`�
 ## 缓存与用户覆盖
 
 - 旧目录中的通用 32768/8192 回退会在读取时与最新固化配置合并，更新内存中的能力默认值；不改写生产状态文件，不改变账号绑定、模型请求 ID 或启用状态。
+- 旧目录把控制台路由记在 `auto` 名下时，读取阶段归一为 `ark-code-latest` 后仍走同一条固化配置；重名条目按首次出现去重，避免同一路由进入 Core 两次。
 - `modelSettings` 仍是用户显式覆盖，优先于快照，恢复默认才清除覆盖。若目录更新移除了已保存的默认思考档位，原值保留，调用暂不强制失效档位；设置页提供提示和重新选择入口。显式自定义映射仍可定义自己的有效档位。
-- 用户只缩小上下文而未显式指定输出时，继承输出被约束到有效上下文，避免更新默认值后出现输出大于上下文；显式输出值不被静默改写。
+- 目录归一前可能把设置保存在 `auto` 名下；读取控制台路由时继续采用该设置，新保存写入 `ark-code-latest`，不改写旧键。
+- 用户只缩小上下文而未显式指定输出时，继承输出被约束到有效上下文，避免更新默认值后出现输出大于上下文。
+- 显式输出高于当前目录上下文（多由快照下调引起）时，原设置保留在 `modelSettings` 中，有效调用按上下文收敛并在设置页提示；这样单个模型不会让整条路由更新失败。
 - `aliases` 和未核实标签只用于匹配/展示，进入 Core 模型描述前剥离，避免未知字段泄漏到第三方 schema。
 
 ## 维护与验收
 
-更新时同时检查当前 Plan `model_id` / `output_name` 映射、对应套餐资料、冲突表和回归样本。`test/catalog-snapshot.test.mjs` 覆盖当前清单、整数值、显式别名、不同版本拒绝猜测、旧缓存升级、覆盖优先级和 Core 参数传播。测试只验证本地声明，不代替真实服务端边界测量。
+更新时同时检查当前 Plan `model_id` / `output_name` 映射、对应套餐资料、冲突表和回归样本。`test/catalog-snapshot.test.mjs` 覆盖当前清单、整数值、显式别名、不同版本拒绝猜测、`auto`→`ark-code-latest` 归一、旧缓存与旧设置键升级、覆盖优先级和 Core 参数传播。测试只验证本地声明，不代替真实服务端边界测量；控制台路由的可用请求 ID 以真实调用探针为准，见[验证记录](validation.md)。

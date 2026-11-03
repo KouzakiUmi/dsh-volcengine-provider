@@ -667,6 +667,59 @@ test('saveModelSettings 替换整份参数覆盖，但保留未显式改动的�
 	assert.equal(row.effective.contextWindow, 32768);
 });
 
+test('历史 auto 设置键在开关、参数保存与恢复默认时都不丢参数', async () => {
+	const { controller, statePath } = await setup();
+	await controller.store.mutate(revision(controller.store.current), draft => {
+		draft.modelSettings['default:agent-plan'] = { auto: { enabled: false, contextWindow: 200000, maxTokens: 4096 } };
+		return draft;
+	});
+	let view = await controller.read();
+	let row = view.catalogs.find(item => item.plan === 'agent-plan').models.find(item => item.id === 'ark-code-latest');
+	assert.equal(row.enabled, false);
+	assert.equal(row.effective.maxTokens, 4096, '读取阶段应继续采用旧键参数');
+	// 拨动开关时不得丢掉旧键里的上下文与输出覆盖。
+	view = await controller.invoke({ op: 'setModelEnabled', accountId: 'default', plan: 'agent-plan', modelId: 'ark-code-latest', enabled: true, revision: view.revision });
+	row = view.catalogs.find(item => item.plan === 'agent-plan').models.find(item => item.id === 'ark-code-latest');
+	assert.equal(row.enabled, true);
+	assert.equal(row.effective.contextWindow, 200000);
+	assert.equal(row.effective.maxTokens, 4096);
+	// 保存新参数时以生效设置为基线，仍保留旧的启用开关。
+	view = await controller.invoke({ op: 'saveModelSettings', accountId: 'default', plan: 'agent-plan', modelId: 'ark-code-latest', settings: { temperature: 0.2 }, revision: view.revision });
+	row = view.catalogs.find(item => item.plan === 'agent-plan').models.find(item => item.id === 'ark-code-latest');
+	assert.equal(row.enabled, true);
+	assert.equal(row.effective.temperature, 0.2);
+	// 恢复默认必须同时清掉历史键，否则旧覆盖会回退生效。
+	view = await controller.invoke({ op: 'resetModelSettings', accountId: 'default', plan: 'agent-plan', modelId: 'ark-code-latest', revision: view.revision });
+	row = view.catalogs.find(item => item.plan === 'agent-plan').models.find(item => item.id === 'ark-code-latest');
+	assert.equal(row.effective.contextWindow, 256000);
+	assert.equal(row.effective.maxTokens, 32000);
+	assert.equal(row.effective.temperature, undefined);
+	const raw = JSON.parse(await readFile(statePath, 'utf8'));
+	assert.equal(raw.modelSettings['default:agent-plan'], undefined, '恢复默认后不应残留任何设置键');
+});
+
+test('只保存参数时保留历史键里的启用状态', async () => {
+	const { controller } = await setup();
+	await controller.store.mutate(revision(controller.store.current), draft => {
+		draft.modelSettings['default:agent-plan'] = { auto: { enabled: false } };
+		return draft;
+	});
+	let view = await controller.read();
+	view = await controller.invoke({ op: 'saveModelSettings', accountId: 'default', plan: 'agent-plan', modelId: 'ark-code-latest', settings: { temperature: 0.4 }, revision: view.revision });
+	const row = view.catalogs.find(item => item.plan === 'agent-plan').models.find(item => item.id === 'ark-code-latest');
+	assert.equal(row.enabled, false, '参数保存不应悄悄重新启用旧键里停用的模型');
+	assert.equal(row.effective.temperature, 0.4);
+	// 过期客户端以旧 ID 发起恢复默认时，应清掉归一后的键，而不是只删历史键。
+	await controller.store.mutate(revision(controller.store.current), draft => {
+		draft.modelSettings['default:agent-plan'] = { auto: { enabled: false }, 'ark-code-latest': { temperature: 0.4 } };
+		return draft;
+	});
+	view = await controller.read();
+	view = await controller.invoke({ op: 'resetModelSettings', accountId: 'default', plan: 'agent-plan', modelId: 'ark-code-latest', revision: view.revision });
+	const raw = JSON.parse(await readFile(controller.store.path, 'utf8'));
+	assert.equal(raw.modelSettings['default:agent-plan'], undefined);
+});
+
 test('saveModelSettings 拒绝非法参数与目录里不存在的模型', async () => {
 	const { controller } = await setup();
 	const view = await controller.read();

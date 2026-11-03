@@ -20,7 +20,7 @@ const plugin=await import('../src/index.mjs');
 const {initialState,ROUTES}=await import('../src/state.mjs');
 const {getModelRows}=await import('../src/catalog.mjs');
 const spec=new Map([
-  ['Ark Code Latest（账号路由）',[[],null,'server-default',null]],
+  ['Auto（智能调度）',[[],null,'server-default',null]],
   ['豆包 Seed Evolving',[['off','low','medium','high'],'high','enabled',true]],
   ['豆包 Seed 2.1 Pro',[['off','low','medium','high'],'high','enabled',true]],
   ['豆包 Seed 2.1 Lite',[['off','low','medium','high'],'high','enabled',true]],
@@ -83,9 +83,10 @@ try{
   for(const plan of ['agent-plan','coding-plan'])autoState.catalogs['default:'+plan]={models:[{id:'auto',name:'auto',contextWindow:32768,maxTokens:8192,input:['text'],reasoningEfforts:false}]};
   await writeFile(statePath,JSON.stringify(autoState));await service.invoke({op:'read'});
   for(const plan of ['agent-plan','coding-plan']){
-    const provider=ROUTES[plan],info=await ctx.llm.resolveModelInfo(provider,'auto');assert.equal(info.reasoning,undefined);assert.equal(info.name,'Auto（智能调度）');
-    assertPayload(await request(provider,'auto'),'auto',null,'server-default');
-    const before=captured.length,events=await consume(ctx.llm.registration(provider).adapter.stream({provider,model:'auto',messages,reasoningEffort:'off'}));
+    // 旧目录仍可能把控制台路由记在 auto 名下；Core 侧只应出现 ark-code-latest。
+    const provider=ROUTES[plan],info=await ctx.llm.resolveModelInfo(provider,'ark-code-latest');assert.equal(info.reasoning,undefined);assert.equal(info.name,'Auto（智能调度）');
+    assertPayload(await request(provider,'ark-code-latest'),'ark-code-latest',null,'server-default');
+    const before=captured.length,events=await consume(ctx.llm.registration(provider).adapter.stream({provider,model:'ark-code-latest',messages,reasoningEffort:'off'}));
     assert.equal(captured.length,before);assert.ok(events.some(e=>e.code||e.error||e.type==='error'));checks++;
   }
   console.log(`Model thinking smoke passed: ${checks} real Core/SDK assertions, both plans, documented defaults/independent levels/native modes/off/unforced; HTTP fully mocked.`);

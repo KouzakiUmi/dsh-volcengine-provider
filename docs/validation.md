@@ -6,6 +6,14 @@
 - ArkCli **1.0.37** 的命令帮助、随包官方 Skills、raw action 注册及无网络预览。
 - 单元业务测试使用假凭据、假 CLI 与外部网络替身；真实本地桥 IPC、原生进程和独立账号 OAuth 验收另列，均使用临时目录。
 
+## 0.2.10 控制台路由可用性与上游参数刷新
+
+- 使用已绑定的真实方舟账号（隔离 CLI home，`auth whoami` 返回 `logged_in=true`、身份为既有账号）执行 `arkcli plans model-list`：Agent 与 Coding 两套套餐各返回 16 条，集合与本地缓存一致，`selected_model_id` 为 `auto`。上游没有新增或移除模型。
+- 真实调用探针（Anthropic Messages 路径）：`model=auto` 在 `/api/plan/v1/messages` 与 `/api/coding/v1/messages` 均返回 `404 UnsupportedModel`；同一路径下 `doubao-seed-2-1-pro-260915`（Agent）、`doubao-seed-2-1-pro`（Coding）与 `ark-code-latest`（两套）均返回 200，其中 `ark-code-latest` 的响应 `model` 为 `auto`。请求只发一条 `max_tokens=8` 的最小消息，未读取或输出凭据。
+- 官方资料复核：[Coding Plan Pi](https://ark.volcengine.com/region:cn-beijing/docs/coding-plan-personal-ai-pi.md) 明确 Model Name 不支持配置为 `Auto`、需通过控制台切换；[Agent 套餐概览](https://www.volcengine.com/docs/82379/2366394)与[Coding 套餐概览](https://www.volcengine.com/docs/82379/1925114)（最近更新 2026-10-29）给出 Kimi K3.1 Pro 1024k 上下文/1024k 输出、Economy 1024k 上下文，并把 `minimax-m3`、`kimi-k2.7-code` 标注为即将下线。
+- 本地实现按上述证据把清单里的 `auto` 归一为可用的 `ark-code-latest`，展示名称保留“Auto（智能调度）”；旧缓存与旧设置键只读继续生效。开关与参数保存以当前生效设置为基线，恢复默认同时清除历史键；显式最大输出高于新上下文时保留原设置、收敛有效调用并提示。`node --test test/*.test.mjs` 共 368 项全部通过，含归一、旧缓存、旧设置键读写与超界收敛用例；`lib/` 已按源码重建。
+- 未覆盖：没有对每个模型重放真实推理，也没有重跑真实浏览器截图（模型卡片文案变化由离线 React 测试覆盖）；`test/test_verify_package.py` 本轮无法执行，原因是 `.dsh` 目录与解释器带 Low 完整性标签，而用户 TEMP 为默认 Medium，Low 进程无法向上写入（`icacls /L` 已取证），与本次改动无关。
+
 ## 0.2.9 Core 适配、设置页与消耗倍率
 
 - 从桌面 `app.asar` 的产品与各包 manifest 核对实际 Core / llm / llm-pi-ai / credentials / launch-environment / typert-protocol 为 `0.2.1-rc.5`，其消费的 pi-ai 仍为 `1.1.0`；插件 peer 声明同步到 rc.5，没有改写宿主安装。

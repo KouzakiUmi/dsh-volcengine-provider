@@ -11,12 +11,12 @@
     "models": [
       {
         "id": "ark-code-latest",
-        "name": "Ark Code Latest（账号路由）",
+        "name": "Auto（智能调度）",
         "defaultReasoning": null,
         "messagesThinkingMode": "server-default",
         "canDisableThinking": null,
         "capabilityStatus": "dynamic",
-        "capabilityNote": "账号选择路由，能力随目标模型变化；容量为保守配置。",
+        "capabilityNote": "上游清单把该条目记为 auto，但 auto 不能直接作为模型名调用（服务端返回 UnsupportedModel）；官方要求改用 ark-code-latest，由控制台选择目标模型（含 Auto 模式）。能力随所选目标模型变化，容量为保守配置。",
         "maxTokens": 32000,
         "input": [
           "text"
@@ -25,7 +25,9 @@
         "compat": {
           "forceAdaptiveThinking": false
         },
-        "aliases": [],
+        "aliases": [
+          "auto"
+        ],
         "contextWindow": 256000,
         "capabilityUnverified": true
       },
@@ -155,8 +157,8 @@
           "kimi-k3.1-pro",
           "kimi-k3-1-pro-261001"
         ],
-        "contextWindow": 1048576,
-        "maxTokens": 128000,
+        "contextWindow": 1024000,
+        "maxTokens": 1024000,
         "input": [
           "text",
           "image"
@@ -193,7 +195,7 @@
         "messagesThinkingMode": "adaptive",
         "canDisableThinking": true,
         "capabilityStatus": "documented",
-        "contextWindow": 1049000,
+        "contextWindow": 1024000,
         "maxTokens": 393216,
         "input": [
           "text",
@@ -367,7 +369,7 @@
         "messagesThinkingMode": "server-default",
         "canDisableThinking": null,
         "capabilityStatus": "partial",
-        "capabilityNote": "该套餐的思考能力与控制尚未单独确认；保持服务端默认。",
+        "capabilityNote": "该套餐的思考能力与控制尚未单独确认；保持服务端默认。官方套餐概览标注该模型即将下线。",
         "aliases": [
           "kimi-k2-7-code-260601"
         ],
@@ -393,7 +395,7 @@
         "messagesThinkingMode": "enabled",
         "canDisableThinking": null,
         "capabilityStatus": "partial",
-        "capabilityNote": "三档与默认 medium 已确认；完全关闭控制、Agent 套餐视觉未单独确认。",
+        "capabilityNote": "三档与默认 medium 已确认；完全关闭控制、Agent 套餐视觉未单独确认。官方套餐概览标注该模型即将下线。",
         "aliases": [
           "minimax-m3-modelhub"
         ],
@@ -417,12 +419,12 @@
     "models": [
       {
         "id": "ark-code-latest",
-        "name": "Ark Code Latest（账号路由）",
+        "name": "Auto（智能调度）",
         "defaultReasoning": null,
         "messagesThinkingMode": "server-default",
         "canDisableThinking": null,
         "capabilityStatus": "dynamic",
-        "capabilityNote": "账号选择路由，能力随目标模型变化；容量为保守配置。",
+        "capabilityNote": "上游清单把该条目记为 auto，但 auto 不能直接作为模型名调用（服务端返回 UnsupportedModel）；官方要求改用 ark-code-latest，由控制台选择目标模型（含 Auto 模式）。能力随所选目标模型变化，容量为保守配置。",
         "maxTokens": 32000,
         "input": [
           "text"
@@ -431,7 +433,9 @@
         "compat": {
           "forceAdaptiveThinking": false
         },
-        "aliases": [],
+        "aliases": [
+          "auto"
+        ],
         "contextWindow": 256000,
         "capabilityUnverified": true
       },
@@ -561,8 +565,8 @@
           "kimi-k3-1-pro-261024",
           "kimi-k3-1-pro-261001"
         ],
-        "contextWindow": 1048576,
-        "maxTokens": 128000,
+        "contextWindow": 1024000,
+        "maxTokens": 1024000,
         "input": [
           "text",
           "image"
@@ -599,7 +603,7 @@
         "messagesThinkingMode": "adaptive",
         "canDisableThinking": true,
         "capabilityStatus": "documented",
-        "contextWindow": 1049000,
+        "contextWindow": 1024000,
         "maxTokens": 393216,
         "input": [
           "text",
@@ -773,7 +777,7 @@
         "messagesThinkingMode": "server-default",
         "canDisableThinking": null,
         "capabilityStatus": "partial",
-        "capabilityNote": "思考能力已确认，未列可调档位、默认档位与关闭控制。",
+        "capabilityNote": "思考能力已确认，未列可调档位、默认档位与关闭控制。官方套餐概览标注该模型即将下线。",
         "aliases": [
           "kimi-k2-7-code-260601"
         ],
@@ -799,7 +803,7 @@
         "messagesThinkingMode": "enabled",
         "canDisableThinking": null,
         "capabilityStatus": "partial",
-        "capabilityNote": "三档与默认 medium 已确认；完全关闭控制未单独确认。",
+        "capabilityNote": "三档与默认 medium 已确认；完全关闭控制未单独确认。官方套餐概览标注该模型即将下线。",
         "aliases": [
           "minimax-m3-modelhub"
         ],

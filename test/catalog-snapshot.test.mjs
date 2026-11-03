@@ -30,18 +30,80 @@ test('all current fixed models use pinned parameters rather than the 32K/8K unkn
     const value = catalog(plan);
     assert.equal(value.models.length,16);
     for (const model of value.models) {
-      if (model.id === 'auto') { assert.equal(model.capabilityUnverified,true); continue; }
+      if (model.id === 'ark-code-latest') {
+        // 控制台路由保留保守容量，但仍必须走固化的动态路由条目。
+        assert.equal(model.capabilityUnverified,true);
+        assert.equal(model.capabilityStatus,'dynamic');
+        assert.equal(model.contextWindow,256000);
+        assert.equal(model.maxTokens,32000);
+        continue;
+      }
       assert.ok(model.contextWindow > 32768,model.id);
       assert.ok(model.maxTokens > 8192,model.id);
       assert.equal(model.aliases,undefined);
     }
   }
 });
+test('upstream auto entry routes through ark-code-latest because auto is rejected as a model name', () => {
+  // 上游清算 lists auto，但服务端以 UnsupportedModel 拒绝把 auto 当模型名；
+  // 官方接入文档要求改用 ark-code-latest 由控制台选择目标模型。
+  for (const plan of ['agent-plan','coding-plan']) {
+    const refreshed = normalizeCatalog(plan, { plan, models: [{ model_id: 'auto', model_name: 'auto', output_name: 'auto' }] });
+    assert.deepEqual(refreshed.models.map(model => model.id), ['ark-code-latest']);
+    assert.equal(refreshed.models[0].name, 'Auto（智能调度）');
+    assert.equal(refreshed.models[0].capabilityStatus, 'dynamic');
+    assert.equal(refreshed.models[0].contextWindow, 256000);
+    assert.equal(refreshed.models[0].maxTokens, 32000);
+    // 旧缓存与旧设置键（auto）继续可用，但不改写用户状态。
+    const state = initialState(), key = `default:${plan}`;
+    state.catalogs[key] = { models: [{ id: 'auto', name: 'auto', contextWindow: 32768, maxTokens: 8192 }] };
+    state.modelSettings[key] = { auto: { enabled: false, maxTokens: 2048 } };
+    const before = structuredClone(state);
+    const row = getModelRows(state, 'default', plan).find(model => model.id === 'ark-code-latest');
+    assert.equal(row.settings.enabled, false);
+    assert.equal(row.effective.maxTokens, 2048);
+    assert.deepEqual(state, before);
+    // 旧键上的启用状态同样影响路由：停用的控制台路由不进入 Core。
+    const routed = profilesFor(structuredClone(before))[ROUTES[plan]];
+    assert.equal(routed.models.some(model => model.id === 'ark-code-latest'), false);
+  }
+});
+test('a catalog listing both auto and ark-code-latest collapses to one usable route', () => {
+  for (const plan of ['agent-plan','coding-plan']) {
+    const refreshed = normalizeCatalog(plan, { plan, models: [
+      { model_id: 'auto', model_name: 'auto', output_name: 'auto' },
+      { model_id: 'ark-code-latest', model_name: 'ark-code-latest', output_name: 'ark-code-latest' }
+    ] });
+    assert.deepEqual(refreshed.models.map(model => model.id), ['ark-code-latest']);
+    // 同一个原始 ID 重复出现仍是坏目录，不能被静默吞掉。
+    assert.throws(() => normalizeCatalog(plan, { plan, models: [
+      { model_id: 'auto', output_name: 'auto' },
+      { model_id: 'auto', output_name: 'auto' }
+    ] }), /重复 ID/);
+  }
+});
+test('explicit output above the refreshed context is clamped for the call and reported', () => {
+  const state = initialState(), key = 'default:coding-plan', id = 'kimi-k3.1-pro';
+  state.modelSettings[key] = { [id]: { maxTokens: 1048576 } };
+  const row = getModelRows(state, 'default', 'coding-plan').find(model => model.id === id);
+  assert.equal(row.effective.contextWindow, 1024000);
+  // 原设置保留，但有效调用收敛到上下文，Core 路由不会因单个模型失效。
+  assert.equal(row.settings.maxTokens, 1048576);
+  assert.equal(row.effective.maxTokens, 1024000);
+  assert.match(row.settingsWarning, /大于目录上下文/);
+  const core = profilesFor(state)[ROUTES['coding-plan']].models.find(model => model.id === id);
+  assert.equal(core.maxTokens, 1024000);
+  // 未显式设置输出时仍按新上下文收敛，不产生提示。
+  state.modelSettings[key] = {};
+  const defaults = getModelRows(state, 'default', 'coding-plan').find(model => model.id === id);
+  assert.equal(defaults.effective.maxTokens, 1024000);
+  assert.equal(defaults.settingsWarning, undefined);
+});
 test('friendly display names cover snapshot, live aliases, old code-name caches and Core while IDs stay stable', () => {
   for (const plan of ['agent-plan','coding-plan']) {
     for (const model of snapshot[plan].models) { assert.notEqual(model.name,model.id);assert.ok(/[\s\u3400-\u9fff]/.test(model.name)); }
     const value=catalog(plan);
-    assert.equal(value.models.find(model=>model.id==='auto').name,'Auto（智能调度）');
+    assert.equal(value.models.find(model=>model.id==='ark-code-latest').name,'Auto（智能调度）');
     const id=plan==='agent-plan'?'kimi-k3-1-pro-261024':'kimi-k3.1-pro';
     assert.equal(value.models.find(model=>model.id===id).name,'Kimi K3.1 Pro');
     const state=initialState(),key='default:'+plan;
@@ -63,7 +125,7 @@ test('Plan Pi exact integers are preserved, including mixed units and per-plan d
     const find = value => rows.find(model => model.id===value || model.id.startsWith(value));
     assert.equal(find('doubao-seed-2-0-mini').contextWindow,262144);
     assert.equal(find('doubao-seed-2-0-mini').maxTokens,128000);
-    assert.equal(find('deepseek-v4-1-flash-economy').contextWindow,1049000);
+    assert.equal(find('deepseek-v4-1-flash-economy').contextWindow,1024000);
     assert.equal(find('deepseek-v4-1-flash-economy').maxTokens,393216);
     assert.equal(find('deepseek-v4-pro').maxTokens,393216);
     assert.equal(find('kimi-k2-8-preview').maxTokens,1048576);
@@ -84,7 +146,7 @@ test('text-only V4 is not upgraded to V4.1 vision, and MiniMax modality is plan-
 });
 test('explicit aliases retain server output IDs and do not guess other version capabilities', () => {
   const result=normalizeCatalog('agent-plan',{plan:'agent-plan',models:[{model_id:'kimi-k3-1-pro-261001',output_name:'kimi-k3-1-pro-261024'},{model_id:'deepseek-v4-1-flash-991231',output_name:'deepseek-v4-1-flash-991231'}]});
-  assert.equal(result.models[0].id,'kimi-k3-1-pro-261024');assert.equal(result.models[0].contextWindow,1048576);
+  assert.equal(result.models[0].id,'kimi-k3-1-pro-261024');assert.equal(result.models[0].contextWindow,1024000);
   assert.equal(result.models[1].contextWindow,32768);assert.equal(result.models[1].capabilityUnverified,true);
 });
 test('old 32K cached metadata reconciles in memory without changing user settings, identity or model IDs', () => {
@@ -92,7 +154,7 @@ test('old 32K cached metadata reconciles in memory without changing user setting
   state.catalogs[key]={source:'arkcli',updatedAt:'2026-10-01T00:00:00Z',models:[{id,name:'Official Kimi',contextWindow:32768,maxTokens:8192,input:['text'],reasoningEfforts:false,compat:{forceAdaptiveThinking:false},capabilityUnverified:true}]};
   state.modelSettings[key]={[id]:{enabled:false,contextWindow:50000,maxTokens:2048,temperature:0.2}};
   const before=structuredClone(state),row=getModelRows(state,'default','coding-plan')[0];
-  assert.equal(row.id,id);assert.equal(row.name,'Official Kimi');assert.equal(row.defaults.contextWindow,1048576);assert.equal(row.defaults.maxTokens,128000);
+  assert.equal(row.id,id);assert.equal(row.name,'Official Kimi');assert.equal(row.defaults.contextWindow,1024000);assert.equal(row.defaults.maxTokens,1024000);
   assert.equal(row.effective.contextWindow,50000);assert.equal(row.effective.maxTokens,2048);assert.equal(row.settings.enabled,false);assert.deepEqual(state,before);
   const model=usableModels(state.catalogs[key],'coding-plan')[0];assert.deepEqual(model.input,['text','image']);assert.equal(model.aliases,undefined);assert.equal(model.capabilityUnverified,undefined);
 });
@@ -107,7 +169,7 @@ test('updated default output cannot exceed an explicit smaller context, but expl
 test('refreshed input and token capacities reach Core without metadata-only aliases', () => {
   const state=initialState();state.catalogs['default:agent-plan']=catalog('agent-plan');
   const models=profilesFor(state)[ROUTES['agent-plan']].models;
-  const kimi=models.find(model=>model.id==='kimi-k3-1-pro-261024');assert.equal(kimi.contextWindow,1048576);assert.deepEqual(kimi.input,['text','image']);
+  const kimi=models.find(model=>model.id==='kimi-k3-1-pro-261024');assert.equal(kimi.contextWindow,1024000);assert.deepEqual(kimi.input,['text','image']);
   for (const model of models) { assert.equal(model.aliases,undefined);assert.equal(model.capabilityUnverified,undefined); }
 });
 test('snapshot aliases are unique and partial capability notes do not erase documented effort maps', () => {

@@ -22,6 +22,29 @@ function snapshotModel(plan, id) {
 }
 
 /**
+ * 控制台路由的可用请求 ID。
+ *
+ * 上游清单仍把该条目记为 `auto`，但把 `auto` 直接当模型名调用会被服务端以
+ * UnsupportedModel(404) 拒绝；官方接入文档要求改用 `ark-code-latest`，由控制台
+ * 选择目标模型（含 Auto 模式）。因此目录在归一阶段统一映射到可用的请求 ID，
+ * 展示名称仍保留上游的 Auto 语义。
+ */
+export const CONSOLE_ROUTE_ID = 'ark-code-latest';
+// 早期目录与状态文件把控制台路由记在这个名字下。
+const LEGACY_CONSOLE_ROUTE_ID = 'auto';
+function canonicalModelId(id) {
+	return id === LEGACY_CONSOLE_ROUTE_ID ? CONSOLE_ROUTE_ID : id;
+}
+/** 目录归一前的设置键：新键在前，历史键在后。 */
+export function overrideKeys(id) {
+	return canonicalModelId(id) === CONSOLE_ROUTE_ID ? [CONSOLE_ROUTE_ID, LEGACY_CONSOLE_ROUTE_ID] : [id];
+}
+function uniqueById(rows) {
+	const seen = new Set();
+	return rows.filter(row => !seen.has(row.id) && Boolean(seen.add(row.id)));
+}
+
+/**
  * Resolve the official model deduction coefficient for display only.
  * Discount windows are evaluated at read time so an expired promotion never
  * remains presented as the current rate. Unknown and account-routed models
@@ -52,13 +75,15 @@ function pinnedCapabilities(model) {
 	return capabilities;
 }
 function fallbackCapabilities(id) {
-	const dynamic = id === 'auto';
+	const dynamic = id === CONSOLE_ROUTE_ID;
 	return {
 		contextWindow: 32768, maxTokens: 8192, input: ['text'], reasoningEfforts: false,
 		compat: { forceAdaptiveThinking: false }, defaultReasoning: null,
 		messagesThinkingMode: 'server-default', canDisableThinking: null,
 		capabilityStatus: dynamic ? 'dynamic' : 'unknown', capabilityUnverified: true,
-		capabilityNote: dynamic ? '智能调度的能力随目标模型变化，未声明统一思考档位。' : '该精确版本尚无固化能力资料，采用保守配置。'
+		capabilityNote: dynamic
+			? '该条目是控制台路由（Ark Code Latest），能力随控制台所选目标模型变化，未声明统一思考档位。'
+			: '该精确版本尚无固化能力资料，采用保守配置。'
 	};
 }
 // Core 只支持文本与图片两种输入模态；目录声明的其它模态（含音视频）不被接受。
@@ -98,50 +123,58 @@ function coreCapabilities(model) {
 	return capabilities;
 }
 function displayName(id, candidate, pinned) {
-	const fallback = id === 'auto' ? 'Auto（智能调度）' : pinned?.name || id;
+	// 控制台路由的上游标签是机器名（auto），展示统一使用固化名称。
+	if (id === CONSOLE_ROUTE_ID) return pinned?.name ?? 'Auto（智能调度）';
+	const fallback = pinned?.name || id;
 	if (typeof candidate !== 'string' || !candidate.trim() || candidate.length > 200 || /[\u0000-\u001f\u007f]/.test(candidate)) return fallback;
 	const name = candidate.trim();
 	// Readable server labels remain valid; IDs and punctuation-separated code
 	// labels use the pinned presentation name instead of a second machine ID.
 	const codes = [id, pinned?.id, ...(pinned?.aliases ?? [])].filter(Boolean);
 	const codeLabel = codes.some(code => code.toLowerCase() === name.toLowerCase()) || /^[A-Za-z0-9]+(?:[_.:/-][A-Za-z0-9]+)+$/.test(name);
-	if ((pinned || id === 'auto') && codeLabel) return fallback;
+	if (pinned && codeLabel) return fallback;
 	return name;
 }
 function reconcileModel(plan, row) {
-	const pinned = snapshotModel(plan, row.id);
+	const id = canonicalModelId(row.id);
+	const pinned = snapshotModel(plan, id);
 	if (!pinned) {
-		const fallback = fallbackCapabilities(row.id);
-		const reconciled = { ...fallback, ...structuredClone(row), name: displayName(row.id, row.name) };
-		// Auto is a routing policy, not the reasoning declaration of a stale target.
-		if (row.id === 'auto') Object.assign(reconciled, fallback, { contextWindow: row.contextWindow ?? fallback.contextWindow, maxTokens: row.maxTokens ?? fallback.maxTokens, name: displayName(row.id, row.name) });
-		return reconciled;
+		const fallback = fallbackCapabilities(id);
+		return { ...fallback, ...structuredClone(row), id, name: displayName(id, row.name) };
 	}
-	return { ...pinnedCapabilities(pinned), id: row.id, name: displayName(row.id, row.name, pinned) };
+	return { ...pinnedCapabilities(pinned), id, name: displayName(id, row.name, pinned) };
 }
 export function normalizeCatalog(plan, response) {
 	assertPlan(plan);
 	if (response?.plan !== plan || !Array.isArray(response.models)) throw new Error('模型目录响应与所选订阅不匹配');
 	if (response.models.length > 1000) throw new Error('模型目录过大');
-	const seen = new Set();
+	// 归一后的路由 ID -> 上游原始 ID，用于区分“坏目录重复”和“同一路由的两个名字”。
+	const seen = new Map();
 	const models = response.models.map(row => {
 		if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error('模型目录包含非法或重复 ID');
-		const id = row.output_name || row.model_id;
-		if (typeof id !== 'string' || !modelId.test(id) || seen.has(id)) throw new Error('模型目录包含非法或重复 ID');
+		const source = row.output_name || row.model_id;
+		const id = canonicalModelId(source);
+		if (typeof id !== 'string' || !modelId.test(id)) throw new Error('模型目录包含非法或重复 ID');
+		// 同一个原始 ID 出现两次仍是坏目录；只把归一到同一路由的两个不同名字合并。
+		if (seen.has(id)) {
+			const previous = seen.get(id);
+			if (previous === source) throw new Error('模型目录包含非法或重复 ID');
+			return null;
+		}
 		try { assertModelId(id); } catch { throw new Error('模型目录包含非法或重复 ID'); }
-		seen.add(id);
+		seen.set(id, source);
 		const known = snapshotModel(plan, id) ?? snapshotModel(plan, row.model_id);
 		return {
 			...(known ? pinnedCapabilities(known) : fallbackCapabilities(id)),
 			id, name: displayName(id, row.model_name, known)
 		};
 	});
-	return { models, source: 'arkcli', updatedAt: new Date().toISOString() };
+	return { models: models.filter(Boolean), source: 'arkcli', updatedAt: new Date().toISOString() };
 }
 export function usableModels(catalog, plan) {
 	assertPlan(plan);
 	const rows = catalog === undefined || catalog === null ? snapshot[plan].models : catalog.models;
-	return validateModelRows(rows).map(row => coreCapabilities(reconcileModel(plan, row)));
+	return uniqueById(validateModelRows(rows).map(row => coreCapabilities(reconcileModel(plan, row))));
 }
 
 // ── 目录默认值与用户覆盖 ────────────────────────────────────────────────────────
@@ -197,6 +230,16 @@ function bucketOf(state, key) {
 	return Object.hasOwn(source, key) ? source[key] : undefined;
 }
 
+/**
+ * 目录归一前保存的逐模型设置可能记在 `auto` 名下；读取时继续对控制台路由生效，
+ * 新写入始终使用归一后的 ID，不改写用户状态文件。
+ */
+function overrideFor(overrides, id) {
+	if (!overrides || typeof overrides !== 'object') return undefined;
+	if (Object.hasOwn(overrides, id)) return overrides[id];
+	return id === CONSOLE_ROUTE_ID && Object.hasOwn(overrides, LEGACY_CONSOLE_ROUTE_ID) ? overrides[LEGACY_CONSOLE_ROUTE_ID] : undefined;
+}
+
 /** 某个账号套餐的目录现状：缓存缺失时回退本地快照，缓存损坏时标记 invalid-cache。 */
 export function catalogStatus(state, accountId, plan) {
 	assertPlan(plan);
@@ -208,7 +251,8 @@ export function catalogStatus(state, accountId, plan) {
 	}
 	try { validateModelRows(cached.models); }
 	catch { return { rows: [], count: 0, source: 'invalid-cache', broken: true }; }
-	return { rows: cached.models.map(model => reconcileModel(plan, model)), count: cached.models.length, source: cached.source ?? 'arkcli', ...(cached.updatedAt ? { updatedAt: cached.updatedAt } : {}) };
+	const rows = uniqueById(cached.models.map(model => reconcileModel(plan, model)));
+	return { rows, count: rows.length, source: cached.source ?? 'arkcli', ...(cached.updatedAt ? { updatedAt: cached.updatedAt } : {}) };
 }
 
 /**
@@ -220,7 +264,7 @@ export function getModelRows(state, accountId, plan) {
 	const bucket = bucketOf(state, `${accountId}:${plan}`);
 	const overrides = bucket && typeof bucket === 'object' && !Array.isArray(bucket) ? bucket : {};
 	return status.rows.map(model => {
-		const override = Object.hasOwn(overrides, model.id) ? overrides[model.id] : {};
+		const override = overrideFor(overrides, model.id);
 		const settings = override && typeof override === 'object' && !Array.isArray(override) ? override : {};
 		const defaults = modelDefaults(plan, model);
 		const effective = effectiveModel(defaults, settings);
@@ -240,6 +284,13 @@ export function getModelRows(state, accountId, plan) {
 			if (omitted.length) warnings.push(`已保存的固定预算模式无法表达继承档位 ${omitted.join('/')}；暂不提供这些档位，原设置保留，请调整思考模式或显式映射。`);
 		}
 		if (typeof settings.defaultReasoning === 'string' && settings.defaultReasoning !== effective.defaultReasoning) warnings.push(`已保存的默认思考档位 ${settings.defaultReasoning} 不在当前目录中；暂不强制该档位，请重新选择。`);
+		// 显式输出高于当前目录上下文（多由快照下调引起）时，只收敛有效调用值，
+		// 原设置保留并提示，避免单个模型让整条路由更新失败。
+		if (settings.maxTokens !== undefined && effective.maxTokens > effective.contextWindow) {
+			const saved = effective.maxTokens;
+			effective.maxTokens = effective.contextWindow;
+			warnings.push(`已保存的最大输出 ${saved} 大于目录上下文 ${effective.contextWindow}：有效调用按上下文收敛，原设置保留，请按需下调或恢复默认。`);
+		}
 		const settingsWarning = warnings.join(' ');
 		return {
 			id: model.id,
@@ -289,7 +340,7 @@ export function profilesFor(state) {
 		const rows = new Map(getModelRows(state, id, plan).map(row => [row.id, row]));
 		const overrides = bucketOf(state, `${id}:${plan}`) ?? {};
 		const prepared = models
-			.filter(model => overrides?.[model.id]?.enabled !== false)
+			.filter(model => overrideFor(overrides, model.id)?.enabled !== false)
 			.map(model => coreModel(model, rows.get(model.id)));
 		// Credentials are resolved by a host-owned adapter closure, never in this document.
 		providers[ROUTES[plan]] = providerProfile(plan, prepared);

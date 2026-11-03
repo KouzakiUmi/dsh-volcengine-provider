@@ -2,7 +2,7 @@ import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { StateStore, account, assertBudgetCompatibleEfforts, assertModelId, assertPlan, normalizeModelSettings, normalizeIdentity, PLANS, ROUTES, revision } from './state.mjs';
-import { catalogStatus, effectiveModel, getModelRows, normalizeCatalog } from './catalog.mjs';
+import { catalogStatus, effectiveModel, getModelRows, normalizeCatalog, overrideKeys } from './catalog.mjs';
 import { ArkCli, locateCli } from './cli.mjs';
 import { ArkOAuth } from './oauth.mjs';
 import { fetchUsage, parseAgentUsage, parseCodingUsage } from './quota.mjs';
@@ -270,10 +270,11 @@ export class ArkController {
       } else if (op === 'setModelEnabled') {
         assertPlan(plan); this.owner(accountId); assertModelId(request.modelId);
         if (typeof request.enabled !== 'boolean') throw new Error('模型启用状态必须是布尔值');
-        modelRow(next, accountId, plan, request.modelId);
+        const row = modelRow(next, accountId, plan, request.modelId);
         const key = `${accountId}:${plan}`;
         const bucket = { ...(next.modelSettings[key] ?? {}) };
-        bucket[request.modelId] = { ...(bucket[request.modelId] ?? {}), enabled: request.enabled };
+        // 旧目录把设置记在历史键下；写入时带上已生效的设置，避免只保存开关就丢掉用户参数。
+        bucket[request.modelId] = { ...row.settings, enabled: request.enabled };
         next.modelSettings[key] = bucket;
       } else if (op === 'saveModelSettings') {
         assertPlan(plan); this.owner(accountId); assertModelId(request.modelId);
@@ -290,7 +291,8 @@ export class ArkController {
         assertBudgetCompatibleEfforts(settings.reasoningEfforts === undefined ? row.defaults.reasoningEfforts : settings.reasoningEfforts, effective.forceAdaptiveThinking);
         const key = `${accountId}:${plan}`;
         const bucket = { ...(next.modelSettings[key] ?? {}) };
-        const previous = bucket[request.modelId] ?? {};
+        // 同 setModelEnabled：参数整份替换时以当前生效设置为基线，含历史键里保存的值。
+        const previous = row.settings;
         // 参数整份替换；启用开关只有显式给出时才改写。
         const { enabled, ...parameters } = settings;
         const kept = enabled === undefined && previous.enabled !== undefined ? { enabled: previous.enabled } : {};
@@ -300,7 +302,8 @@ export class ArkController {
         assertPlan(plan); this.owner(accountId); assertModelId(request.modelId);
         const key = `${accountId}:${plan}`;
         const bucket = { ...(next.modelSettings[key] ?? {}) };
-        delete bucket[request.modelId];
+        // 恢复默认必须同时清掉历史键，否则读取时仍会回退到旧覆盖。
+        for (const id of overrideKeys(request.modelId)) delete bucket[id];
         if (Object.keys(bucket).length) next.modelSettings[key] = bucket; else delete next.modelSettings[key];
       }
       else throw new Error('未知操作');
