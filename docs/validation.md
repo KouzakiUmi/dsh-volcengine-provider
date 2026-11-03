@@ -2,9 +2,15 @@
 
 ## 目标与范围
 
-- 实际目标 **DSH Core 0.2.1-rc.5**；兼容声明不扩展到未测试版本。
+- 实际目标 **DSH Core 0.2.1-rc.4**（桌面 `DSH NEXT` 的 Core / llm / llm-pi-ai / credentials / launch-environment / typert-protocol manifest 均为该版本，pi-ai 为 `1.1.0`）；Peer 声明为 `>=0.2.1-rc.4 <0.3.0`，该范围中的其他版本未逐一验证。
 - ArkCli **1.0.37** 的命令帮助、随包官方 Skills、raw action 注册及无网络预览。
 - 单元业务测试使用假凭据、假 CLI 与外部网络替身；真实本地桥 IPC、原生进程和独立账号 OAuth 验收另列，均使用临时目录。
+
+## 0.2.11 Core 版本声明修正
+
+- 现场取证：桌面 `DSH NEXT` 的 `app.asar` 内 `@deepseek-ai/dsh-llm`、`dsh-llm-pi-ai`、`dsh-credentials`、`dsh-launch-environment`、`dsh-typert-protocol` 的 manifest 版本均为 `0.2.1-rc.4`，`@earendil-works/pi-ai` 为 `1.1.0`；PATH 上没有其他 `dsh` 安装，`~/.dsh` 下也没有第二份 Core。此前声明只写 `0.2.1-rc.5`，与本机宿主不一致。
+- 声明改为 `>=0.2.1-rc.4 <0.3.0`（五个 Core 包），以实际核验的 rc.4 为下限，同系列后续版本仍在范围内；未逐一验证该范围内的其他版本。按 semver 默认规则，该范围匹配 `0.2.1-rc.4`、`0.2.1-rc.5`、`0.2.1` 及后续 `0.2.x` 稳定版；其他预发行号（如 `0.2.2-rc.1`）不在默认匹配内，若宿主升级到此类版本需要重新核对声明。宿主 rc.4 中核到插件使用的 `resolveRetryPolicy`、`resolveImageAttachmentAccess`、`registerAdapter`、`providerRetryPolicy` 等符号存在（字符串级核对，非类型级验证）。
+- `node scripts/check.mjs` 与 `node --test test/*.test.mjs` 全部通过（368 项），`lib/` 重建；本次只改声明与文档，未改运行时代码。
 
 ## 0.2.10 控制台路由可用性与上游参数刷新
 
@@ -16,8 +22,8 @@
 
 ## 0.2.9 Core 适配、设置页与消耗倍率
 
-- 从桌面 `app.asar` 的产品与各包 manifest 核对实际 Core / llm / llm-pi-ai / credentials / launch-environment / typert-protocol 为 `0.2.1-rc.5`，其消费的 pi-ai 仍为 `1.1.0`；插件 peer 声明同步到 rc.5，没有改写宿主安装。
-- 真实 rc.5 隔离 Host 加载通过，覆盖 Core Schema、RPC、双路由、模型目录、路由失败保留和 dispose；模型管理、逐模型思考与能力矩阵使用同一真实 Core/SDK 和假 HTTP，未调用真实推理。
+- 从桌面 `app.asar` 的产品与各包 manifest 核对实际 Core / llm / llm-pi-ai / credentials / launch-environment / typert-protocol 版本，其消费的 pi-ai 为 `1.1.0`；插件 peer 声明与该版本对齐，没有改写宿主安装。当前复核（2026-11-03）读到的宿主版本为 `0.2.1-rc.4`，本条原记的 `0.2.1-rc.5` 已无法在本机复现，版本口径以 0.2.11 段为准。
+- 真实目标 Core 隔离 Host 加载通过，覆盖 Core Schema、RPC、双路由、模型目录、路由失败保留和 dispose；模型管理、逐模型思考与能力矩阵使用同一真实 Core/SDK 和假 HTTP，未调用真实推理。
 - 设置页参考 Our Free Model 2.7.1 的卡片与标签信息层级，保留本插件原有账号、双套餐、额度、模型参数和异步保护。真实 React/Chrome 离线验证名称旁倍率、限时标记、能力标签、模型开关与参数、额度分组、登录路径、390px 窄屏和窄内容栏；HTTP(S) 全部阻断，RPC 为假数据。
 - 深浅色 ×（宿主实色 secondary 令牌 / 缺失令牌）四组对比度审计均通过 WCAG AA。首次审计发现按钮/开关主题过渡中间色与折扣小字对比不足，已去除相关颜色过渡并修正文字透明度后复验通过。
 - 倍率依据[官方 AFP 抵扣规则](https://ark.volcengine.com/region:cn-beijing/docs/agent-plan-personal-afp-credits-billing-rules)与[共享折扣活动](https://ark.volcengine.com/region:cn-beijing/docs/coding-plan-personal-model-discount)固化，逐模型来源和 Kimi K3 活动结束冲突见[能力参数](model-capabilities.md#消耗倍率)。测试覆盖两套套餐别名、活动开始前/截止/结束后、未知与动态路由无倍率，以及倍率元数据不进入 Core 配置；Coding 仅作相对消耗参考，未实测线上计费。

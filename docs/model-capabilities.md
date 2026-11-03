@@ -7,7 +7,7 @@
 1. [Agent Plan Pi 接入](https://ark.volcengine.com/region:cn-beijing/docs/agent-plan-personal-pi.md)、[Coding Plan Pi 接入](https://ark.volcengine.com/region:cn-beijing/docs/coding-plan-personal-ai-pi.md)中的明确整数，分别按套餐采用。
 2. 对应套餐的[Agent 概览](https://ark.volcengine.com/region:cn-beijing/docs/agent-plan-personal-plan-overview.md)、[Coding 概览](https://ark.volcengine.com/region:cn-beijing/docs/coding-plan-personal-plan-overview.md)。
 3. 官方文档明确指向的 `dsh-volcengine-plugin@0.8.4` [Plan 目录](https://unpkg.com/dsh-volcengine-plugin@0.8.4/plan-models.json)补缺失整数、别名。其官方来源链见 [DeepSeek Harness 接入文档](https://ark.volcengine.com/region:cn-beijing/docs/agent-plan-personal-deepseek-harness.md#configure-via-plugin)。参考文件 SHA-256：`9d921b7a989af72c49ee69ad61d9ab4fc1863af6fc7c4f1c6c6b04968716a9ad`。
-4. 目标 Core `0.2.1-rc.5` 消费的 `@earendil-works/pi-ai@1.1.0` [发行元数据](https://registry.npmjs.org/@earendil-works/pi-ai/1.1.0)、[类型契约](https://unpkg.com/@earendil-works/pi-ai@1.1.0/dist/types.d.ts)与[模型源](https://github.com/earendil-works/pi/tree/main/packages/ai)。类型契约限定 `Model.input` 只含 `text`、`image`，并规定 `thinkingLevelMap` 的 `null` 表示该思考档位不受支持。其他 Provider 的原厂参数仅用于交叉核对，不覆盖更窄的 Plan 配置。旧 `@mariozechner/pi-ai` 不能冒充目标消费版本。
+4. 目标 Core（Peer 声明 `>=0.2.1-rc.4 <0.3.0`，实际核验宿主 `0.2.1-rc.4`）消费的 `@earendil-works/pi-ai@1.1.0` [发行元数据](https://registry.npmjs.org/@earendil-works/pi-ai/1.1.0)、[类型契约](https://unpkg.com/@earendil-works/pi-ai@1.1.0/dist/types.d.ts)与[模型源](https://github.com/earendil-works/pi/tree/main/packages/ai)。类型契约限定 `Model.input` 只含 `text`、`image`，并规定 `thinkingLevelMap` 的 `null` 表示该思考档位不受支持。其他 Provider 的原厂参数仅用于交叉核对，不覆盖更窄的 Plan 配置。旧 `@mariozechner/pi-ai` 不能冒充目标消费版本。
 
 同一 Pi 示例同时使用 `256000`、`262144`、`393216`、`1024000` 和 `1048576`，因此不做统一的“K 乘 1000/1024”转换。
 
