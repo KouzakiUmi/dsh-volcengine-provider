@@ -8,7 +8,7 @@
 - **模型官方默认**与**渠道默认**分开：原厂默认不自动成为火山 Plan 默认。渠道未单列默认时，除表中明确采用的模型级规则外，插件省略 effort、继承服务端默认，不统一填 low。
 - **Messages mode**是项目最终请求约定，不把所有通用字段枚举解释成每款模型的逐值保证。`enabled-effort` 使用 `thinking.type=enabled` 与 `output_config.effort`；`adaptive-effort` 使用 `adaptive` 与同一 effort 字段；`server-default` 不注入思考控制字段。
 - 思考字段的证据优先级：**A** 为对应精确版本的火山模型专页/深度思考表；**B** 为火山对应 Plan 文档；**C** 为官方插件固定版本的目录与传输实现；**D** 为模型原厂资料。通用 Messages 文档提供字段契约，逐模型专页约束优先于通用适配。该顺序不替换[容量字段的来源优先级](<model-capabilities.md#来源优先级>)。
-- **官方折叠规则**与**本地开放档位**是两件事：官方表描述服务端把收到的 effort 值折到哪一档；本项目只开放 `thinkingLevelMap` 显式映射的 Core 档位。`@earendil-works/pi-ai@1.1.0` 的类型契约写明 “Missing keys use provider defaults. null marks a level as unsupported”，映射为 `null` 的档位不发送 wire 值。因此官方折叠中的 `none`、`minimal`、`medium`、`xhigh` 等取值不构成项目开放的档位；两者对照见[本地实际开放档位](<model-thinking-audit.md#本地实际开放档位与-wire-取值>)。
+- **官方折叠规则**与**本地开放档位**是两件事：官方表描述服务端把收到的 effort 值折到哪一档；本项目只开放 `thinkingLevelMap` 显式映射的 Core 档位。`@earendil-works/pi-ai@1.1.0`（本机 `1.5.0` 已用真实 Core/SDK 复核请求行为一致）的类型契约写明 “Missing keys use provider defaults. null marks a level as unsupported”，映射为 `null` 的档位不发送 wire 值。因此官方折叠中的 `none`、`minimal`、`medium`、`xhigh` 等取值不构成项目开放的档位；两者对照见[本地实际开放档位](<model-thinking-audit.md#本地实际开放档位与-wire-取值>)。
 
 ## 逐模型参数表
 
@@ -154,4 +154,4 @@ thinking: { type: 'enabled' }
 | G | [智谱 GLM 5.3](https://docs.bigmodel.cn/cn/guide/models/text/glm-5.3.md)：原厂三档、常驻与默认；不替代火山渠道默认 |
 | R | [Coding Pi 模型配置](https://ark.volcengine.com/region:cn-beijing/docs/coding-plan-personal-ai-pi.md#3a775131)：账号路由与 Auto 的关系 |
 | K1 | [Kimi K3.1 Pro 模型页](https://ark.volcengine.com/models/kimi-k3-1-pro.md)：三档思考强度、常驻不可关闭、输入模态与工具调用；与深度思考表冲突时并列保留 |
-| PI | [pi-ai 1.1.0 类型契约](https://unpkg.com/@earendil-works/pi-ai@1.1.0/dist/types.d.ts)与[Anthropic Messages 适配实现](https://unpkg.com/@earendil-works/pi-ai@1.1.0/dist/api/anthropic-messages.js)：`Model.input` 模态集合、`thinkingLevelMap` 的 `null` 语义、请求侧 `thinking` 与 `output_config` 组装 |
+| PI | [pi-ai 1.1.0 类型契约](https://unpkg.com/@earendil-works/pi-ai@1.1.0/dist/types.d.ts)与[Anthropic Messages 适配实现](https://unpkg.com/@earendil-works/pi-ai@1.1.0/dist/api/anthropic-messages.js)：`Model.input` 模态集合、`thinkingLevelMap` 的 `null` 语义、请求侧 `thinking` 与 `output_config` 组装；本机 `1.5.0` 以真实 Core/SDK smoke 复核上述语义，未逐字段比对类型定义 |

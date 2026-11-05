@@ -60,7 +60,7 @@ try {
   assert.equal(JSON.parse(await readFile(join(home, 'state.json'), 'utf8')).modelSettings['default:agent-plan']['glm-5.3'].defaultReasoning, 'medium');
   const model = await ctx.llm.resolveModelInfo('volcengine-agent-plan', 'deepseek-v4-1-flash-economy-261017');
   // Exact integers from the official Plan Pi configuration, not a blanket K conversion.
-  assert.equal(model.context.contextWindow, 1049000);
+  assert.equal(model.context.contextWindow, 1024000);
   assert.equal(model.defaultMaxTokens, 393216);
   await assert.rejects(service.invoke({ op: 'select', revision: initial.revision, plan: 'agent-plan', accountId: 'broken' }));
   assert.equal(ctx.llm.listProviders().length, 2);

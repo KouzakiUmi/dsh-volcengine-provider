@@ -2,9 +2,18 @@
 
 ## 目标与范围
 
-- 实际目标 **DSH Core 0.2.1-rc.4**（桌面 `DSH NEXT` 的 Core / llm / llm-pi-ai / credentials / launch-environment / typert-protocol manifest 均为该版本，pi-ai 为 `1.1.0`）；Peer 声明为 `>=0.2.1-rc.4 <0.3.0`，该范围中的其他版本未逐一验证。
+- 已核验宿主有两个：桌面 **DSH Core 0.2.1-rc.4**（`DSH NEXT` 的 Core / llm / llm-pi-ai / credentials / launch-environment / typert-protocol manifest，pi-ai `1.1.0`）与手机版 **the agent harness 0.2.2-rc.1**（Node 24.22.1，pi-ai `1.5.0`）。五个 Core 包的 Peer 声明为 `>=0.2.1-rc.4 <0.3.0 || >=0.2.2-rc.1 <0.3.0`，pi-ai 为 `>=1.1.0 <2.0.0`；范围内其他版本未逐一验证。并集范围使 npm 默认 semver 与宿主 `includePrerelease` 判定同时匹配两个已核验的预发行宿主。
 - ArkCli **1.0.37** 的命令帮助、随包官方 Skills、raw action 注册及无网络预览。
 - 单元业务测试使用假凭据、假 CLI 与外部网络替身；真实本地桥 IPC、原生进程和独立账号 OAuth 验收另列，均使用临时目录。
+
+## 0.2.12 本机 Core 版本适配
+
+- 现场取证：手机版 the agent harness 的内置运行时为 `r15-dsh0.2.2-rc.1-node24.22.1-ubuntu24.04.5`（App 1.0.11 诊断快照），`/opt/dsh` 的 `@deepseek-ai/dsh`、`dsh-llm`、`dsh-llm-pi-ai`、`dsh-credentials`、`dsh-launch-environment`、`dsh-typert-protocol` manifest 均为 `0.2.2-rc.1`，`@earendil-works/pi-ai` 为 `1.5.0`，cordis `4.1.0`、schemastery `3.19.0`。本机 profile 的插件目录为指向工作区的链接，版本 `0.2.11`。
+- 宿主兼容判定（`@deepseek-ai/dsh-app-boot`）用 `semver.satisfies(runtimeVersion, range, { includePrerelease: true })` 检查 `@deepseek-ai/dsh*` peer；该模式下 `>=0.2.1-rc.4 <0.3.0` 已匹配 `0.2.2-rc.1`。但 npm 默认 semver 不含预发行同元组例外，实测 `0.2.2-rc.1` 不匹配该范围，`pi-ai 1.1.0` 也不匹配本机 `1.5.0`；从 registry 安装时会成为依赖解析阻碍。
+- 声明改为并集 `>=0.2.1-rc.4 <0.3.0 || >=0.2.2-rc.1 <0.3.0`（五个 Core 包）与 `>=1.1.0 <2.0.0`（pi-ai）。实测在 npm 默认 semver 与宿主 `includePrerelease` 两种判定下，`0.2.1-rc.4`、`0.2.1-rc.5`、`0.2.1`、`0.2.2-rc.1`、`0.2.2`、`0.2.9` 均匹配，`0.3.0` 不匹配；`1.1.0`、`1.5.0` 匹配 pi-ai 范围，`2.0.0` 不匹配。未设置 `engines.dsh`：宿主一旦读到该字段会改为只判定它、忽略 peer。未来新的 `0.2.x-rc.N` 预发行号仍需按 semver 同元组规则重新核对。
+- 运行时代码未改。以 `DSH_TEST_HOST_ROOT=/opt/dsh` 加载本机真实 Core/SDK 复核：`scripts/host-smoke.mjs`（隔离 Host 加载、RPC、双路由、目录、路由失败保留、dispose）、`scripts/model-thinking-smoke.mjs`（两套餐 192 项真实 Core/SDK 请求断言）、`scripts/model-management-smoke.mjs`（状态迁移、开关、覆盖优先级、已准备请求隔离）与 `scripts/model-capabilities-smoke.mjs`（图片元数据、工具选择、隔离）全部通过；HTTP 全部由本地替身响应，未调用真实推理或额度接口。
+- `scripts/host-smoke.mjs` 中 `deepseek-v4-1-flash-economy-261017` 的上下文断言由 `1049000` 同步为快照现值 `1024000`；该差异来自 0.2.10 快照刷新后的旧脚本硬编码，与本机 Core 无关。
+- 新增 `test/manifest-compat.test.mjs`，锁定五个 Core peer、pi-ai 声明、版本号与两种 semver 判定下的匹配回归。
 
 ## 0.2.11 Core 版本声明修正
 
@@ -77,7 +86,7 @@ node --test test/*.test.mjs
 - HMAC 签名测试使用独立 OpenSSL 推导的固定向量，不只比较实现自身的两次输出。
 - 构建生成 Host 模块与返回导出对象的惰性 Client 工厂；不新增安装构建依赖。
 
-当前结果：**363 项 JavaScript 测试、11 项 Python 归档测试通过**，50 个 JavaScript 源文件语法/边界检查通过，构建包含 19 个模块/Client 产物及 3 个浏览器桥辅助文件。模型管理测试覆盖旧状态迁移、套餐/模型开关、逐模型参数、请求默认值及适配器生命周期；发布测试覆盖 OIDC 身份、版本与渠道、归档校验（含 `catalog-snapshot.json` 与 `consumption-rates.json` 必需项）、registry 错误分类及发布后完整性检查。
+当前结果：**372 项 JavaScript 测试、11 项 Python 归档测试通过**，51 个 JavaScript 源文件语法/边界检查通过，构建包含 19 个模块/Client 产物及 3 个浏览器桥辅助文件。模型管理测试覆盖旧状态迁移、套餐/模型开关、逐模型参数、请求默认值及适配器生命周期；发布测试覆盖 OIDC 身份、版本与渠道、归档校验（含 `catalog-snapshot.json` 与 `consumption-rates.json` 必需项）、registry 错误分类及发布后完整性检查。
 
 ### 实际 Core 隔离加载
 
