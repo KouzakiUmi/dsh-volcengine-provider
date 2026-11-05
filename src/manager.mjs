@@ -29,13 +29,13 @@ function modelRow(state, accountId, plan, modelId) {
 }
 
 export class ArkController {
-  constructor({ statePath, arkCliPath, resolveRef, cliFactory, fetchImpl, spawnImpl = spawn, browserAuthorize, bridgeFactory, verifyCli }) {
+  constructor({ statePath, arkCliPath, resolveRef, cliFactory, fetchImpl, spawnImpl = spawn }) {
     this.store = new StateStore(statePath); this.arkCliPath = arkCliPath;
     this.resolveRef = resolveRef; this.cliFactory = cliFactory; this.fetchImpl = fetchImpl;
     this.life = new AbortController(); this.disposed = false; this.cache = new Map(); this.inflight = new Map();
     this.inferenceCache = new Map(); this.inferenceInflight = new Map(); this.cacheGeneration = 0;
     this.identityCache = new Map(); this.identityInflight = new Map();
-    this.oauth = new ArkOAuth({ spawn: spawnImpl, browserAuthorize, bridgeFactory, verifyCli, onSuccess: (id, rev, signal, homeId) => this.bindLogin(id, rev, signal, homeId) });
+    this.oauth = new ArkOAuth({ spawn: spawnImpl, onSuccess: (id, rev, signal, homeId) => this.bindLogin(id, rev, signal, homeId) });
     this.onChange = async () => {}; this.operations = Promise.resolve();
   }
   owner(id) {
@@ -221,6 +221,7 @@ export class ArkController {
     }
     if (op === 'loginStatus') return this.oauth.status();
     if (op === 'cancelLogin') return this.oauth.cancel(request.jobId);
+    if (op === 'submitLoginCode') return this.oauth.submitCode(request.jobId, request.code);
     if (op === 'quota') return this.quota(request.plan, request.accountId, request.force === true);
     // Serialize account/model/login mutations across all browser tabs.
     const next = this.operations.then(() => this.change(request));

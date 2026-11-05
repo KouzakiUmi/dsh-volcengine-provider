@@ -79,22 +79,6 @@ class VerifyPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'missing'):
             module.verify_package(self.directory)
 
-    def test_browser_bridge_requires_all_platform_helpers(self):
-        self.fixture({'package/lib/browser-bridge.mjs': '// fixture'})
-        with self.assertRaisesRegex(ValueError, 'Browser bridge files missing'):
-            module.verify_package(self.directory)
-
-    def test_browser_bridge_opener_must_be_executable(self):
-        self.fixture({'package/lib/browser-bridge/linux/xdg-open': '#!/bin/sh\n'})
-        with self.assertRaisesRegex(ValueError, 'executable'):
-            module.verify_package(self.directory)
-
-    def test_complete_browser_bridge_with_executable_openers(self):
-        files = {'package/lib/browser-bridge.mjs': '// fixture', 'package/lib/browser-bridge-client.mjs': '// fixture', 'package/lib/browser-bridge/win32/rundll32.exe': 'native fixture', 'package/lib/browser-bridge/linux/xdg-open': '#!/bin/sh\n', 'package/lib/browser-bridge/darwin/open': '#!/bin/sh\n'}
-        modes = {name: 0o755 for name in files if name.endswith(('/xdg-open', '/open'))}
-        self.fixture(files, modes=modes)
-        self.assertEqual(module.verify_package(self.directory)['files'], 14)
-
     def test_development_directory(self):
         self.fixture({'package/test/unwanted.mjs': '// fixture'})
         with self.assertRaisesRegex(ValueError, 'Development'):

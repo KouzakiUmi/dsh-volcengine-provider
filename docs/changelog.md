@@ -2,6 +2,13 @@
 
 [返回主页](../README.md)
 
+## 0.2.13
+
+- 网页登录改为官方 CLI `arkcli auth login --no-browser --credential-store encrypted-file` 两段式：Phase 1 生成并校验官方登录链接后展示在设置页，用户在任意设备浏览器完成 SSO 取得 base64 授权码；Phase 2 在设置页粘贴授权码，由官方 CLI 用 `arkcli auth login --no-browser --code <授权码> --credential-store encrypted-file` 完成 PKCE 交换与凭据落盘。授权码只在内存传给 CLI 子进程 argv，不落盘、不进 UI 状态、不进日志；插件不处理 token 端点、不读取网页内容、不启动浏览器、不拦截系统 URL opener。
+- 移除私有 PATH 启动桥、Windows 原生桥二进制（`rundll32.exe`）、Playwright 独立 Chrome 与 127.0.0.1 IPC；不再依赖 `playwright-core`。CI 不再产出 Windows 桥 artifact，归档校验不再要求桥文件。
+- 安全边界改写为只放行官方 CLI 输出的白名单官方链接 + 两段式流程；不再限定「仅已核验的 Windows ArkCli 1.0.37」，也不再写「不回退 cross-device 授权码流程」。身份核验、账号隔离目录、原子绑定、取消/超时/写入保护、白名单身份摘要、OAuth 账号走 CLI raw action 查额度（不需要 AK/SK）全部保留。
+- 本机没有安装 ArkCli，`--no-browser` 两段式**未做真机验收**：Phase 1 URL 输出格式、session 接力与 Phase 2 授权码交换均待后续用真实 CLI 复核（待复核）。实测仅覆盖本机 Core smoke 与离线单测，见[验证记录](validation.md)。
+
 ## 0.2.12
 
 - 适配本机 the agent harness `0.2.2-rc.1`（Node 24.22.1，`@earendil-works/pi-ai@1.5.0`）：五个 Core 包的 peer 声明改为 `>=0.2.1-rc.4 <0.3.0 || >=0.2.2-rc.1 <0.3.0`，让 npm 默认 semver 与宿主 `includePrerelease` 判定同时匹配桌面 `0.2.1-rc.4` 与手机版 `0.2.2-rc.1` 两个已核验宿主；pi-ai 声明由固定 `1.1.0` 改为 `>=1.1.0 <2.0.0`。不新增 `engines.dsh`，避免宿主改为忽略 peer 判定。

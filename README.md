@@ -4,7 +4,7 @@
 
 **在 DeepSeek Harness 中接入火山方舟 Agent Plan 与 Coding Plan。**
 
-账号管理、官方网页登录、模型同步和套餐额度，集中在一个设置页面。
+账号管理、官方 CLI 两段式登录、模型同步和套餐额度，集中在一个设置页面。
 
 [![npm](https://img.shields.io/npm/v/dsh-volcengine-provider?color=3b82f6)](https://www.npmjs.com/package/dsh-volcengine-provider)
 [![CI](https://github.com/KouzakiUmi/dsh-volcengine-provider/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/KouzakiUmi/dsh-volcengine-provider/actions/workflows/ci.yml)
@@ -24,12 +24,12 @@ dsh plugin --profile web add dsh-volcengine-provider
 
 `web` 是示例 Profile，请替换为实际目标；Desktop 使用桌面壳集成的 DSH CLI。也可从 [GitHub Actions](https://github.com/KouzakiUmi/dsh-volcengine-provider/actions/workflows/ci.yml) 或 [Releases](https://github.com/KouzakiUmi/dsh-volcengine-provider/releases) 下载插件包安装。
 
-1. 打开 **设置 → 火山方舟 Provider**。没有账号时直接点击 **网页登录**；已有账号时展开 **管理账号**，再点击 **登录其他账号**。
-2. 确认后在自动打开的独立临时 Chrome 窗口完成官方 OAuth 授权，授权结果自动接回；此窗口不共享日常浏览器的扩展或密码管理器。凭据引用接入则使用 **新增账号**。
+1. 打开 **设置 → 火山方舟 Provider**。没有账号时直接点击 **生成官方登录链接**；已有账号时展开 **管理账号**，再点击 **登录其他账号**。
+2. 确认后设置页展示官方 CLI 输出的登录链接；在任意设备浏览器打开链接完成官方 SSO，复制页面给出的 base64 授权码，回到设置页粘贴提交，由官方 CLI 完成登录。凭据引用接入则使用 **新增账号**。
 3. 在账号卡片点击 **用于 Agent套餐 / 用于 编程套餐**，或在套餐卡片分别选择账号与启停。查看模型列表，按需拉取官方目录、刷新额度。
 4. 在 DSH 模型选择器中选择对应路由，开始使用。
 
-网页登录需安装官方 [ArkCli](https://github.com/volcengine/ark-cli)。详细配置见[使用说明](docs/usage.md)。
+两段式登录需安装支持 `--no-browser` 的官方 [ArkCli](https://github.com/volcengine/ark-cli)；本机未做真机验收，目标 CLI 版本待复核。详细配置见[使用说明](docs/usage.md)。
 
 ## 功能介绍
 
@@ -48,9 +48,9 @@ Agent Plan 与 Coding Plan 各有独立的启用开关、账号选择、模型�
 | Agent Plan | `volcengine-agent-plan` | 5 小时、周、月、日，按能力范围分组 |
 | Coding Plan | `volcengine-coding-plan` | 5 小时、周、月 |
 
-### 账号管理与网页登录
+### 账号管理与两段式登录
 
-支持新增、编辑、删除账号，并为两套套餐分别选择账号。网页登录复用官方 ArkCli OAuth，页面提供登录进度、取消和结果提示；每个账号使用独立的 CLI 身份目录。
+支持新增、编辑、删除账号，并为两套套餐分别选择账号。登录复用官方 ArkCli OAuth 的 `--no-browser` 两段式：设置页生成并校验官方登录链接、粘贴授权码，页面提供登录进度、取消和结果提示；授权码只在内存传给 CLI 子进程，不落盘、不进日志。每个账号使用独立的 CLI 身份目录。
 
 已有 API Key 的用户可沿用 DSH 凭据服务或启动环境中的引用名。OAuth 与凭据引用两种方式的配置见[账号与凭据](docs/usage.md#两种接入方式)。
 
@@ -74,13 +74,12 @@ Coding Plan 展示剩余百分比；Agent Plan 同时展示 AFP 已用量、上�
 
 - **DSH Core**：`>=0.2.1-rc.4 <0.3.0 || >=0.2.2-rc.1 <0.3.0`（已核验宿主：桌面 `0.2.1-rc.4`、手机版 `0.2.2-rc.1`）；`@earendil-works/pi-ai`：`>=1.1.0 <2.0.0`（已核验 `1.1.0` 与 `1.5.0`）。
 - **Node.js**：`>=22.19.0`。
-- **ArkCli**：当前按 `1.0.37` 命令契约适配；网页登录仅开放已核验的 Windows ArkCli `1.0.37`，其他平台/版本在登录前拒绝。
-- **Chrome**：网页登录需已安装 Google Chrome；插件的 `playwright-core` 依赖负责独立临时窗口，不下载浏览器。
+- **ArkCli**：两段式登录需支持 `arkcli auth login --no-browser` 两段式（`--credential-store encrypted-file` 与 `--code`）；本机没有安装 ArkCli，两段式未做真机验收，目标 CLI 版本与 URL 输出格式待复核。
 - 当前支持国内个人 Agent Plan / Coding Plan。
 
-当前为开发预览。已完成隔离测试、目标 Core 加载、离线界面及 Windows 真实同设备 OAuth/双套餐临时绑定验收；在线额度、推理调用和生产安装的边界见[验证记录](docs/validation.md)。
+0.2.13 已发布到 npm `latest`。已完成隔离测试、目标 Core 加载与离线界面验证；`--no-browser` 两段式登录未做真机验收，在线额度、推理调用和生产安装的边界见[验证记录](docs/validation.md)。
 
-账号删除仅移除插件元数据，已保存的官方 CLI 身份目录会保留。反馈问题时请提供版本、套餐类型和脱敏错误，凭据及授权链接请勿提交。
+账号删除仅移除插件元数据，已保存的官方 CLI 身份目录会保留。反馈问题时请提供版本、套餐类型和脱敏错误，凭据、授权码及授权链接请勿提交。
 
 ## 文档与反馈
 

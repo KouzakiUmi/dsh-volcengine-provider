@@ -60,8 +60,8 @@ const NEW_LOGIN_ACCOUNT = '__new__';
 
 const LOGIN_STATE_LABELS = {
   idle: '尚未开始登录。',
-  launching: '正在启动官方登录窗口…',
-  waiting: '请在官方窗口中完成登录。',
+  launching: '正在生成官方登录链接…',
+  waiting: '请在浏览器中完成登录，并粘贴页面显示的授权码。',
   verifying: '正在验证登录结果…',
   success: '登录成功，凭据已保存。',
   cancelled: '登录已取消。',
@@ -70,7 +70,7 @@ const LOGIN_STATE_LABELS = {
 
 /**
  * 官方授权链接的放行规则：主机 → 允许的路径前缀。
- * 用于兼容旧 Host 状态；当前 Host 由受控桥打开链接，不向 Client 下发登录 URL。
+ * 无浏览器两段式由官方 CLI 生成链接，Host 校验后下发给 Client 渲染；
  * 用 Map 而不是普通对象，避免原型链上的键被误当成白名单。
  */
 const SAFE_LOGIN_PATHS = new Map([
@@ -148,7 +148,7 @@ const TEMPERATURE_HINT = '开启思考时上游可能忽略温度；输出 token
  * 这几条是登录的真实副作用，缺一条就可能让人以为会覆盖本机 CLI 身份或删掉凭据。
  */
 const LOGIN_CONFIRM_NOTES = [
-  '登录使用官方 ArkCli 的方舟同设备授权页，由受控启动桥转交 Playwright 打开独立临时 Chrome；完成登录后由官方 CLI 自动接收回调并关闭窗口，无需复制授权码，也不使用日常 Chrome 的配置、扩展或密码管理器。',
+  '登录使用官方 ArkCli 的无浏览器两段式流程：先生成官方登录链接，你在任意设备的浏览器完成 SSO 后，把页面显示的授权码粘贴回设置页；官方 CLI 负责完成交换与凭据落盘，插件不打开浏览器、不读取网页或授权码内容。',
   '登录得到的凭据保存在本插件为该账号准备的隔离目录里，不会改变你原有 CLI 的默认身份。',
   '取消登录或删除账号元数据都不会删除已经保存的凭据；需要清理时请自行处理该账号的隔离目录。',
   'OAuth 登录会绑定该账号可用的个人套餐，模型调用与额度查询使用对应套餐的登录身份，无需另外填写 AK/SK。'
@@ -1354,11 +1354,12 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
  * @param {object} props 组件属性
  * @returns {object} 元素树
  */
-function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, busy, onNew, onEdit, onCancelEdit, onChangeDraft, onSave, onRequestDelete, onConfirmDelete, onCancelDelete, onRequestLogin, onConfirmLogin, onCancelLoginConfirm, onCancelLogin, onUsePlan }) {
+function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, busy, onNew, onEdit, onCancelEdit, onChangeDraft, onSave, onRequestDelete, onConfirmDelete, onCancelDelete, onRequestLogin, onConfirmLogin, onCancelLoginConfirm, onCancelLogin, onSubmitLoginCode, onUsePlan }) {
   const accounts = Array.isArray(snapshot?.accounts) ? snapshot.accounts : [];
   const disabled = busy !== null;
   const loginActive = LOGIN_ACTIVE_STATES.includes(login.state);
   const loginUrl = safeLoginUrl(login.url);
+  const [loginCode, setLoginCode] = react.useState('');
   const [accountsOpen, setAccountsOpen] = react.useState(false);
   const mustShowAccounts = !accounts.length || loginActive || Boolean(editor || confirmDelete || loginConfirm || loginUrl);
   react.useEffect(() => {
@@ -1425,7 +1426,7 @@ function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, bu
               h('ul', { style: { margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 } },
                 LOGIN_CONFIRM_NOTES.map((note, index) => h('li', { key: index, style: style.muted }, note))),
               h('div', { className: 'vcp-actions' },
-                h('button', { type: 'button', style: style.primary, disabled: disabled, onClick: () => onConfirmLogin(account.id) }, '确认并打开官方登录页'),
+                h('button', { type: 'button', style: style.primary, disabled: disabled, onClick: () => onConfirmLogin(account.id) }, '确认并生成登录链接'),
                 h('button', { type: 'button', style: style.btn, disabled: disabled, onClick: onCancelLoginConfirm }, '取消')))
             : null)))
       : h('div', { className: 'vcp-empty' },
@@ -1437,29 +1438,50 @@ function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, bu
           h('ul', { style: { margin: 0, paddingLeft: 18 } },
             LOGIN_CONFIRM_NOTES.map((note, index) => h('li', { key: index, style: style.muted }, note))),
           h('div', { style: style.row },
-            h('button', { type: 'button', style: style.primary, disabled: disabled || loginActive, onClick: () => onConfirmLogin(NEW_LOGIN_ACCOUNT) }, '确认并打开官方登录页'),
+            h('button', { type: 'button', style: style.primary, disabled: disabled || loginActive, onClick: () => onConfirmLogin(NEW_LOGIN_ACCOUNT) }, '确认并生成登录链接'),
             h('button', { type: 'button', style: style.btn, disabled, onClick: onCancelLoginConfirm }, '取消'))) : null),
     h('div', { className: 'vcp-actions' },
       accounts.length ? h('button', { type: 'button', style: style.primary, disabled: disabled || loginActive, onClick: () => onRequestLogin(NEW_LOGIN_ACCOUNT) }, '登录其他账号') : null,
       h('button', { type: 'button', style: style.btn, disabled: disabled || loginActive || editor !== null, onClick: onNew }, '新增账号')),
     accounts.length > 0 && loginConfirm === NEW_LOGIN_ACCOUNT ? h('div', { className: 'vcp-confirm' },
       h('strong', null, '创建独立账号并网页登录'),
-      h('p', { style: style.muted }, '使用新的本地账号保存登录结果，不覆盖已有账号或更改当前套餐选择。请在独立 Chrome 窗口的官方页面确认实际授权身份。'),
+      h('p', { style: style.muted }, '使用新的本地账号保存登录结果，不覆盖已有账号或更改当前套餐选择。请在官方页面确认实际授权身份，完成后把授权码粘贴回设置页。'),
       h('ul', { style: { margin: 0, paddingLeft: 18 } }, LOGIN_CONFIRM_NOTES.map((note, index) => h('li', { key: index, style: style.muted }, note))),
       h('div', { style: style.row },
-        h('button', { type: 'button', style: style.primary, disabled: disabled || loginActive, onClick: () => onConfirmLogin(NEW_LOGIN_ACCOUNT) }, '确认并打开官方登录页'),
+        h('button', { type: 'button', style: style.primary, disabled: disabled || loginActive, onClick: () => onConfirmLogin(NEW_LOGIN_ACCOUNT) }, '确认并生成登录链接'),
         h('button', { type: 'button', style: style.btn, disabled, onClick: onCancelLoginConfirm }, '取消'))) : null,
     editor ? h(AccountForm, { editor, busy: busy ?? (loginActive ? 'login-active' : null), onChangeDraft, onSave, onCancel: onCancelEdit }) : null,
     login.state === 'idle' && !login.message && !loginUrl ? null
       : login.state === 'success' && !loginUrl
         ? h(Notice, { tone: 'success', role: 'status' }, login.message ? `${LOGIN_STATE_LABELS.success} ${login.message}` : LOGIN_STATE_LABELS.success)
         : h('div', { className: 'vcp-login-status', role: loginActive ? 'status' : undefined },
-      h('div', { style: { fontWeight: 650, fontSize: 13 } }, '网页登录状态'),
+      h('div', { style: { fontWeight: 650, fontSize: 13 } }, '登录状态'),
       loginAccount ? h('p', { style: style.muted }, `当前登录账号：${accountName(loginAccount)}（${loginAccount.id}）`) : null,
       authMode ? h('p', { style: style.muted }, `凭据来源：${AUTH_MODE_LABELS[authMode] ?? authMode}`) : null,
       h('p', { style: style.muted }, LOGIN_STATE_LABELS[login.state] ?? login.state),
       login.message ? h('p', { style: style.muted }, login.message) : null,
-      loginUrl ? h('a', { href: loginUrl, target: '_blank', rel: 'noopener noreferrer', style: { fontSize: 12, color: 'var(--dsw-alias-link, inherit)' } }, '打开官方授权页面') : null,
+      loginUrl ? h('a', { href: loginUrl, target: '_blank', rel: 'noopener noreferrer', style: { fontSize: 12, color: 'var(--dsw-alias-link, inherit)' } }, '打开官方登录链接') : null,
+      loginUrl && login.state === 'waiting'
+        ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+          h('label', { style: style.field },
+            h('span', { style: style.label }, '粘贴官方页面显示的授权码'),
+            h('input', {
+              type: 'text', style: style.input, value: loginCode,
+              placeholder: '授权码', autoComplete: 'off', spellCheck: false,
+              disabled: disabled || !login.jobId,
+              onChange: (event) => setLoginCode(String(event?.target?.value ?? ''))
+            })),
+          h('div', { style: style.row },
+            h('button', {
+              type: 'button', style: style.primary,
+              disabled: disabled || !login.jobId || !loginCode.trim(),
+              onClick: () => {
+                const value = loginCode.trim();
+                if (!value) return;
+                setLoginCode('');
+                onSubmitLoginCode?.(value);
+              }
+            }, '提交授权码'))) : null,
       loginActive
         ? h('button', { type: 'button', style: style.btn, disabled: disabled || !login.jobId, onClick: onCancelLogin }, login.jobId ? '取消登录' : '同步状态后可取消登录')
         : null)))
@@ -1778,6 +1800,18 @@ function VolcengineProviderSection({ client }) {
     }
   });
 
+  // 两段式 Phase 2：授权码只在本次 RPC 里传给 Host，不写入本地状态。
+  const submitLoginCode = (code) => run('submit-login-code', async () => {
+    const jobId = login.jobId;
+    if (!jobId) return;
+    try {
+      const value = await client.invoke({ op: 'submitLoginCode', jobId, code });
+      if (aliveRef.current) setLogin(normalizeLogin(value));
+    } catch (error) {
+      if (aliveRef.current) setNotice({ ok: false, text: `提交授权码失败：${describeError(error)}` });
+    }
+  });
+
   const saveAccount = () => run('save', async () => {
     if (!editor) return;
     const problem = validateAccountDraft(editor.draft, snapshot?.accounts ?? [], editor.mode === 'edit' ? editor.id : null);
@@ -1929,7 +1963,8 @@ function VolcengineProviderSection({ client }) {
           onUsePlan: usePlan,
           onConfirmLogin: confirmLogin,
           onCancelLoginConfirm: () => setLoginConfirm(null),
-          onCancelLogin: () => { void cancelLogin(); }
+          onCancelLogin: () => { void cancelLogin(); },
+          onSubmitLoginCode: (code) => { void submitLoginCode(code); }
         })));
 }
 

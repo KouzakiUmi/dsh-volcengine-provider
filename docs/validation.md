@@ -4,7 +4,15 @@
 
 - 已核验宿主有两个：桌面 **DSH Core 0.2.1-rc.4**（`DSH NEXT` 的 Core / llm / llm-pi-ai / credentials / launch-environment / typert-protocol manifest，pi-ai `1.1.0`）与手机版 **the agent harness 0.2.2-rc.1**（Node 24.22.1，pi-ai `1.5.0`）。五个 Core 包的 Peer 声明为 `>=0.2.1-rc.4 <0.3.0 || >=0.2.2-rc.1 <0.3.0`，pi-ai 为 `>=1.1.0 <2.0.0`；范围内其他版本未逐一验证。并集范围使 npm 默认 semver 与宿主 `includePrerelease` 判定同时匹配两个已核验的预发行宿主。
 - ArkCli **1.0.37** 的命令帮助、随包官方 Skills、raw action 注册及无网络预览。
-- 单元业务测试使用假凭据、假 CLI 与外部网络替身；真实本地桥 IPC、原生进程和独立账号 OAuth 验收另列，均使用临时目录。
+- 单元业务测试使用假凭据、假 CLI 与外部网络替身；两段式登录未做真机验收，边界见 0.2.13 段。
+
+## 0.2.13 无浏览器两段式登录
+
+- 网页登录从「官方 ArkCli broker 同设备流程 + 私有 PATH 启动桥（Windows `rundll32.exe`）+ Playwright 独立 Chrome + 127.0.0.1 IPC」改为官方 CLI `arkcli auth login --no-browser --credential-store encrypted-file` 两段式：Phase 1 由 CLI 打印官方登录 URL，插件校验官方主机/路径白名单后把链接展示在设置页，用户在任意设备浏览器完成 SSO 并取得 base64 授权码；Phase 2 用户在设置页粘贴授权码，插件调用 `arkcli auth login --no-browser --code <授权码> --credential-store encrypted-file`，由官方 CLI 完成 PKCE 交换与凭据落盘。
+- 插件不处理 token 端点、不读取网页或授权码内容（授权码只在内存传给 CLI 子进程 argv，不落盘、不进 UI 状态、不进日志）、不启动浏览器、不拦截系统 URL opener；不再打包 Windows 原生桥二进制、不再依赖 `playwright-core`。CI 不再产出 Windows 桥 artifact，归档校验不再要求桥文件。
+- 安全边界改写为只放行官方 CLI 输出的白名单官方链接 + 两段式流程；不再限定「仅已核验的 Windows ArkCli 1.0.37」，也不再写「不回退 cross-device 授权码流程」。身份核验（whoami / auth status / 双套餐 profile）、账号隔离目录、原子绑定、取消/超时/写入保护、白名单身份摘要、OAuth 账号走 CLI raw action 查额度（不需要 AK/SK）全部保留。
+- 实测范围：本机 Core smoke（隔离 Host 加载、RPC、双路由、目录、路由失败保留、dispose，HTTP 由本地替身响应）与离线单测（假 CLI、假凭据、外部网络替身）覆盖两段式的链接白名单校验、授权码只经 argv 传递、不落盘/不入日志、取消/超时/写入保护等非浏览器路径；具体测试数量见「当前结果」。
+- 未验收边界：本机没有安装 ArkCli，`--no-browser` 两段式**未做真机验收**，不得表述为已通过真实登录。后续须用真实 CLI 复核 Phase 1 的 URL 输出格式、Phase 1 → Phase 2 的 session 接力，以及 Phase 2 授权码交换与凭据落盘（待复核）。真实额度、推理调用、生产安装与跨平台真实 CLI 行为仍未验收。
 
 ## 0.2.12 本机 Core 版本适配
 
@@ -86,7 +94,7 @@ node --test test/*.test.mjs
 - HMAC 签名测试使用独立 OpenSSL 推导的固定向量，不只比较实现自身的两次输出。
 - 构建生成 Host 模块与返回导出对象的惰性 Client 工厂；不新增安装构建依赖。
 
-当前结果：**372 项 JavaScript 测试、11 项 Python 归档测试通过**，51 个 JavaScript 源文件语法/边界检查通过，构建包含 19 个模块/Client 产物及 3 个浏览器桥辅助文件。模型管理测试覆盖旧状态迁移、套餐/模型开关、逐模型参数、请求默认值及适配器生命周期；发布测试覆盖 OIDC 身份、版本与渠道、归档校验（含 `catalog-snapshot.json` 与 `consumption-rates.json` 必需项）、registry 错误分类及发布后完整性检查。
+当前结果：**356 项 JavaScript 测试、8 项 Python 归档测试通过**，43 个 JavaScript 源文件语法/边界检查通过，构建包含 15 个模块/Client 产物，归档不再包含浏览器桥文件。模型管理测试覆盖旧状态迁移、套餐/模型开关、逐模型参数、请求默认值及适配器生命周期；发布测试覆盖 OIDC 身份、版本与渠道、归档校验（含 `catalog-snapshot.json` 与 `consumption-rates.json` 必需项）、registry 错误分类及发布后完整性检查。
 
 ### 实际 Core 隔离加载
 
@@ -142,7 +150,7 @@ node --test test/*.test.mjs
 - 思考映射切回继承时读取目录默认而不是旧覆盖，并清除不兼容默认档位；路由失败不把保存值称为生效值；恢复停用模型明确会重新启用。
 - 额度查询不锁住账号管理；切换账号后立即允许新查询，迟到响应不覆盖新账号数据。
 - 真实 React/Chrome 离线模拟完成“空账号 → 确认 → 假 OAuth 成功 → 选择并启用 Agent 套餐 → 查询额度”。该离线 UI 测试不打开真实官方页面；真实同设备 OAuth 另按下节独立验收。
-- 当前网页登录使用官方 broker 同设备流程、CLI 私有启动桥和 Playwright 独立临时 Chrome。
+- 当前登录使用官方 CLI 的 `--no-browser` 两段式：Phase 1 生成官方登录链接，Phase 2 由用户粘贴授权码完成；不启动浏览器、不使用启动桥（见 0.2.13 段，未做真机验收）。
 
 ## 浏览器隔离修复验证（2026-10-27）
 

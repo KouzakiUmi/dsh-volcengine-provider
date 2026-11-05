@@ -4,75 +4,182 @@ import { EventEmitter } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ArkOAuth, approvedLoginUrl } from '../src/oauth.mjs';
+import { ArkOAuth } from '../src/oauth.mjs';
+import { approvedLoginUrl, extractLoginUrl } from '../src/login-url.mjs';
 import { cliEnvironment, parseJsonOutput } from '../src/cli.mjs';
+
 const tick = () => new Promise(resolve => setTimeout(resolve, 15));
-const url = 'https://ark.volcengine.com/region:cn-beijing/arkcli/login?callbackNonce=fake-test-nonce-123456&callbackPort=43210&sessionId=fake-test-session-123456';
-const pendingBrowser = (_url, signal) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true }));
-async function fixture(t, onSuccess = async () => {}, browserAuthorize = pendingBrowser) {
-  const home = await mkdtemp(join(tmpdir(), 'ark-oauth-test-')); let launch, onLaunch, bridgeCloses = 0;
-  const oauth = new ArkOAuth({ onSuccess, browserAuthorize, verifyCli: async () => {}, timeoutMs: 1000,
-    bridgeFactory: async options => { onLaunch = options.onLaunch; return { environment: env => ({ ...env, TEST_BRIDGE: 'private-path' }), close: async () => { bridgeCloses++; } }; },
+const url = 'https://ark.volcengine.com/region:cn-beijing/arkcli/login?state=test-session-123456789';
+const code = 'AbCdEf1234567890-_=';
+
+async function fixture(t, onSuccess = async () => {}) {
+  const home = await mkdtemp(join(tmpdir(), 'ark-oauth-test-'));
+  const launches = [];
+  const oauth = new ArkOAuth({ onSuccess, timeoutMs: 1000,
     spawn: (exe, args, options) => {
-      const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.exitCode = null;
-      child.kill = () => { child.killed = true; return true; }; launch = { exe, args, options, child }; return child;
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.exitCode = null;
+      child.kill = () => { child.killed = true; return true; };
+      launches.push({ exe, args, options, child });
+      return child;
     }
   });
-  t.after(async () => { oauth.dispose(); await oauth.current?.done; assert.ok(home.startsWith(join(tmpdir(), 'ark-oauth-test-'))); await rm(home, { recursive: true, force: true }); });
-  const start = async () => { const status = oauth.start({ accountId: 'a', executable: 'fake', home, revision: 'rev' }); await tick(); return status; };
-  const open = async () => { onLaunch(url); await tick(); };
-  const complete = async (code = 0) => { launch.child.exitCode = code; launch.child.emit('close', code); await tick(); };
-  return { oauth, home, start, open, complete, get launch() { return launch; }, get bridgeCloses() { return bridgeCloses; } };
+  t.after(async () => {
+    oauth.dispose(); await oauth.current?.done;
+    assert.ok(home.startsWith(join(tmpdir(), 'ark-oauth-test-')));
+    await rm(home, { recursive: true, force: true });
+  });
+  const start = async () => {
+    const status = oauth.start({ accountId: 'a', executable: 'fake', home, homeId: 'h', revision: 'rev' });
+    await tick();
+    return status;
+  };
+  const phase1 = async (text = `打开链接完成登录:\n${url}\n`, exitCode = 0) => {
+    const launch = launches[0];
+    launch.child.stdout.emit('data', Buffer.from(text));
+    launch.child.exitCode = exitCode;
+    launch.child.emit('close', exitCode);
+    await tick();
+  };
+  const submit = async (jobId, value = code) => {
+    oauth.submitCode(jobId, value);
+    await tick();
+  };
+  const phase2 = async (exitCode = 0) => {
+    const launch = launches[1];
+    launch.child.exitCode = exitCode;
+    launch.child.emit('close', exitCode);
+    await tick();
+    await oauth.current.done;
+  };
+  return { oauth, home, start, phase1, submit, phase2, launches };
 }
-test('only official same-device login URLs are accepted, never cross-device code pages', () => {
+
+test('只放行官方主机与路径的登录链接', () => {
   assert.equal(approvedLoginUrl(url), url);
-  for(const raw of ['https://signin.volcengine.com/authorize/oauth/authorize',url.replace('ark.volcengine.com','ark.volcengine.com.evil.test'),url.replace('https:','http:'),url.replace('ark.volcengine.com','user:pass@ark.volcengine.com')])assert.equal(approvedLoginUrl(raw),undefined);
+  assert.equal(extractLoginUrl(`请在浏览器打开 ${url} 完成登录`), url);
+  assert.equal(approvedLoginUrl('https://signin.volcengine.com/authorize/oauth/authorize'), 'https://signin.volcengine.com/authorize/oauth/authorize');
+  for (const raw of [
+    url.replace('ark.volcengine.com', 'ark.volcengine.com.evil.test'),
+    url.replace('https:', 'http:'),
+    url.replace('ark.volcengine.com', 'user:pass@ark.volcengine.com'),
+    'https://ark.volcengine.com/evil/path'
+  ]) assert.equal(approvedLoginUrl(raw), undefined);
+  assert.equal(extractLoginUrl('no link here'), undefined);
 });
-test('CLI identity stays isolated and cloud credentials are not inherited', () => {
+
+test('CLI 身份保持隔离，云凭据不继承', () => {
   const env = cliEnvironment('C:/fake-account', { PATH: 'safe', VOLC_ACCESSKEY: 'fake', ARK_API_KEY: 'fake', USERPROFILE: 'original' });
-  assert.equal(env.HOME, 'C:/fake-account'); assert.equal(env.USERPROFILE, 'C:/fake-account'); assert.equal(env.VOLC_ACCESSKEY, undefined); assert.equal(env.ARK_API_KEY, undefined); assert.equal(env.ARKCLI_NO_UPDATE_NOTIFIER, '1');
+  assert.equal(env.HOME, 'C:/fake-account');
+  assert.equal(env.USERPROFILE, 'C:/fake-account');
+  assert.equal(env.VOLC_ACCESSKEY, undefined);
+  assert.equal(env.ARK_API_KEY, undefined);
+  assert.equal(env.ARKCLI_NO_UPDATE_NOTIFIER, '1');
 });
-test('CLI JSON parse errors never echo raw output', () => {
-  assert.deepEqual(parseJsonOutput('{"models":[]}'), { models: [] }); assert.throws(() => parseJsonOutput('fake-sensitive-output'), error => !error.message.includes('fake-sensitive-output'));
+
+test('CLI JSON 解析错误不回显原始输出', () => {
+  assert.deepEqual(parseJsonOutput('{"models":[]}'), { models: [] });
+  assert.throws(() => parseJsonOutput('fake-sensitive-output'), error => !error.message.includes('fake-sensitive-output'));
 });
-test('login uses official broker same-device mode and a private browser bridge, not no-browser', async t => {
-  const f = await fixture(t); await f.start();
-  assert.deepEqual(f.launch.args, ['auth','login','--login-mode','broker','--credential-store','encrypted-file']);
-  assert.equal(f.launch.options.env.USERPROFILE, f.home); assert.equal(f.launch.options.env.TEST_BRIDGE, 'private-path'); assert.equal(f.launch.options.stdio[0], 'ignore');
-  assert.throws(() => f.oauth.start({}), /已有登录/); await f.open(); assert.equal(f.oauth.status().state, 'waiting');
+
+test('Phase 1 使用官方无浏览器两段式命令，不启动浏览器桥', async t => {
+  const f = await fixture(t);
+  await f.start();
+  assert.deepEqual(f.launches[0].args, ['auth', 'login', '--no-browser', '--credential-store', 'encrypted-file']);
+  assert.equal(f.launches[0].options.env.USERPROFILE, f.home);
+  assert.equal(f.launches[0].options.stdio[0], 'ignore');
+  assert.ok(!f.launches[0].options.env.PATH?.includes('browser-bridge'));
+  assert.throws(() => f.oauth.start({}), /已有登录/);
 });
-test('CLI output never becomes a public authorize URL or raw credentials', async t => {
-  const f = await fixture(t); await f.start();
-  f.launch.child.stdout.emit('data', Buffer.from(`fake-secret ${url}`)); assert.equal(f.oauth.status().url, undefined); assert.ok(!JSON.stringify(f.oauth.status()).includes('fake-secret'));
+
+test('Phase 1 只把白名单链接下发给设置页，CLI 其它输出不进入状态', async t => {
+  const f = await fixture(t);
+  await f.start();
+  await f.phase1(`fake-secret-token\n${url}\n`);
+  const status = f.oauth.status();
+  assert.equal(status.state, 'waiting');
+  assert.equal(status.url, url);
+  assert.ok(!JSON.stringify(status).includes('fake-secret-token'));
+  assert.equal(f.launches.length, 1);
 });
-test('success requires official CLI completion, identity verification and closes the browser/bridge', async t => {
-  let verified = false, signal;
-  const f = await fixture(t, async(id,rev) => { assert.equal(id,'a'); assert.equal(rev,'rev'); verified=true; }, (_url,value) => { signal=value; return pendingBrowser(_url,value); });
-  await f.start(); await f.open(); assert.equal(verified,false); await f.complete(); await f.oauth.current.done;
-  assert.equal(verified,true); assert.equal(f.oauth.status().state,'success'); assert.equal(signal.aborted,true); assert.equal(f.bridgeCloses,1);
+
+test('授权码只进 Phase 2 的 argv，不进入公开状态', async t => {
+  const f = await fixture(t);
+  const s = await f.start();
+  await f.phase1();
+  await f.submit(s.jobId);
+  assert.deepEqual(f.launches[1].args, ['auth', 'login', '--no-browser', '--code', code, '--credential-store', 'encrypted-file']);
+  assert.ok(!JSON.stringify(f.oauth.status()).includes(code));
+  await f.phase2();
 });
-test('CLI success without a controlled browser launch cannot bind an account', async t => {
-  let verified=false;const f=await fixture(t,async()=>{verified=true;});await f.start();await f.complete();
-  assert.equal(verified,false);assert.equal(f.oauth.status().state,'error');
+
+test('完整两段式成功后才绑定账号并核验身份', async t => {
+  let verified = false;
+  const f = await fixture(t, async (id, rev) => { assert.equal(id, 'a'); assert.equal(rev, 'rev'); verified = true; });
+  const s = await f.start();
+  await f.phase1();
+  assert.equal(verified, false);
+  await f.submit(s.jobId);
+  await f.phase2();
+  assert.equal(verified, true);
+  assert.equal(f.oauth.status().state, 'success');
 });
-test('cancel kills only owned CLI, aborts the browser and ignores late CLI success', async t => {
-  let verified=false,signal;const f=await fixture(t,async()=>{verified=true;},(_url,value)=>{signal=value;return pendingBrowser(_url,value);});
-  const s=await f.start();await f.open();assert.equal(f.oauth.cancel('wrong-id').state,'waiting');assert.equal(f.oauth.cancel(s.jobId).state,'cancelled');assert.equal(signal.aborted,true);assert.equal(f.launch.child.killed,true);
-  f.launch.child.emit('close',0);await tick();assert.equal(verified,false);
+
+test('CLI 未输出合法官方链接时安全失败', async t => {
+  const f = await fixture(t);
+  await f.start();
+  await f.phase1('https://evil.example.test/login');
+  assert.equal(f.oauth.status().state, 'error');
+  assert.equal(f.launches.length, 1);
 });
-test('user closing the browser before official CLI completes fails safely', async t => {
-  const f=await fixture(t,undefined,async()=>{});await f.start();await f.open();
-  assert.equal(f.oauth.status().state,'error');assert.equal(f.launch.child.killed,true);
+
+test('Phase 1 非零退出不会进入等待授权码状态', async t => {
+  const f = await fixture(t);
+  await f.start();
+  await f.phase1(`打开 ${url}`, 1);
+  assert.equal(f.oauth.status().state, 'error');
+  assert.equal(f.oauth.status().url, null);
 });
-test('browser launch failure kills CLI without exposing driver errors', async t => {
-  const f=await fixture(t,undefined,async()=>{throw Error('fake-sensitive-driver-error');});await f.start();await f.open();
-  assert.equal(f.oauth.status().state,'error');assert.equal(f.launch.child.killed,true);assert.ok(!JSON.stringify(f.oauth.status()).includes('fake-sensitive'));
+
+test('授权码格式、任务 ID 与状态都校验', async t => {
+  const f = await fixture(t);
+  const s = await f.start();
+  assert.throws(() => f.oauth.submitCode(s.jobId, code), /没有等待授权码/);
+  await f.phase1();
+  assert.throws(() => f.oauth.submitCode('wrong-id', code), /没有等待授权码/);
+  assert.throws(() => f.oauth.submitCode(s.jobId, 'short'), /格式不正确/);
+  assert.throws(() => f.oauth.submitCode(s.jobId, 'has spaces and\nnewline'), /格式不正确/);
+  assert.equal(f.oauth.status().state, 'waiting');
 });
-test('verification failure cannot claim login success', async t => {
-  const f=await fixture(t,async()=>{throw Error('fake-secret');});await f.start();await f.open();await f.complete();
-  assert.equal(f.oauth.status().state,'error');assert.ok(!JSON.stringify(f.oauth.status()).includes('fake-secret'));
+
+test('取消后迟到的 CLI 成功不会绑定账号', async t => {
+  let verified = false;
+  const f = await fixture(t, async () => { verified = true; });
+  const s = await f.start();
+  await f.phase1();
+  assert.equal(f.oauth.cancel('wrong-id').state, 'waiting');
+  assert.equal(f.oauth.cancel(s.jobId).state, 'cancelled');
+  f.launches[0].child.emit('close', 0);
+  await tick();
+  assert.equal(verified, false);
 });
-test('timeout aborts browser and closes its bridge without binding', async t => {
-  const f=await fixture(t);f.oauth.timeoutMs=80;await f.start();await f.open();await new Promise(resolve=>setTimeout(resolve,100));await f.oauth.current.done;
-  assert.equal(f.oauth.status().state,'error');assert.equal(f.launch.child.killed,true);assert.equal(f.bridgeCloses,1);
+
+test('身份核验失败不能宣称登录成功', async t => {
+  const f = await fixture(t, async () => { throw new Error('fake-secret'); });
+  const s = await f.start();
+  await f.phase1();
+  await f.submit(s.jobId);
+  await f.phase2();
+  assert.equal(f.oauth.status().state, 'error');
+  assert.ok(!JSON.stringify(f.oauth.status()).includes('fake-secret'));
+});
+
+test('超时终止等待中的两段式任务且不绑定', async t => {
+  const f = await fixture(t);
+  f.oauth.timeoutMs = 80;
+  await f.start();
+  await f.phase1();
+  await new Promise(resolve => setTimeout(resolve, 110));
+  await f.oauth.current.done;
+  assert.equal(f.oauth.status().state, 'error');
 });

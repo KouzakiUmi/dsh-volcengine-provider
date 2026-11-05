@@ -219,6 +219,9 @@ class FakeBackend {
       case 'cancelLogin':
         this.login = { ...this.login, state: 'cancelled', message: '登录已取消' };
         return { ok: true, value: { ...this.login } };
+      case 'submitLoginCode':
+        this.login = { ...this.login, state: 'verifying', message: '正在核验登录结果' };
+        return { ok: true, value: { ...this.login } };
       case 'quota':
         if (this.quotaMode === 'no-key') {
           return { ok: true, value: { accountId: request.accountId, plan: request.plan, state: 'no-key', windows: [], error: this.quotaError, updatedAt: new Date().toISOString() } };
@@ -475,9 +478,9 @@ test('网页登录：确认前不发起、确认后发起、轮询进度、成�
   assert.match(text, /无需另外填写 AK\/SK/);
   assert.ok(!harness.backend.calls.some((call) => call.op === 'startLogin'), '确认前不应发起 startLogin');
 
-  await harness.click('确认并打开官方登录页');
+  await harness.click('确认并生成登录链接');
   assert.ok(harness.backend.calls.some((call) => call.op === 'startLogin'));
-  assert.match(harness.joined(), /正在启动官方登录窗口/);
+  assert.match(harness.joined(), /正在生成官方登录链接/);
   assert.match(harness.joined(), /登录期间暂不能修改账号与套餐/);
   assert.equal(harness.buttonByText('编辑').props.disabled, true);
   assert.equal(harness.buttonByText('删除').props.disabled, true);
@@ -512,7 +515,7 @@ test('授权链接安全：白名单原样透传，其余一律不渲染，消�
   const harness = createHarness();
   await harness.flush();
   await harness.click('网页登录');
-  await harness.click('确认并打开官方登录页');
+  await harness.click('确认并生成登录链接');
 
   const official = 'https://signin.volcengine.com/authorize/volc?state=abc&redirect=ark';
   harness.backend.login = { jobId: 'job-1', accountId: 'default', state: 'waiting', message: '授权码 code=SECRET-CODE-123 已收到', url: official };
@@ -521,7 +524,7 @@ test('授权链接安全：白名单原样透传，其余一律不渲染，消�
   const anchor = harness.anchors()[0];
   assert.ok(anchor, '白名单链接应渲染');
   assert.equal(anchor.props.href, official, '授权链接必须原样转交');
-  assert.match(String(anchor.props.children), /打开官方授权页面/);
+  assert.match(String(anchor.props.children), /打开官方登录链接/);
   assert.match(harness.joined(), /\[REDACTED\]/);
   assert.ok(!harness.joined().includes('SECRET-CODE-123'), '授权码不得回显');
 
@@ -790,7 +793,7 @@ test('空账号可直接网页登录，确认前不写入，确认后自动创�
   assert.equal(backend.calls.some(c => ['saveAccount', 'startLogin'].includes(c.op)), false);
   await h.click('取消');
   assert.equal(backend.accounts.length, 0);
-  await h.click('网页登录'); await h.click('确认并打开官方登录页');
+  await h.click('网页登录'); await h.click('确认并生成登录链接');
   assert.equal(backend.accounts.length, 1);
   const start = backend.calls.find(c => c.op === 'startLogin');
   assert.equal(start.accountId, backend.accounts[0].id);
@@ -816,7 +819,7 @@ test('额度请求期间切换账号立即解锁查询且迟到响应不会覆�
 test('已有账号可登录其他身份，不覆盖原账号或套餐选择', async t => {
   const h = createHarness(); t.after(() => h.dispose()); await h.flush();
   const old = JSON.stringify(h.backend.accounts[0]);
-  await h.click('登录其他账号'); await h.click('确认并打开官方登录页');
+  await h.click('登录其他账号'); await h.click('确认并生成登录链接');
   assert.equal(h.backend.accounts.length, 2);
   assert.equal(JSON.stringify(h.backend.accounts[0]), old);
   assert.equal(h.backend.active['agent-plan'], 'default');
@@ -825,10 +828,10 @@ test('已有账号可登录其他身份，不覆盖原账号或套餐选择', as
 
 test('登录启动冲突会同步状态，下一次登录使用最新 revision', async t => {
   const h = createHarness(); t.after(() => h.dispose()); await h.flush(); h.backend.bump();
-  await h.click('网页登录'); await h.click('确认并打开官方登录页');
+  await h.click('网页登录'); await h.click('确认并生成登录链接');
   assert.equal(h.backend.login.state, 'idle');
   assert.match(h.joined(), /别处被改动/);
-  await h.click('网页登录'); await h.click('确认并打开官方登录页');
+  await h.click('网页登录'); await h.click('确认并生成登录链接');
   assert.equal(h.backend.login.state, 'launching');
 });
 
@@ -840,7 +843,7 @@ test('登录启动响应丢失时读回正在运行的任务，不误报失败�
     return result;
   };
   const h = createHarness({ backend }); t.after(() => h.dispose()); await h.flush();
-  await h.click('网页登录'); await h.click('确认并打开官方登录页');
+  await h.click('网页登录'); await h.click('确认并生成登录链接');
   assert.match(h.joined(), /检测到登录仍在进行/);
   assert.doesNotMatch(h.joined(), /启动登录失败/);
   assert.ok(h.buttonByText('取消登录'));
@@ -861,7 +864,7 @@ for (const hostStarted of [true, false]) {
       return handle(request);
     };
     const h = createHarness({ backend }); t.after(() => h.dispose()); await h.flush();
-    await h.click('网页登录'); await h.click('确认并打开官方登录页');
+    await h.click('网页登录'); await h.click('确认并生成登录链接');
     assert.match(h.joined(), /启动结果暂无法确认/);
     assert.doesNotMatch(h.joined(), /启动登录失败/);
     assert.equal(h.buttonByText('编辑').props.disabled, true);
@@ -1086,7 +1089,7 @@ test('空闲与成功登录状态保持紧凑，进行中仍保留状态和取�
   backend.login = { jobId: 'done', state: 'success', accountId: 'default', message: '身份已核验（测试）' };
   await h.click('刷新状态'); assert.match(h.joined(), /身份已核验（测试）/); assert.doesNotMatch(h.joined(), /网页登录状态/);
   backend.login = { jobId: 'waiting', state: 'waiting', accountId: 'default', message: '等待授权（测试）' };
-  await h.click('刷新状态'); assert.match(h.joined(), /网页登录状态/); assert.ok(h.buttonByText('取消登录'));
+  await h.click('刷新状态'); assert.match(h.joined(), /登录状态/); assert.ok(h.buttonByText('取消登录'));
 });
 
 test('作用域样式：使用 DSW 变量、焦点和 390px 内断点，并随插件卸载', async t => {
