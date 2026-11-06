@@ -29,7 +29,7 @@ dsh plugin --profile web add dsh-volcengine-provider
 3. 在账号卡片点击 **用于 Agent套餐 / 用于 编程套餐**，或在套餐卡片分别选择账号与启停。查看模型列表，按需拉取官方目录、刷新额度。
 4. 在 DSH 模型选择器中选择对应路由，开始使用。
 
-两段式登录需安装支持 `--no-browser` 的官方 [ArkCli](https://github.com/volcengine/ark-cli)；本机未做真机验收，目标 CLI 版本待复核。详细配置见[使用说明](docs/usage.md)。
+两段式登录需安装支持 `arkcli auth login volc-sso --no-browser` 的官方 [ArkCli](https://github.com/volcengine/ark-cli)（Windows 1.0.37 已实测）。详细配置见[使用说明](docs/usage.md)。
 
 ## 功能介绍
 
@@ -74,10 +74,10 @@ Coding Plan 展示剩余百分比；Agent Plan 同时展示 AFP 已用量、上�
 
 - **DSH Core**：`>=0.2.1-rc.4 <0.3.0 || >=0.2.2-rc.1 <0.3.0`（已核验宿主：桌面 `0.2.1-rc.4`、手机版 `0.2.2-rc.1`）；`@earendil-works/pi-ai`：`>=1.1.0 <2.0.0`（已核验 `1.1.0` 与 `1.5.0`）。
 - **Node.js**：`>=22.19.0`。
-- **ArkCli**：两段式登录需支持 `arkcli auth login --no-browser` 两段式（`--credential-store encrypted-file` 与 `--code`）；本机没有安装 ArkCli，两段式未做真机验收，目标 CLI 版本与 URL 输出格式待复核。
+- **ArkCli**：两段式登录需支持 `arkcli auth login volc-sso --no-browser`；Phase 1 输出、session 接力与 Phase 2 解析已用真实 1.0.37（Windows）核验，真实授权码端到端登录未验收。
 - 当前支持国内个人 Agent Plan / Coding Plan。
 
-0.2.13 已发布到 npm `latest`。已完成隔离测试、目标 Core 加载与离线界面验证；`--no-browser` 两段式登录未做真机验收，在线额度、推理调用和生产安装的边界见[验证记录](docs/validation.md)。
+0.2.14 已发布到 npm `latest`。已完成隔离测试、目标 Core 加载与离线界面验证；两段式登录的 Phase 1/接力/Phase 2 解析已用真实 ArkCli 1.0.37 核验，真实授权码端到端登录、在线额度、推理调用和生产安装的边界见[验证记录](docs/validation.md)。
 
 账号删除仅移除插件元数据，已保存的官方 CLI 身份目录会保留。反馈问题时请提供版本、套餐类型和脱敏错误，凭据、授权码及授权链接请勿提交。
 

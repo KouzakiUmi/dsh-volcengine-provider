@@ -52,6 +52,18 @@ def verify_package(directory, tag=None):
         for entry in [manifest.get('main'), manifest.get('exports', {}).get('./client'), manifest.get('dsh', {}).get('bundle', {}).get('patch')]:
             if not isinstance(entry, str) or not entry.startswith('./') or f'package/{entry[2:]}' not in names:
                 raise ValueError('Manifest entry missing from archive')
+        # 运行时模块的相对导入必须闭包在归档内；漏打一个源文件会让宿主加载即失败。
+        for member in members:
+            if not member.name.endswith('.mjs'):
+                continue
+            text = archive.extractfile(member).read().decode('utf-8')
+            base = PurePosixPath(member.name).parent
+            for specifier in re.findall(r'''(?:import|export)[^'"]*?from\s*['"]([^'"]+)['"]|import\s*\(\s*['"]([^'"]+)['"]''', text):
+                target = specifier[0] or specifier[1]
+                if not target.startswith('./'):
+                    continue
+                if str(base.joinpath(target[2:])) not in names:
+                    raise ValueError(f'Package module import missing from archive: {member.name} imports {target}')
     return {'file': package.name, 'version': version, 'sha256': digest, 'files': len(names)}
 
 

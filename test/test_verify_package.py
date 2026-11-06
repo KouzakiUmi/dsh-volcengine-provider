@@ -84,6 +84,16 @@ class VerifyPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Development'):
             module.verify_package(self.directory)
 
+    def test_missing_module_import(self):
+        self.fixture({'package/lib/oauth.mjs': 'import { x } from "./login-url.mjs";'})
+        with self.assertRaisesRegex(ValueError, 'import'):
+            module.verify_package(self.directory)
+
+    def test_present_module_import(self):
+        self.fixture({'package/lib/oauth.mjs': 'import { x } from "./login-url.mjs";', 'package/lib/login-url.mjs': 'export const x = 1;'})
+        result = module.verify_package(self.directory, 'v0.1.0')
+        self.assertEqual(result['files'], 11)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -66,7 +66,8 @@ export class ArkOAuth {
       child.once('close', code => {
         job.controller.signal.removeEventListener('abort', abort);
         if (job.process === child) job.process = undefined;
-        if (code === 0 && this.alive(job)) resolve(output);
+        // 官方 CLI 的错误分支也可能以退出码 0 返回（输出 {"ok":false}），成功必须两者都满足。
+        if (code === 0 && this.alive(job) && !/"ok"\s*:\s*false/.test(output)) resolve(output);
         else reject(new Error('ArkCli 命令未完成'));
       });
     });
@@ -91,8 +92,11 @@ export class ArkOAuth {
       await mkdir(job.home, { recursive: true, mode: 0o700 });
       if (!this.alive(job)) return;
       const env = cliEnvironment(job.home);
-      // Phase 1：官方 CLI 打印登录链接，并把 PKCE session 落盘到隔离目录后退出。
-      const phase1 = await this.command(job, executable, ['auth', 'login', '--no-browser', '--credential-store', 'encrypted-file'], env);
+      // Phase 1：`auth login volc-sso --no-browser` 打印跨设备登录链接、把 PKCE session 落盘到
+      // 隔离目录后退出（真机 ArkCli 1.0.37 验证）。注意与官方随包文档的说法相反：实测
+      // `auth login --no-browser`（非 TTY）打印 callbackPort URL 后不退出、持续等待本地
+      // 回调并阻塞；以实测行为为准，故 Phase 1 必须用 volc-sso 形态。
+      const phase1 = await this.command(job, executable, ['auth', 'login', 'volc-sso', '--no-browser'], env);
       if (!this.alive(job)) return;
       const url = extractLoginUrl(phase1);
       if (!url) throw new Error('CLI 未输出可核验的官方登录链接');
@@ -102,10 +106,11 @@ export class ArkOAuth {
       if (!this.alive(job)) return;
       // 授权码只经 RPC 存到本 job 内存，不进 public 状态、不落盘。
       const code = await this.waitForCode(job).then(() => job.code);
-      if (!this.alive(job) || !code) return;
-      // Phase 2：官方 CLI 用落盘 session + 授权码完成交换，凭据仍由 encrypted-file 管理。
-      await this.command(job, executable, ['auth', 'login', '--no-browser', '--code', code, '--credential-store', 'encrypted-file'], env);
+      // 授权码用完即清，不依赖 Phase 2 结果，避免失败路径在内存中残留。
       job.code = undefined;
+      if (!this.alive(job) || !code) return;
+      // Phase 2：官方 CLI 用落盘 session + 授权码完成交换（官方 next_command 形态），凭据由 encrypted-file 管理。
+      await this.command(job, executable, ['auth', 'login', '--no-browser', '--code', code, '--credential-store', 'encrypted-file'], env);
       if (!this.alive(job)) return;
       job.public.state = 'verifying';
       job.public.message = '正在核验登录身份与双订阅 profile';

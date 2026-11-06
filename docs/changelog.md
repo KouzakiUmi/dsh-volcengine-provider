@@ -2,6 +2,13 @@
 
 [返回主页](../README.md)
 
+## 0.2.14
+
+- 修复 Phase 1 登录命令：改用 `arkcli auth login volc-sso --no-browser`（真实 ArkCli 1.0.37 验证打印跨设备 URL、session 落盘后退出）；0.2.13 的 `auth login --no-browser` 实测是同设备回调流程，持续等待本地回调端口导致登录卡住。
+- CLI 错误分支以退出码 0 返回 `{"ok":false}` 时按失败处理（真实 1.0.37 实测），不再误判成功。
+- 构建先清空 `lib/` 再复制 `src/` 全部 `.mjs`/`.json` 模块（不再维护硬编码文件清单），修复历史构建漏发 `login-url.mjs` 导致宿主加载即失败的问题；`check.mjs` 新增 `src/` 相对导入闭包校验，`verify-package.py` 新增归档内 `lib/*.mjs` 导入闭包校验。
+- 已用真实 ArkCli 1.0.37（Windows）核验 Phase 1 URL 输出格式、session 接力与 Phase 2 pending session 解析；真实授权码端到端登录未验收。实测另覆盖本机 Core smoke 与离线单测，见[验证记录](validation.md)。
+
 ## 0.2.13
 
 - 网页登录改为官方 CLI `arkcli auth login --no-browser --credential-store encrypted-file` 两段式：Phase 1 生成并校验官方登录链接后展示在设置页，用户在任意设备浏览器完成 SSO 取得 base64 授权码；Phase 2 在设置页粘贴授权码，由官方 CLI 用 `arkcli auth login --no-browser --code <授权码> --credential-store encrypted-file` 完成 PKCE 交换与凭据落盘。授权码只在内存传给 CLI 子进程 argv，不落盘、不进 UI 状态、不进日志；插件不处理 token 端点、不读取网页内容、不启动浏览器、不拦截系统 URL opener。

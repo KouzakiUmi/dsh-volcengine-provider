@@ -2,7 +2,7 @@
 
 ## 版本与证据
 
-目标 DSH Core 为 **`>=0.2.1-rc.4 <0.3.0 || >=0.2.2-rc.1 <0.3.0`**（已核验宿主为桌面 `0.2.1-rc.4` 与手机版 `0.2.2-rc.1`），消费的 `@earendil-works/pi-ai` 声明为 `>=1.1.0 <2.0.0`（已核验 `1.1.0` 与 `1.5.0`）；ArkCli 命令契约对照官方 CLI 帮助、随包官方 Skills 与官方仓库文档。**目标 CLI 需支持 `arkcli auth login --no-browser` 两段式（`--credential-store encrypted-file` 与 `--code`），未在本机验收**：本机没有安装 ArkCli，Phase 1 的 URL 输出格式、session 接力与 Phase 2 授权码交换均待复核。既有 1.0.37 帮助、raw action `--dry-run` 与旧同设备真实验收仅作历史记录，不作为两段式已验收的依据；真实额度和推理调用尚未执行。
+目标 DSH Core 为 **`>=0.2.1-rc.4 <0.3.0 || >=0.2.2-rc.1 <0.3.0`**（已核验宿主为桌面 `0.2.1-rc.4` 与手机版 `0.2.2-rc.1`），消费的 `@earendil-works/pi-ai` 声明为 `>=1.1.0 <2.0.0`（已核验 `1.1.0` 与 `1.5.0`）；ArkCli 命令契约对照官方 CLI 帮助、随包官方 Skills 与官方仓库文档。**目标 CLI 需支持 `arkcli auth login volc-sso --no-browser` 两段式**：已用本机 ArkCli 1.0.37 实测 Phase 1 URL 输出格式、session 接力与 Phase 2 pending session 解析；真实授权码端到端登录未验收。既有 1.0.37 帮助、raw action `--dry-run` 与旧同设备真实验收仅作历史记录，不作为两段式已验收的依据；真实额度和推理调用尚未执行。
 
 ## OAuth
 
@@ -11,10 +11,10 @@
 Phase 1 —— 生成官方登录链接：
 
 ```sh
-arkcli auth login --no-browser --credential-store encrypted-file
+arkcli auth login volc-sso --no-browser
 ```
 
-CLI 打印官方登录 URL。插件只放行官方 CLI 输出的白名单官方链接：校验精确 HTTPS 主机/路径后把链接展示在设置页，不构造或改写会话参数（URL 的具体输出格式与字段待复核）。用户在任意设备的浏览器完成 SSO，官方页面给出 base64 授权码。
+已用真实 ArkCli 1.0.37（Windows）验证：`volc-sso` 打印跨设备登录 URL、把 PKCE session 落盘到 `.arkcli/.sso-pending.json` 后以退出码 0 结束（含 JSON `authorize_url` / `next_command` / `stage: authorize_pending`，授权码有效期 600 秒）。不带 `volc-sso` 的 `auth login --no-browser` 是同设备回调流程：打印 `callbackPort` URL 后持续等待本地回调，不能用。CLI 打印官方登录 URL。插件只放行官方 CLI 输出的白名单官方链接：校验精确 HTTPS 主机/路径后把链接展示在设置页，不构造或改写会话参数（URL 输出格式与字段已按 1.0.37 实测核验）。用户在任意设备的浏览器完成 SSO，官方页面给出 base64 授权码。
 
 Phase 2 —— 粘贴授权码完成登录：
 
@@ -24,7 +24,7 @@ arkcli auth login --no-browser --code <授权码> --credential-store encrypted-f
 
 官方 CLI 用授权码完成 PKCE 交换并把凭据落盘到隔离账号目录。插件不处理 OAuth token 端点、不读取网页或授权码内容：授权码只在内存中作为 CLI 子进程 argv 传入，不落盘、不进 UI 状态、不进日志。
 
-安全边界改写为只放行官方 CLI 输出的白名单官方链接 + 两段式流程；不再限定「仅已核验的 Windows ArkCli 1.0.37」，也不再写「不回退 cross-device 授权码流程」。插件不打包 Windows 原生桥二进制、不依赖 `playwright-core`。目标 CLI 需支持 `--no-browser` 两段式；本机没有安装 ArkCli，两段式**未做真机验收**，Phase 1 的 URL 输出格式、Phase 1 → Phase 2 的 session 接力与 Phase 2 授权码交换均须后续用真实 CLI 复核（待复核），不得表述为已通过真实登录。
+安全边界改写为只放行官方 CLI 输出的白名单官方链接 + 两段式流程；不再限定「仅已核验的 Windows ArkCli 1.0.37」，也不再写「不回退 cross-device 授权码流程」。插件不打包 Windows 原生桥二进制、不依赖 `playwright-core`。目标 CLI 需支持 `auth login volc-sso --no-browser` 两段式；已用本机 ArkCli 1.0.37 实测 Phase 1 URL 输出、session 落盘接力与 Phase 2 的 pending session 解析（假授权码进入内容校验，错误分支以退出码 0 返回 `{"ok":false}`，插件按输出判定失败）。真实授权码完成登录的端到端验收仍未执行，不得表述为已通过完整真实登录。
 
 若 CLI 要求选择消费场景、签协议或配置 Key，插件会失败而不是替用户签署或创建/轮转 Key。缺少 CLI 或 CLI 不支持两段式时明确失败，不降级到旧的浏览器启动链。
 
@@ -32,7 +32,7 @@ arkcli auth login --no-browser --code <授权码> --credential-store encrypted-f
 
 官方 CLI 同时只有一个 active identity，跨身份登录可能清空并重建原 profile。因此每个插件账号独立设置 `HOME`、`USERPROFILE` 和 `XDG_CONFIG_HOME`，清除子进程继承的 Ark/Volc/AWS 身份变量，使用账号自己的 `.arkcli` 目录。
 
-这不改变原 CLI 默认身份。Windows 下已通过两个不同的临时 HOME/USERPROFILE 目录运行本机 CLI，确认它在 USERPROFILE 下创建 `.arkcli`。该环境只传给 CLI 子进程；插件不再启动浏览器。两段式的真实授权码交换未在本机验收，待复核。
+这不改变原 CLI 默认身份。Windows 下已通过两个不同的临时 HOME/USERPROFILE 目录运行本机 CLI，确认它在 USERPROFILE 下创建 `.arkcli`。该环境只传给 CLI 子进程；插件不再启动浏览器。两段式的真实授权码端到端交换仍未验收；Phase 1 命令、URL 格式与 Phase 2 pending session 解析已用真实 1.0.37 核验。
 
 登录完成后依次调用：
 

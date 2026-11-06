@@ -82,10 +82,10 @@ test('CLI JSON 解析错误不回显原始输出', () => {
   assert.throws(() => parseJsonOutput('fake-sensitive-output'), error => !error.message.includes('fake-sensitive-output'));
 });
 
-test('Phase 1 使用官方无浏览器两段式命令，不启动浏览器桥', async t => {
+test('Phase 1 使用官方跨设备 volc-sso 命令，不启动浏览器桥', async t => {
   const f = await fixture(t);
   await f.start();
-  assert.deepEqual(f.launches[0].args, ['auth', 'login', '--no-browser', '--credential-store', 'encrypted-file']);
+  assert.deepEqual(f.launches[0].args, ['auth', 'login', 'volc-sso', '--no-browser']);
   assert.equal(f.launches[0].options.env.USERPROFILE, f.home);
   assert.equal(f.launches[0].options.stdio[0], 'ignore');
   assert.ok(!f.launches[0].options.env.PATH?.includes('browser-bridge'));
@@ -139,6 +139,26 @@ test('Phase 1 非零退出不会进入等待授权码状态', async t => {
   await f.phase1(`打开 ${url}`, 1);
   assert.equal(f.oauth.status().state, 'error');
   assert.equal(f.oauth.status().url, null);
+});
+
+test('CLI 输出 ok:false 时即使退出码为 0 也算失败', async t => {
+  const f = await fixture(t);
+  await f.start();
+  // 官方 CLI 的错误分支可能以退出码 0 返回 {"ok":false,...}（1.0.37 实测）。
+  await f.phase1(`{"ok":false,"error":{"message":"x"}}\n${url}`, 0);
+  assert.equal(f.oauth.status().state, 'error');
+  assert.equal(f.oauth.status().url, null);
+});
+
+test('volc-sso 的真实 JSON 输出可提取白名单链接', async t => {
+  const f = await fixture(t);
+  await f.start();
+  // ArkCli 1.0.37 实测 Phase 1 输出形态：中文提示行 + 官方 JSON（authorize_pending，无 ok 字段）。
+  const jsonUrl = 'https://signin.volcengine.com/authorize/oauth/authorize?client_id=trn%3Asignin%3A%3A%3Adevtools%2Fcross-device&state=abc123';
+  await f.phase1(`请在任意设备的浏览器中打开以下 URL 完成火山 SSO 认证：\n\n${jsonUrl}\n\n{"authorize_url":"${jsonUrl}","expires_in_sec":600,"method":"sso_no_browser","next_command":"arkcli auth login --no-browser --code <code>","stage":"authorize_pending"}`, 0);
+  const status = f.oauth.status();
+  assert.equal(status.state, 'waiting');
+  assert.equal(status.url, jsonUrl);
 });
 
 test('授权码格式、任务 ID 与状态都校验', async t => {

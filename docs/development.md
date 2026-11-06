@@ -15,7 +15,11 @@ python scripts/pack.py --output-dir test-output/local-package
 python scripts/verify-package.py test-output/local-package
 ```
 
-`lib/` 为生成目录。不再构建或打包 Windows 原生桥二进制，也不再恢复 Windows CI 桥产物；归档校验不再要求桥文件或 POSIX opener 执行位。
+`lib/` 为生成目录。构建前整体清空 `lib/` 再复制 `src/` 下全部 `.mjs` 模块与 `.json` 快照（`client.js` 与 `remote.mjs` 合并进 bundle），避免已删除模块的残留文件被一起打包或加载。`check.mjs` 校验 `src/` 内相对导入闭包，`verify-package.py` 校验归档内 `lib/*.mjs` 相对导入都能解析——曾发生 `login-url.mjs` 漏入 `modules` 列表导致产物加载即失败。不再构建或打包 Windows 原生桥二进制，也不再恢复 Windows CI 桥产物；归档校验不再要求桥文件或 POSIX opener 执行位。
+
+本地装到 Profile 用 `link:` 协议（`dsh plugin --profile desktop add "link:D:/Software Projects/dsh-volcengine-provider"`，路径含空格须加引号）：`file:` 目录安装是安装时拷贝，重建后宿主仍跑旧代码；`link:` 符号链接到工作区，`scripts/build.mjs` 重建 `lib/` 后重启 DSH 即生效。
+
+本机 `.dsh` 运行时（node/python）带 Low Mandatory Level：在 `danger-full-access` 会话里运行会降为 Low 进程，`rm`/`tempfile` 等写 Medium 目录时报 EPERM/PermissionError。本地构建与测试用无 Low 标签的系统 Node/Python（如 `C:\Program Files\nodejs\node.exe`、用户级 Python312）；若只用 `.dsh` 运行时，需把临时目录指向 `.dsh` 内（Low 可写）。
 
 打包产出 `.tgz` 与同名 `.tgz.sha256`；已有同名文件会报错，可换用新的输出目录。
 
@@ -86,7 +90,7 @@ git push origin v<version>
 - [逐模型思考验证](../scripts/model-thinking-smoke.mjs)：使用同一目标 Core 与 SDK，覆盖两套餐的声明默认、原生档、关闭、未强制及动态 Auto，HTTP 全部由本地替身响应。
 - [模型能力验证](../scripts/model-capabilities-smoke.mjs)：使用同一目标 Core 与 SDK，验证两套餐的图片能力声明、工具选择和已准备请求的隔离；使用临时状态、假凭据与 HTTP 替身。
 - [浏览器验证脚本](../scripts/browser-smoke.cjs)：使用外部环境提供的 Playwright（经 `DSH_TEST_PLAYWRIGHT_ROOT` 解析）、Chrome 与目标前端资产；插件本身不再依赖 `playwright-core`。RPC 为假数据，HTTP(S) 请求被阻断。
-- `--no-browser` 两段式登录未做真机验收：本机没有安装 ArkCli，Phase 1 的 URL 输出格式、session 接力与 Phase 2 授权码交换均待用真实 CLI 复核（待复核）。
+- 两段式登录 Phase 1 使用 `arkcli auth login volc-sso --no-browser`（不带 volc-sso 的 `auth login --no-browser` 是同设备回调流程，会持续等待本地回调端口）。Phase 1 输出、session 接力与 Phase 2 解析已用真实 ArkCli 1.0.37（Windows）核验；真实授权码端到端登录未验收。
 
 浏览器脚本环境变量：
 

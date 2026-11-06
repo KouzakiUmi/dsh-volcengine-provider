@@ -4,7 +4,15 @@
 
 - 已核验宿主有两个：桌面 **DSH Core 0.2.1-rc.4**（`DSH NEXT` 的 Core / llm / llm-pi-ai / credentials / launch-environment / typert-protocol manifest，pi-ai `1.1.0`）与手机版 **the agent harness 0.2.2-rc.1**（Node 24.22.1，pi-ai `1.5.0`）。五个 Core 包的 Peer 声明为 `>=0.2.1-rc.4 <0.3.0 || >=0.2.2-rc.1 <0.3.0`，pi-ai 为 `>=1.1.0 <2.0.0`；范围内其他版本未逐一验证。并集范围使 npm 默认 semver 与宿主 `includePrerelease` 判定同时匹配两个已核验的预发行宿主。
 - ArkCli **1.0.37** 的命令帮助、随包官方 Skills、raw action 注册及无网络预览。
-- 单元业务测试使用假凭据、假 CLI 与外部网络替身；两段式登录未做真机验收，边界见 0.2.13 段。
+- 单元业务测试使用假凭据、假 CLI 与外部网络替身；两段式 Phase 1/接力/Phase 2 解析已用真实 ArkCli 1.0.37 核验，真实授权码端到端登录未验收，边界见 0.2.14 段。
+
+## 0.2.14 Phase 1 命令与构建闭包修复
+
+- 修复 Phase 1 命令为 `arkcli auth login volc-sso --no-browser`：真实 ArkCli 1.0.37（Windows，非 TTY）实测该形态打印跨设备登录 URL、把 PKCE session 落盘 `.arkcli/.sso-pending.json` 后以退出码 0 结束，输出 JSON 含 `authorize_url`/`next_command`/`stage: authorize_pending`，授权码 600 秒有效。0.2.13 使用的 `auth login --no-browser` 在同一隔离环境实测打印 `callbackPort` URL 后不退出、持续等待本地回调——此行为与官方随包文档「非 TTY 即 Phase 1」的说法冲突，以实测观察为准。
+- CLI 错误分支以退出码 0 返回 `{"ok":false}`（1.0.37 实测），`oauth.mjs` 的 `command()` 现在要求退出码 0 且输出不含 `"ok":false` 才判成功；Phase 2 用官方 `next_command` 形态 `auth login --no-browser --code <授权码> --credential-store encrypted-file`，实测能从 pending session 解析并做授权码内容校验。
+- 授权码取出后立即清除内存副本，不再依赖 Phase 2 结果；白名单提取用官方 `authorize_url` JSON 形态补充回归用例。
+- 构建改为先清空 `lib/` 再复制 `src/` 全部 `.mjs`/`.json`（不再维护硬编码清单），修复 0.2.13 漏发 `login-url.mjs` 导致已发布 tarball 中 `lib/oauth.mjs` 导入失败的问题（npm 0.2.13 tarball 的 lib/ 确实缺该文件，已核实）。`check.mjs` 新增 `src/` 相对导入闭包校验；`verify-package.py` 新增归档内 `lib/*.mjs` 相对导入可解析校验，可拦截同类漏发。
+- 真实授权码端到端登录仍未验收：以上真机核验覆盖 Phase 1 输出/退出、session 接力与 Phase 2 pending 解析及错误形态，未执行真实 SSO 完成的完整登录。真实额度、推理调用、生产安装与跨平台真实 CLI 行为仍未验收。
 
 ## 0.2.13 无浏览器两段式登录
 
@@ -12,7 +20,7 @@
 - 插件不处理 token 端点、不读取网页或授权码内容（授权码只在内存传给 CLI 子进程 argv，不落盘、不进 UI 状态、不进日志）、不启动浏览器、不拦截系统 URL opener；不再打包 Windows 原生桥二进制、不再依赖 `playwright-core`。CI 不再产出 Windows 桥 artifact，归档校验不再要求桥文件。
 - 安全边界改写为只放行官方 CLI 输出的白名单官方链接 + 两段式流程；不再限定「仅已核验的 Windows ArkCli 1.0.37」，也不再写「不回退 cross-device 授权码流程」。身份核验（whoami / auth status / 双套餐 profile）、账号隔离目录、原子绑定、取消/超时/写入保护、白名单身份摘要、OAuth 账号走 CLI raw action 查额度（不需要 AK/SK）全部保留。
 - 实测范围：本机 Core smoke（隔离 Host 加载、RPC、双路由、目录、路由失败保留、dispose，HTTP 由本地替身响应）与离线单测（假 CLI、假凭据、外部网络替身）覆盖两段式的链接白名单校验、授权码只经 argv 传递、不落盘/不入日志、取消/超时/写入保护等非浏览器路径；具体测试数量见「当前结果」。
-- 未验收边界：本机没有安装 ArkCli，`--no-browser` 两段式**未做真机验收**，不得表述为已通过真实登录。后续须用真实 CLI 复核 Phase 1 的 URL 输出格式、Phase 1 → Phase 2 的 session 接力，以及 Phase 2 授权码交换与凭据落盘（待复核）。真实额度、推理调用、生产安装与跨平台真实 CLI 行为仍未验收。
+- 未验收边界：发布时本机没有安装 ArkCli，`--no-browser` 两段式未做真机验收；后续实测发现该版本 Phase 1 命令在同设备回调流程下不退出导致登录卡住，已在 0.2.14 修复。
 
 ## 0.2.12 本机 Core 版本适配
 
@@ -94,7 +102,7 @@ node --test test/*.test.mjs
 - HMAC 签名测试使用独立 OpenSSL 推导的固定向量，不只比较实现自身的两次输出。
 - 构建生成 Host 模块与返回导出对象的惰性 Client 工厂；不新增安装构建依赖。
 
-当前结果：**356 项 JavaScript 测试、8 项 Python 归档测试通过**，43 个 JavaScript 源文件语法/边界检查通过，构建包含 15 个模块/Client 产物，归档不再包含浏览器桥文件。模型管理测试覆盖旧状态迁移、套餐/模型开关、逐模型参数、请求默认值及适配器生命周期；发布测试覆盖 OIDC 身份、版本与渠道、归档校验（含 `catalog-snapshot.json` 与 `consumption-rates.json` 必需项）、registry 错误分类及发布后完整性检查。
+当前结果：**358 项 JavaScript 测试、10 项 Python 归档测试通过**，43 个 JavaScript 源文件语法/边界检查通过，构建包含 16 个模块/Client 产物，归档不再包含浏览器桥文件。模型管理测试覆盖旧状态迁移、套餐/模型开关、逐模型参数、请求默认值及适配器生命周期；发布测试覆盖 OIDC 身份、版本与渠道、归档校验（含 `catalog-snapshot.json` 与 `consumption-rates.json` 必需项）、registry 错误分类及发布后完整性检查。
 
 ### 实际 Core 隔离加载
 
@@ -150,7 +158,7 @@ node --test test/*.test.mjs
 - 思考映射切回继承时读取目录默认而不是旧覆盖，并清除不兼容默认档位；路由失败不把保存值称为生效值；恢复停用模型明确会重新启用。
 - 额度查询不锁住账号管理；切换账号后立即允许新查询，迟到响应不覆盖新账号数据。
 - 真实 React/Chrome 离线模拟完成“空账号 → 确认 → 假 OAuth 成功 → 选择并启用 Agent 套餐 → 查询额度”。该离线 UI 测试不打开真实官方页面；真实同设备 OAuth 另按下节独立验收。
-- 当前登录使用官方 CLI 的 `--no-browser` 两段式：Phase 1 生成官方登录链接，Phase 2 由用户粘贴授权码完成；不启动浏览器、不使用启动桥（见 0.2.13 段，未做真机验收）。
+- 当前登录使用官方 CLI 的 `volc-sso --no-browser` 两段式：Phase 1 生成官方登录链接，Phase 2 由用户粘贴授权码完成；不启动浏览器、不使用启动桥（见 0.2.14 段）。
 
 ## 浏览器隔离修复验证（2026-10-27）
 

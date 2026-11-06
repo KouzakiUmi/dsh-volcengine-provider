@@ -426,7 +426,7 @@ const LOGIN_CODE = 'AbCdEf1234567890-_=';
 async function completeLogin(controller, spawnCalls) {
 	await waitFor(() => spawnCalls.length >= 1, { label: 'Phase 1 CLI 启动' });
 	const first = spawnCalls[0];
-	assert.deepEqual(first.args, ['auth', 'login', '--no-browser', '--credential-store', 'encrypted-file']);
+	assert.deepEqual(first.args, ['auth', 'login', 'volc-sso', '--no-browser']);
 	first.child.stdout.emit('data', Buffer.from(`请在浏览器打开 ${OFFICIAL_LOGIN_URL} 完成登录`));
 	first.child.exitCode = 0; first.child.emit('close', 0);
 	await waitFor(() => controller.oauth.status().state === 'waiting', { label: '等待授权码' });
@@ -448,7 +448,7 @@ test('登录成功后把两套订阅分别绑定到同一账号', async () => {
 	assert.equal(status.state, 'launching');
 	await waitFor(() => spawnCalls.length, { label: 'CLI 进程启动' });
 	assert.equal(spawnCalls.length, 1);
-	assert.deepEqual(spawnCalls[0].args, ['auth', 'login', '--no-browser', '--credential-store', 'encrypted-file']);
+	assert.deepEqual(spawnCalls[0].args, ['auth', 'login', 'volc-sso', '--no-browser']);
 	await completeLogin(controller, spawnCalls);
 	await waitFor(() => controller.store.current.oauth['default'], { label: 'OAuth 绑定' });
 	const binding = controller.store.current.oauth['default'];

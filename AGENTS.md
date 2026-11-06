@@ -22,9 +22,9 @@
 - Client 构建产物注册懒加载工厂 `factory(require)`，直接返回 `{ name, inject, apply }`；宿主不传入 CommonJS 的 `module` 或 `exports`。隔离和浏览器测试使用相同的单参数调用契约。
 - Host 使用目标 Core 的公开 `PiAiAdapter` 与其消费的 `@earendil-works/pi-ai`；五个 Core 包的 peer 声明为 `>=0.2.1-rc.4 <0.3.0 || >=0.2.2-rc.1 <0.3.0`，pi-ai 声明为 `>=1.1.0 <2.0.0`。已核验宿主为桌面 `DSH NEXT` 的 `0.2.1-rc.4`（pi-ai `1.1.0`）与手机版 the agent harness `0.2.2-rc.1`（pi-ai `1.5.0`），范围内其他版本未逐一验证。并集范围让 npm 默认 semver 与宿主 `includePrerelease` 判定同时匹配两个已核验的预发行宿主；不设置 `engines.dsh`，避免宿主改为忽略 peer 判定。插件为每个已准备调用建立独立 Provider 请求钩子，区分原始 off 与未设置档位；V4.1 使用 adaptive+effort，其余已确认可调模型使用 enabled+effort，未指定档位保持服务端默认。Client 通过统一 RPC 调用 Host。入口见 [Host](src/index.mjs)、[模型级适配器](src/ark-adapter.mjs)、[载荷处理](src/messages-payload.mjs)、[设置页](src/client.js)及[RPC](src/remote.mjs)。
 - 两套套餐分别保存启用状态与所选账号，关闭套餐保留账号选择；逐模型开关和参数按账号、套餐、模型隔离。图片输入与工具调用以复选框调整并分别支持恢复继承，文本输入始终开启；图片开关只影响本地声明，工具禁用保留历史并阻止新工具调用。当前 Core/SDK 仅支持文本和图片输入，模型原生音频/视频能力与当前传输边界分开记录。账号元数据与凭据引用由 [状态模块](src/state.mjs) 管理；版本 1 状态兼容迁移为版本 2，修改采用 revision 校验与原子写入。写入新能力字段后的旧版回退限制与处置见[使用说明](docs/usage.md)。
-- 登录改用官方 CLI `arkcli auth login --no-browser --credential-store encrypted-file` 两段式。Phase 1：CLI 打印官方登录 URL，插件只校验官方主机/路径白名单后把链接展示在设置页；用户在任意设备浏览器完成 SSO，官方页面给出 base64 授权码。Phase 2：用户在设置页粘贴授权码，插件调用 `arkcli auth login --no-browser --code <授权码> --credential-store encrypted-file`，由官方 CLI 完成 PKCE 交换与凭据落盘。插件不处理 token 端点、不读取网页或授权码内容（授权码只在内存传给 CLI 子进程 argv，不落盘、不进 UI 状态、不进日志）、不启动浏览器、不拦截系统 URL opener。每次登录仍使用独立 session CLI home，身份和个人套餐核验完成后原子切换绑定；取消、失败或冲突不覆盖上次可用身份。旧绑定没有 homeId 时继续使用原账号目录；已准备请求固定其绑定目录。
+- 登录使用官方 CLI `arkcli auth login volc-sso --no-browser` 两段式。Phase 1：CLI 打印跨设备官方登录 URL、把 PKCE session 落盘后退出（真实 1.0.37 已验证；不带 volc-sso 的 `auth login --no-browser` 是同设备回调流程，会持续等待本地回调，不能用），插件只校验官方主机/路径白名单后把链接展示在设置页；用户在任意设备浏览器完成 SSO，官方页面给出 base64 授权码。Phase 2：用户在设置页粘贴授权码，插件调用 `arkcli auth login --no-browser --code <授权码> --credential-store encrypted-file`，由官方 CLI 完成 PKCE 交换与凭据落盘。插件不处理 token 端点、不读取网页或授权码内容（授权码只在内存传给 CLI 子进程 argv，不落盘、不进 UI 状态、不进日志）、不启动浏览器、不拦截系统 URL opener。每次登录仍使用独立 session CLI home，身份和个人套餐核验完成后原子切换绑定；取消、失败或冲突不覆盖上次可用身份。旧绑定没有 homeId 时继续使用原账号目录；已准备请求固定其绑定目录。
 - 安全边界改为只放行官方 CLI 输出的白名单官方链接 + 两段式流程，不再限定「仅已核验的 Windows ArkCli 1.0.37」，也不再写「不回退 cross-device 授权码流程」。插件不再打包 Windows 原生桥二进制、不再依赖 `playwright-core`；CI 不再产出 Windows 桥 artifact，归档校验不再要求桥文件。身份核验（whoami / auth status / 双套餐 profile）、账号隔离目录、原子绑定、取消/超时/写入保护、白名单身份摘要、OAuth 账号走 CLI raw action 查额度（不需要 AK/SK）全部保留。
-- 未真机验收：本机没有安装 ArkCli，`--no-browser` 两段式未做真机验收，不得表述为已通过真实登录。后续须用真实 CLI 复核 Phase 1 的 URL 输出格式、Phase 1 → Phase 2 的 session 接力，以及 Phase 2 授权码交换与凭据落盘；复核完成前相关口径标注「待复核」。验证边界见验证记录。
+- 验收边界：已用真实 ArkCli 1.0.37 验证 Phase 1 的 URL 输出格式、session 落盘接力、Phase 2 pending session 解析与错误分支 `{"ok":false}` 退出码 0 的行为；真实授权码端到端登录仍未验收，不得表述为已通过完整真实登录。验证边界见验证记录。
 - 空账号直接提供登录入口（生成官方登录链接 + 粘贴授权码）；新增 OAuth 身份在用户确认后自动创建本地账号，无需先填写技术 ID。已有账号时保留“登录其他账号”，不覆盖原账号及套餐选择。已验证账号可通过显式动作选择并启用指定套餐。
 - 登录进度传输错误保留进行中状态、取消入口及写入保护，退避重试；启动响应丢失时先读回任务；补读同样失败时保留结果未知的保护态并持续退避同步，确认无任务后才允许重新操作。额度查询按套餐独立忙态，不阻塞账号编辑或切换；身份变化后丢弃旧额度响应。缺少绑定或隔离 Profile 时说明受限操作，不提供必失败的请求。
 - 删除账号后清理其编辑草稿；模型继承参数基于目录 defaults 而非含覆盖的 effective；路由更新失败时保存配置不得称为已生效。停用模型的恢复默认入口需明确会重新启用。
@@ -46,7 +46,7 @@
 2. Agent/Coding 独立启停并保留账号选择；逐模型开关、参数及额度按账号与套餐隔离，错误结果不产生伪造额度。
 3. 登录取消、超时、设置冲突和卸载具有明确结果；凭据内容不进入 UI 或插件元数据，授权码只在内存传给 CLI 子进程 argv，不落盘、不进 UI 状态、不进日志；只放行官方 CLI 输出的白名单官方链接与两段式流程，不启动浏览器、不拦截系统 URL opener。
 4. 显示名变更须同步相关测试和真实组件截图，同时保留模块技术标识断言。
-5. 当前目标 Core 与外部接口的已验证范围以 [验证记录](docs/validation.md) 为准；`--no-browser` 两段式未做真机验收，正式宣称通过前须用真实 CLI 复核 Phase 1 的 URL 输出格式、session 接力与 Phase 2 授权码交换，相关条目标注「待复核」。
+5. 当前目标 Core 与外部接口的已验证范围以 [验证记录](docs/validation.md) 为准；`volc-sso` 两段式的 Phase 1 命令、URL 输出与 Phase 2 session 接力已用真实 ArkCli 1.0.37 核验；真实授权码端到端登录仍未验收。
 
 ## 构建与测试
 
@@ -57,7 +57,7 @@ node --test test/*.test.mjs
 python -m unittest discover -s test -p 'test_*.py'
 ```
 
-构建生成 `lib/`，源码与生成产物分开维护。归档包含运行入口、必要模型快照、用户文档与许可证。额外 Core / 离线界面验证入口见 [开发文档](docs/development.md)。
+构建先清空 `lib/` 再复制 `src/` 全部 `.mjs`/`.json` 模块，源码与生成产物分开维护；`check.mjs` 校验 `src/` 相对导入闭包，`verify-package.py` 校验归档内 `lib/*.mjs` 相对导入可解析。归档包含运行入口、必要模型快照、用户文档与许可证。额外 Core / 离线界面验证入口与 `.dsh` 运行时 Low 标签注意事项见 [开发文档](docs/development.md)。
 
 ## 发布约定
 

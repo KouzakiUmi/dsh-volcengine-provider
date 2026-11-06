@@ -13,7 +13,7 @@
 
 ## 生成官方登录链接 + 粘贴授权码
 
-1. 预先安装官方 [ArkCli](https://github.com/volcengine/ark-cli)，确认 CLI 支持 `--no-browser` 两段式；目标 CLI 版本待复核，本机未安装、未做真机验收。
+1. 预先安装官方 [ArkCli](https://github.com/volcengine/ark-cli)，确认 CLI 支持 `auth login volc-sso --no-browser` 两段式；Windows 1.0.37 已实测，其他版本未逐一验证。
 2. 打开 **设置 → 火山方舟 Provider**。没有账号时直接点击 **生成官方登录链接**；已有账号时先展开 **管理账号**，添加另一个身份可点击 **登录其他账号**，重登则点击对应账号的 **生成官方登录链接**。
 3. 阅读页内确认提示，再点击 **确认并生成官方登录链接**。新增登录身份会自动创建本地账号，无需填写账号 ID 或密钥引用；**新增账号**保留给手动配置凭据引用的场景。
 4. 插件校验官方 CLI 输出的登录链接（官方主机/路径白名单）并展示在设置页。在**任意设备**的浏览器打开该链接，完成官方 SSO 验证；官方页面会给出 base64 授权码，复制它。插件不启动浏览器、不读取网页内容。
@@ -23,9 +23,9 @@
 
 已登录的旧账号会尝试只读补齐官方身份摘要。官方未返回用户名时显示账号 ID 或本地备注，不把本地备注冒充官方用户名。高级凭据引用、Profile 和路由标识按需展开。
 
-插件两段式分别调用 `arkcli auth login --no-browser --credential-store encrypted-file`（Phase 1，CLI 打印官方登录 URL）与 `arkcli auth login --no-browser --code <授权码> --credential-store encrypted-file`（Phase 2，官方 CLI 完成 PKCE 交换与凭据落盘）。插件只放行官方 CLI 输出的白名单官方链接 + 两段式流程；不处理 token 端点、不读取网页或授权码内容、不启动浏览器、不拦截系统 URL opener，也不再打包 Windows 原生桥二进制或依赖 `playwright-core`。
+插件两段式分别调用 `arkcli auth login volc-sso --no-browser`（Phase 1，CLI 打印跨设备官方登录 URL、把 PKCE session 落盘后退出）与 `arkcli auth login --no-browser --code <授权码> --credential-store encrypted-file`（Phase 2，官方 CLI 完成 PKCE 交换与凭据落盘）。插件只放行官方 CLI 输出的白名单官方链接 + 两段式流程；不处理 token 端点、不读取网页或授权码内容、不启动浏览器、不拦截系统 URL opener，也不再打包 Windows 原生桥二进制或依赖 `playwright-core`。
 
-两段式登录要求本机安装支持 `--no-browser` 两段式的官方 ArkCli，不再要求 Chrome、Playwright 或特定平台，也不再限定 Windows ArkCli 1.0.37。本机没有安装 ArkCli，`--no-browser` 两段式**未做真机验收**：Phase 1 的 URL 输出格式、session 接力与 Phase 2 授权码交换均待复核；缺少 CLI 或 CLI 不支持两段式时明确失败，不回退到旧的浏览器桥流程。详见验证记录。
+两段式登录要求本机安装支持 `volc-sso --no-browser` 的官方 ArkCli（Windows 1.0.37 已实测），不再要求 Chrome、Playwright 或特定平台。Phase 1 的 URL 输出、session 接力与 Phase 2 pending session 解析已用真实 1.0.37 核验；真实授权码端到端登录未验收。缺少 CLI 或 CLI 不支持两段式时明确失败，不回退到旧的浏览器桥流程。详见验证记录。
 
 ### 登录状态
 
