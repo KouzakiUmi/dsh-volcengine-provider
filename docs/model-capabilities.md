@@ -4,35 +4,32 @@
 
 ## 来源优先级
 
-1. [Agent Plan Pi 接入](https://ark.volcengine.com/region:cn-beijing/docs/agent-plan-personal-pi.md)、[Coding Plan Pi 接入](https://ark.volcengine.com/region:cn-beijing/docs/coding-plan-personal-ai-pi.md)中的明确整数，分别按套餐采用。
-2. 对应套餐的[Agent 概览](https://ark.volcengine.com/region:cn-beijing/docs/agent-plan-personal-plan-overview.md)、[Coding 概览](https://ark.volcengine.com/region:cn-beijing/docs/coding-plan-personal-plan-overview.md)。
-3. 官方文档明确指向的 `dsh-volcengine-plugin@0.8.4` [Plan 目录](https://unpkg.com/dsh-volcengine-plugin@0.8.4/plan-models.json)补缺失整数、别名。其官方来源链见 [DeepSeek Harness 接入文档](https://ark.volcengine.com/region:cn-beijing/docs/agent-plan-personal-deepseek-harness.md#configure-via-plugin)。参考文件 SHA-256：`9d921b7a989af72c49ee69ad61d9ab4fc1863af6fc7c4f1c6c6b04968716a9ad`。
+1. 官方 Plan 目录（`dsh-volcengine-plugin@0.8.4` [plan-models.json](https://unpkg.com/dsh-volcengine-plugin@0.8.4/plan-models.json)）的注册精确整数与厂商公开参数（阿里云/智谱/月之暗面/深度求索官方模型页）：Pi 接入示例的文案值与之冲突时，以注册整数为准。
+2. [Agent Plan Pi 接入](https://ark.volcengine.com/region:cn-beijing/docs/agent-plan-personal-pi.md)、[Coding Plan Pi 接入](https://ark.volcengine.com/region:cn-beijing/docs/coding-plan-personal-ai-pi.md)与对应套餐概览：仅用于确认模型清单归属、别名、1M 上下文能力与思考档位声明；其 `contextWindow`/`maxTokens` 文案值不作为参数依据。
+3. 官方文档明确指向的 `dsh-volcengine-plugin@0.8.4` [Plan 目录](https://unpkg.com/dsh-volcengine-plugin@0.8.4/plan-models.json)：补缺失整数、别名。其官方来源链见 [DeepSeek Harness 接入文档](https://ark.volcengine.com/region:cn-beijing/docs/agent-plan-personal-deepseek-harness.md#configure-via-plugin)。参考文件 SHA-256：`9d921b7a989af72c49ee69ad61d9ab4fc1863af6fc7c4f1c6c6b04968716a9ad`。
 4. 目标 Core（Peer 声明 `>=0.2.1-rc.4 <0.3.0 || >=0.2.2-rc.1 <0.3.0`，已核验宿主 `0.2.1-rc.4` 与 `0.2.2-rc.1`）消费的 `@earendil-works/pi-ai@1.1.0` [发行元数据](https://registry.npmjs.org/@earendil-works/pi-ai/1.1.0)、[类型契约](https://unpkg.com/@earendil-works/pi-ai@1.1.0/dist/types.d.ts)与[模型源](https://github.com/earendil-works/pi/tree/main/packages/ai)。类型契约限定 `Model.input` 只含 `text`、`image`，并规定 `thinkingLevelMap` 的 `null` 表示该思考档位不受支持。本机手机版宿主消费的 `1.5.0` 已用真实 Core/SDK smoke 复核该模态与思考档位行为未变，但未逐字段比对类型定义；据此把声明放宽为 `>=1.1.0 <2.0.0`。其他 Provider 的原厂参数仅用于交叉核对，不覆盖更窄的 Plan 配置。旧 `@mariozechner/pi-ai` 不能冒充目标消费版本。
-
-同一 Pi 示例同时使用 `256000`、`262144`、`393216`、`1024000` 和 `1048576`，因此不做统一的“K 乘 1000/1024”转换。
 
 ## 固化配置
 
 表中名称为便于查阅的模型族；实际请求 ID 保留 ArkCli 返回的 `output_name`。精确控制面版本与调用别名的对应关系在快照 `aliases` 中逐条声明，不去日期、不替换标点猜测版本。
 
-| 模型 | 上下文 | Agent 最大输出 | Coding 最大输出 | 输入 | 来源/说明 |
-|---|---:|---:|---:|---|---|
-| Doubao Seed Evolving | 1048576 | 256000 | 256000 | text、image | 两套 Plan Pi |
-| Doubao Seed 2.1 Pro | 1048576 | 256000 | 256000 | text、image | 两套 Plan Pi |
-| Doubao Seed 2.1 Lite | 1048576 | 256000 | 256000 | text、image | 两套 Plan Pi |
-| Doubao Seed 2.0 Mini | 262144 | 128000 | 128000 | text、image | 两套 Plan Pi |
-| Kimi K3.1 Pro | 1024000 | 1024000 | 1024000 | text、image | 两套 Plan Pi 当前版均为 1024k/1024k（原厂宣传不作依据） |
-| DeepSeek V4.1 Flash | 1048576 | 393216 | 393216 | text、image | 两套 Plan Pi |
-| DeepSeek V4.1 Flash Economy | 1024000 | 393216 | 393216 | text、image | 两套 Plan Pi 当前版为 1024k 上下文 |
-| Kimi K2.8 Preview | 1048576 | 1048576 | 1048576 | text、image | 两套 Plan Pi；当前快照不沿用旧 131072 |
-| GLM 5.3 Flash | 1048576 | 128000 | 128000 | text、image | 两套 Plan Pi |
-| GLM 5.3 | 1048576 | 128000 | 128000 | text | 两套 Plan Pi |
-| DeepSeek V4 Pro GA | 1048576 | 393216 | 393216 | text | 两套 Plan Pi，不从 V4.1 推导视觉能力 |
-| DeepSeek V4 Flash GA | 1048576 | 393216 | 393216 | text | 两套 Plan Pi |
-| Kimi K3 | 1048576 | 128000 | 65536 | text、image | 分别采用 Agent/Coding Pi；Coding 是保守示例配置 |
-| Kimi K2.7 Code | 262144 | 32768 | 32768 | text、image | Pi 未列；官方 Plan 插件精确整数，两套套餐概览均记 256k/32k |
-| MiniMax M3 | 1048576 | 131072 | 131072 | Agent: text；Coding: text、image | 官方 Plan 插件补容量；Coding 概览明确视觉，Agent 视觉未单独核实 |
-| ark-code-latest（Auto） | 256000 | 32000 | 32000 | text | 官方插件的控制台路由配置，不代表固定模型的真实边界 |
+| 模型 | 上下文 | 最大输出 | 输入 | 来源/说明 |
+|---|---:|---:|---|---|
+| Doubao Seed Evolving | 1048576 | 262144 | text、image | 官方 Plan 目录注册值（Pi 的 256000 为文案取整） |
+| Doubao Seed 2.1 Pro | 1048576 | 262144 | text、image | 官方 Plan 目录注册值 |
+| Doubao Seed 2.1 Lite | 1048576 | 262144 | text、image | 官方 Plan 目录注册值 |
+| Doubao Seed 2.0 Mini | 262144 | 131072 | text、image | 官方 Plan 目录注册值（Pi 的 128000 为文案取整） |
+| Kimi K3.1 Pro | 1048576 | 131072 | text、image | 厂商默认输出 131072，上限 1M 可协商；阿里云注册 1048576/1048576 |
+| DeepSeek V4.1 Flash | 1048576 | 393216 | text、image | 两套 Plan Pi 与原厂注册一致 |
+| DeepSeek V4.1 Flash Economy | 1048576 | 393216 | text、image | 官方 Plan 目录 `1048576`（Pi 的 1024000 为文案值） |
+| Kimi K2.8 Preview | 1048576 | 131072 | text、image | 官方 Plan 目录 `131072`（Pi/概览的 1024k 输出为文案误抄上下文） |
+| GLM 5.3 Flash | 1048576 | 131072 | text、image | 官方 Plan 目录 `131072`；智谱文档"128K" |
+| GLM 5.3 | 1048576 | 131072 | text | 官方 Plan 目录 `131072` |
+| DeepSeek V4 Pro GA | 1048576 | 393216 | text | 两套 Plan Pi，不从 V4.1 推导视觉能力 |
+| DeepSeek V4 Flash GA | 1048576 | 393216 | text | 两套 Plan Pi |
+| Kimi K3 | 1048576 | 131072 | text、image | 厂商默认输出 131072，上限 1M；Coding Pi 的 65536 为保守示例 |
+| Kimi K2.7 Code | 262144 | 32768 | text、image | 官方 Plan 插件精确整数，两套套餐概览均记 256k/32k |
+| ark-code-latest（Auto） | 256000 | 32000 | text | 官方插件的控制台路由配置，不代表固定模型的真实边界 |
 
 ### 控制台路由：清单记 `auto`，调用用 `ark-code-latest`
 
@@ -44,7 +41,7 @@
 - 目录同时返回 `auto` 与 `ark-code-latest` 时按首次出现合并为一条；同一个原始名字重复出现仍判为坏目录。
 - 真正未知的未来版本仍走 32K/8K 保守回退，不按日期或名称猜测版本。
 
-官方概览把 `minimax-m3`、`kimi-k2.7-code` 标注为“即将下线”，快照保留其现有参数并在能力备注中说明；下线后清单不再返回，条目不会凭空保留。
+官方概览把 `kimi-k2.7-code` 标注为"即将下线"、`minimax-m3` 已下线（上游清单不再返回）；快照按当前实际拉取清单保留 `kimi-k2.7-code` 并说明，移除 `minimax-m3`，旧缓存中的对应行按首次拉取时的固化值继续展示直到下次拉取。
 
 ### 模型层模态与当前传输边界
 
@@ -62,16 +59,17 @@
 
 当前传输无法表达这些模态：`@earendil-works/pi-ai@1.1.0`（并在本机 `1.5.0` 上以真实 Core/SDK 复核）的 `Model.input` 只允许 `text` 与 `image`，[Messages 接口](https://ark.volcengine.com/region:cn-beijing/docs/messages-api.md)没有音频、视频内容块，[DSH 接入文档](https://ark.volcengine.com/region:cn-beijing/docs/agent-plan-personal-deepseek-harness.md#configure-manually)也只让在模型上写 `input: [text, image]`。因此快照只声明 text/image 是传输边界下的子集，不代表模型不支持音频或视频；官方目录与模型页的 audio/video 声明单独记录，不据此改动快照声明。
 
-### 明确保留的冲突
+### 按原厂/注册值修正的文案冲突
 
-- Coding Kimi K3：Pi 明确为 `65536`；Coding 概览为 `128k`、官方插件为 `131072`。本次选择较保守且整数明确的 Pi 配置，不宣称已实测服务端硬上限。
-- Economy 上下文：两套 Plan Pi 当前版为 `1024000`、概览写 `1024k`，均与 1M 标称值不同；官方插件目录仍为 `1048576`。按对应 Plan Pi 选值，不把 `1024000` 与 `1048576` 默认为相等。
-- Kimi K3.1 Pro 输出：两套 Plan Pi 与概览当前版均为 `1024000`；旧版 Pi 曾写 `128000`，本次以当前版为准并同步更新快照。
-- Kimi K2.8 输出：当前两套 Plan Pi 为 `1048576`，旧官方插件为 `131072`；采用当前套餐接入文档。
-- Doubao 2.1/Evolving 输出：Pi 为 `256000`，官方插件为 `262144`；Mini 则是 `128000` 与 `131072`。逐字段按上述优先级保留，不统一二进制化。
-- GLM 输出：Pi 为 `128000`，官方插件/原厂 pi-ai 为 `131072`；采用套餐 Pi。
-- MiniMax M3 模态：Coding 概览写“支持多模态视觉理解”，官方 Plan 目录在 Agent 与 Coding 两段的 `input` 都只有 `text`。按来源优先级 Coding 采用 text/image、Agent 保持 text；两个官方来源的冲突保留，不把目录的 text 单独解释为模型无视觉能力。
-- 官方 Plan 目录含两套套餐概览未列的条目（如 `doubao-seed-2.1-turbo`、`doubao-seed-2.0-lite`）。默认快照参考套餐概览与 Pi 文档，不因旧目录条目自动补入；实际清单以所选账号的 ArkCli 返回为准。目录另定义的 `deepseek-latest`、`minimax-latest`、`kimi-latest` 别名在 Coding Pi 的 Model Name 清单中亦未列出，未核实精确对应关系前不并入 `aliases`。
+Pi 接入示例是面向配置文件的"文案值"，与模型注册的真实整数值不一致时，一律以官方 Plan 目录注册整数与厂商公开参数为准（Pi 的十进制取整与"输出=上下文"的误抄不进入快照）：
+
+- Doubao 2.1/Evolving 输出：Pi `256000` → 注册 `262144`；Mini `128000` → `131072`。
+- Kimi K3.1 Pro：上下文 `1024000`（Pi）→ `1048576`（阿里云注册）；输出 `1024000`（Pi，等于上下文的可疑值）→ 厂商默认 `131072`，上限 1M 可协商。
+- Kimi K2.8 Preview 输出：`1048576`（Pi/概览，复制上下文的文案错误）→ 注册 `131072`。
+- V4.1 Flash Economy 上下文：`1024000`（Pi）→ `1048576`（官方 Plan 目录）。
+- GLM 5.3/5.3 Flash 输出：`128000`（Pi）→ `131072`（官方 Plan 目录，智谱"128K"）。
+- Kimi K3 输出：Agent `128000`/Coding `65536`（保守示例）→ 统一 `131072`（厂商默认，上限 1M）。
+- MiniMax M3：已下线，上游清单不再返回，从快照移除；官方概览的"即将下线"标注对应本次实际状态。
 
 ## 消耗倍率
 

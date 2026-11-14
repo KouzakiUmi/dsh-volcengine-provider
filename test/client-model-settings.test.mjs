@@ -417,13 +417,46 @@ function createHarness(options = {}) {
     await flush();
   };
   const select = () => find(tree, (node) => node.type === 'select');
+  const keys = async (node, ...keyNames) => {
+    assert.ok(node, '要按键的控件不存在');
+    for (const key of keyNames) node.props.onKeyDown({ key, preventDefault() {} });
+    await flush();
+  };
+  /**
+   * 容量滑块：先取消「继承」复选框激活滑块，再把滑块移到目标档位。
+   * value 必须等于该行的某个刻度；固定档位之外的值需先在 stops 中出现（如保存过的自定义值）。
+   */
+  const slide = async (label, value, { inherited } = {}) => {
+    const inheritBox = byLabel('input', `继承 ${label}`);
+    if (inherited !== undefined) {
+      assert.ok(inheritBox, `缺少继承复选框：${label}`);
+      if (inheritBox.props.checked !== inherited) await toggle(inheritBox, inherited);
+    } else if (inheritBox?.props.checked) {
+      await toggle(inheritBox, false);
+    }
+    const slider = find(tree, (node) => node.props?.role === 'slider' && node.props?.['aria-label'] === label)[0];
+    assert.ok(slider, `缺少容量滑块：${label}`);
+    const choices = String(slider.props['data-stops'] ?? '').split(',').filter(Boolean).map(Number);
+    const index = choices.indexOf(value);
+    assert.ok(index >= 0, `刻度中没有 ${label}=${value}（可选：${choices.join(', ')}）`);
+    let current = slider.props['aria-valuenow'];
+    const key = index > current ? 'ArrowRight' : 'ArrowLeft';
+    // 每步重新取节点：组件重渲染后 props 更新，aria-valuenow 前进。
+    while (current !== index) {
+      const node = find(tree, (n) => n.props?.role === 'slider' && n.props?.['aria-label'] === label)[0];
+      node.props.onKeyDown({ key, preventDefault() {} });
+      await flush();
+      current = find(tree, (n) => n.props?.role === 'slider' && n.props?.['aria-label'] === label)[0].props['aria-valuenow'];
+    }
+    return slider;
+  };
   const dispose = () => {
     mini.unmount();
     for (const disposer of disposers) disposer();
   };
 
   return {
-    backend, mini, flush, find, texts, joined, checkboxes, clicks, change, toggle, select, dispose, byLabel,
+    backend, mini, flush, find, texts, joined, checkboxes, clicks, change, toggle, select, keys, slide, dispose, byLabel,
     get tree() { return tree; }
   };
 }
@@ -570,7 +603,7 @@ test('模型参数保存：只发有效字段，负载形状符合契约', async
   await harness.flush();
 
   await harness.clicks(harness.byLabel('button', '模型参数 doubao-seed-2-1-pro-260915'));
-  await harness.change(harness.byLabel('input', '上下文长度 contextWindow'), '131072');
+  await harness.slide('上下文长度 contextWindow', 131072);
   await harness.change(harness.byLabel('input', '温度 temperature'), '0.3');
   await harness.change(harness.byLabel('select', '默认思考档位 defaultReasoning'), 'high');
   await harness.clicks(harness.find(harness.tree, (node) => node.type === 'button' && String(node.props.children) === '保存参数')[0]);
@@ -594,8 +627,8 @@ test('模型参数：空数字等于继承，档位与思考模式按三态写�
   await harness.flush();
 
   await harness.clicks(harness.byLabel('button', '模型参数 doubao-seed-2-1-pro-260915'));
-  // 清空上下文长度 → 继承目录默认，负载里不应出现该字段。
-  await harness.change(harness.byLabel('input', '上下文长度 contextWindow'), '');
+  // 「继承目录默认」勾选 → 负载里不应出现该字段（默认值即勾选态，无需再动）。
+  await harness.toggle(harness.byLabel('input', '继承 上下文长度 contextWindow'), true);
   await harness.change(harness.byLabel('select', '思考档位映射 reasoningEfforts'), 'none');
   await harness.change(harness.byLabel('select', '默认思考档位 defaultReasoning'), 'none');
   await harness.change(harness.byLabel('select', '思考模式 forceAdaptiveThinking'), 'true');
@@ -727,22 +760,22 @@ test('模型能力草稿按账号隔离，切换账号不串用未保存值', as
   const open = () => harness.clicks(harness.byLabel('button', `模型参数 ${id}`));
 
   await open();
-  await harness.change(harness.byLabel('input', '上下文长度 contextWindow'), '131072');
+  await harness.slide('上下文长度 contextWindow', 131072);
   await harness.toggle(harness.byLabel('input', '图片输入'), false);
   await harness.toggle(harness.byLabel('input', '工具调用'), false);
   await harness.change(account(), 'other');
   assert.equal(harness.byLabel('input', '图片输入'), undefined, '切换账号后旧编辑器应立即关闭');
 
   await open();
-  assert.equal(harness.byLabel('input', '上下文长度 contextWindow').props.value, '');
+  assert.equal(harness.byLabel('input', '继承 上下文长度 contextWindow').props.checked, true);
   assert.equal(harness.byLabel('input', '图片输入').props.checked, true);
   assert.equal(harness.byLabel('input', '工具调用').props.checked, true);
-  await harness.change(harness.byLabel('input', '上下文长度 contextWindow'), '32768');
+  await harness.slide('上下文长度 contextWindow', 131072);
   await harness.toggle(harness.byLabel('input', '图片输入'), false);
 
   await harness.change(account(), 'default');
   await open();
-  assert.equal(harness.byLabel('input', '上下文长度 contextWindow').props.value, '');
+  assert.equal(harness.byLabel('input', '继承 上下文长度 contextWindow').props.checked, true);
   assert.equal(harness.byLabel('input', '图片输入').props.checked, true);
   assert.equal(harness.byLabel('input', '工具调用').props.checked, true);
 });
@@ -751,15 +784,8 @@ test('模型参数：非法输入只提示错误，不发 RPC', async () => {
   const harness = createHarness();
   await harness.flush();
 
+  // 容量字段已是档位滑块，非法文本输入不再可能；温度仍保留数字输入并校验。
   await harness.clicks(harness.byLabel('button', '模型参数 doubao-seed-2-1-pro-260915'));
-  await harness.change(harness.byLabel('input', '上下文长度 contextWindow'), 'abc');
-  await harness.clicks(harness.find(harness.tree, (node) => node.type === 'button' && String(node.props.children) === '保存参数')[0]);
-
-  assert.ok(!harness.backend.calls.some((item) => item.op === 'saveModelSettings'), '非法输入不应发起 saveModelSettings');
-  assert.match(harness.joined(), /上下文长度 contextWindow 须为正整数/);
-
-  // 温度越界同样不发 RPC。
-  await harness.change(harness.byLabel('input', '上下文长度 contextWindow'), '');
   await harness.change(harness.byLabel('input', '温度 temperature'), '5');
   await harness.clicks(harness.find(harness.tree, (node) => node.type === 'button' && String(node.props.children) === '保存参数')[0]);
   assert.ok(!harness.backend.calls.some((item) => item.op === 'saveModelSettings'), '越界温度不应发起 saveModelSettings');
@@ -885,12 +911,12 @@ test('停用的模型仍可编辑参数，且参数负载不改动启用状态',
   await harness.toggle(harness.byLabel('input', '启用模型 doubao-seed-2-1-pro-260915'), false);
   // 停用后仍能打开参数编辑器。
   await harness.clicks(harness.byLabel('button', '模型参数 doubao-seed-2-1-pro-260915'));
-  await harness.change(harness.byLabel('input', '最大输出 token maxTokens'), '4096');
+  await harness.slide('最大输出 token maxTokens', 32768);
   await harness.clicks(harness.find(harness.tree, (node) => node.type === 'button' && String(node.props.children) === '保存参数')[0]);
 
   const call = harness.backend.calls.find((item) => item.op === 'saveModelSettings');
   assert.ok(call, '未发起 saveModelSettings');
-  assert.deepEqual(call.settings, { maxTokens: 4096 });
+  assert.deepEqual(call.settings, { maxTokens: 32768 });
   // 参数负载不得夹带启用状态：后端会保留模型原有的停用状态与参数。
   assert.ok(!Object.hasOwn(call.settings, 'enabled'));
   // 重新启用时也不清参数。
@@ -898,6 +924,80 @@ test('停用的模型仍可编辑参数，且参数负载不改动启用状态',
   const enableCall = harness.backend.calls.filter((item) => item.op === 'setModelEnabled').pop();
   assert.equal(enableCall.enabled, true);
   assert.ok(!Object.hasOwn(enableCall, 'settings'), '模型开关不应携带参数负载');
-  assert.deepEqual(harness.backend.modelSettings['default:agent-plan:doubao-seed-2-1-pro-260915'], { maxTokens: 4096 });
+  assert.deepEqual(harness.backend.modelSettings['default:agent-plan:doubao-seed-2-1-pro-260915'], { maxTokens: 32768 });
   harness.dispose();
+});
+
+test('思考预设一键写入常用档位，无需手写 JSON', async t => {
+  const harness = createHarness();
+  t.after(() => harness.dispose());
+  await harness.flush();
+  const id = 'doubao-seed-2-1-pro-260915';
+  await harness.clicks(harness.byLabel('button', `模型参数 ${id}`));
+  // 该模型目录档位为 low/medium/high：关闭预设不可用且有原因。
+  const offPreset = harness.byLabel('button', '思考预设：关闭思考（如模型支持）');
+  assert.equal(offPreset.props.disabled, true);
+  assert.match(offPreset.props.title, /未声明 off 档位/);
+  const save = () => harness.clicks(harness.find(harness.tree, (node) => node.type === 'button' && String(node.props.children) === '保存参数')[0]);
+
+  await harness.clicks(harness.byLabel('button', '思考预设：省 token（低档位）'));
+  await save();
+  const calls = harness.backend.calls.filter((item) => item.op === 'saveModelSettings');
+  assert.deepEqual(calls.at(-1).settings, { defaultReasoning: 'low' });
+  // 预设只改默认档位不动映射：负载里没有 reasoningEfforts 与思考模式。
+  assert.ok(!Object.hasOwn(calls.at(-1).settings, 'reasoningEfforts'));
+  assert.ok(!Object.hasOwn(calls.at(-1).settings, 'forceAdaptiveThinking'));
+
+  await harness.clicks(harness.byLabel('button', '思考预设：最强思考（高档位）'));
+  await save();
+  assert.deepEqual(harness.backend.calls.filter((item) => item.op === 'saveModelSettings').at(-1).settings, { defaultReasoning: 'high' });
+
+  await harness.clicks(harness.byLabel('button', '思考预设：服务端默认（不强制档位）'));
+  await save();
+  assert.deepEqual(harness.backend.calls.filter((item) => item.op === 'saveModelSettings').at(-1).settings, { defaultReasoning: null });
+
+  await harness.clicks(harness.byLabel('button', '思考预设：继承目录默认'));
+  await save();
+  assert.deepEqual(harness.backend.calls.filter((item) => item.op === 'saveModelSettings').at(-1).settings, {});
+});
+
+test('关闭思考预设在目录已声明 off 时只改默认档位', async t => {
+  const harness = createHarness();
+  t.after(() => harness.dispose());
+  await harness.flush();
+  const id = 'ark-code-latest';
+  await harness.clicks(harness.byLabel('button', `模型参数 ${id}`));
+  const offPreset = harness.byLabel('button', '思考预设：关闭思考（如模型支持）');
+  assert.equal(offPreset.props.disabled, false);
+  await harness.clicks(offPreset);
+  await harness.clicks(harness.find(harness.tree, (node) => node.type === 'button' && String(node.props.children) === '保存参数')[0]);
+  const call = harness.backend.calls.find((item) => item.op === 'saveModelSettings');
+  assert.ok(call, '未发起 saveModelSettings');
+  // 目录已声明 off:null：预设只写默认档位，不重写映射 JSON。
+  assert.deepEqual(call.settings, { defaultReasoning: 'off' });
+});
+
+test('参数校验错误定位到字段，修正后可保存', async t => {
+  const harness = createHarness();
+  t.after(() => harness.dispose());
+  await harness.flush();
+  const id = 'doubao-seed-2-1-pro-260915';
+  await harness.clicks(harness.byLabel('button', `模型参数 ${id}`));
+  // 容量已改档位滑块不再有文本错误；用温度触发字段级错误。
+  await harness.change(harness.byLabel('input', '温度 temperature'), 'abc');
+  await harness.clicks(harness.find(harness.tree, (node) => node.type === 'button' && String(node.props.children) === '保存参数')[0]);
+  assert.equal(harness.backend.calls.some((item) => item.op === 'saveModelSettings'), false);
+  // 字段级错误与汇总同时出现：用户知道错在哪一项。
+  const alerts = harness.find(harness.tree, (node) => node.type === 'p' && node.props?.role === 'alert')
+    .map((node) => String(node.props.children));
+  assert.ok(alerts.some((text) => text.includes('温度')), '字段旁缺少定位错误');
+  assert.ok(alerts.length >= 2, '应同时保留汇总错误');
+  // 修正输入即清掉字段错误并可保存；容量滑块改值一同入负载。
+  await harness.change(harness.byLabel('input', '温度 temperature'), '0.4');
+  await harness.slide('上下文长度 contextWindow', 131072);
+  await harness.clicks(harness.find(harness.tree, (node) => node.type === 'button' && String(node.props.children) === '保存参数')[0]);
+  const call = harness.backend.calls.find((item) => item.op === 'saveModelSettings');
+  assert.ok(call, '修正后应发起 saveModelSettings');
+  assert.equal(call.settings.temperature, 0.4);
+  assert.equal(call.settings.contextWindow, 131072);
 });

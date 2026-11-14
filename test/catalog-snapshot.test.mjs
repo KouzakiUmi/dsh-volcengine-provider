@@ -18,8 +18,7 @@ const current = [
   ['deepseek-v4-pro-ga-260801','deepseek-v4-pro-ga-260813','deepseek-v4-pro'],
   ['deepseek-v4-flash-260801','deepseek-v4-flash-ga-260731','deepseek-v4-flash'],
   ['kimi-k3-260701','kimi-k3','kimi-k3'],
-  ['kimi-k2-7-code-260601','kimi-k2.7-code','kimi-k2.7-code'],
-  ['minimax-m3-modelhub','minimax-m3','minimax-m3']
+  ['kimi-k2-7-code-260601','kimi-k2.7-code','kimi-k2.7-code']
 ];
 function catalog(plan) {
   const index = plan === 'agent-plan' ? 1 : 2;
@@ -28,7 +27,7 @@ function catalog(plan) {
 test('all current fixed models use pinned parameters rather than the 32K/8K unknown fallback', () => {
   for (const plan of ['agent-plan','coding-plan']) {
     const value = catalog(plan);
-    assert.equal(value.models.length,16);
+    assert.equal(value.models.length,15);
     for (const model of value.models) {
       if (model.id === 'ark-code-latest') {
         // 控制台路由保留保守容量，但仍必须走固化的动态路由条目。
@@ -83,20 +82,20 @@ test('a catalog listing both auto and ark-code-latest collapses to one usable ro
   }
 });
 test('explicit output above the refreshed context is clamped for the call and reported', () => {
-  const state = initialState(), key = 'default:coding-plan', id = 'kimi-k3.1-pro';
-  state.modelSettings[key] = { [id]: { maxTokens: 1048576 } };
+  const state = initialState(), key = 'default:coding-plan', id = 'deepseek-v4-1-flash';
+  state.modelSettings[key] = { [id]: { maxTokens: 2097152 } };
   const row = getModelRows(state, 'default', 'coding-plan').find(model => model.id === id);
-  assert.equal(row.effective.contextWindow, 1024000);
+  assert.equal(row.effective.contextWindow, 1048576);
   // 原设置保留，但有效调用收敛到上下文，Core 路由不会因单个模型失效。
-  assert.equal(row.settings.maxTokens, 1048576);
-  assert.equal(row.effective.maxTokens, 1024000);
+  assert.equal(row.settings.maxTokens, 2097152);
+  assert.equal(row.effective.maxTokens, 1048576);
   assert.match(row.settingsWarning, /大于目录上下文/);
   const core = profilesFor(state)[ROUTES['coding-plan']].models.find(model => model.id === id);
-  assert.equal(core.maxTokens, 1024000);
+  assert.equal(core.maxTokens, 1048576);
   // 未显式设置输出时仍按新上下文收敛，不产生提示。
   state.modelSettings[key] = {};
   const defaults = getModelRows(state, 'default', 'coding-plan').find(model => model.id === id);
-  assert.equal(defaults.effective.maxTokens, 1024000);
+  assert.equal(defaults.effective.maxTokens, 393216);
   assert.equal(defaults.settingsWarning, undefined);
 });
 test('friendly display names cover snapshot, live aliases, old code-name caches and Core while IDs stay stable', () => {
@@ -119,34 +118,37 @@ test('friendly display names cover snapshot, live aliases, old code-name caches 
   }
 });
 
-test('Plan Pi exact integers are preserved, including mixed units and per-plan differences', () => {
+test('vendor-registered exact integers are preserved, including mixed units', () => {
   for (const plan of ['agent-plan','coding-plan']) {
     const rows = catalog(plan).models;
     const find = value => rows.find(model => model.id===value || model.id.startsWith(value));
     assert.equal(find('doubao-seed-2-0-mini').contextWindow,262144);
-    assert.equal(find('doubao-seed-2-0-mini').maxTokens,128000);
-    assert.equal(find('deepseek-v4-1-flash-economy').contextWindow,1024000);
+    assert.equal(find('doubao-seed-2-0-mini').maxTokens,131072);
+    assert.equal(find('doubao-seed-2-1-pro').maxTokens,262144);
+    assert.equal(find('doubao-seed-evolving').maxTokens,262144);
+    assert.equal(find('deepseek-v4-1-flash-economy').contextWindow,1048576);
     assert.equal(find('deepseek-v4-1-flash-economy').maxTokens,393216);
     assert.equal(find('deepseek-v4-pro').maxTokens,393216);
-    assert.equal(find('kimi-k2-8-preview').maxTokens,1048576);
-    assert.equal(find('glm-5.3').maxTokens,128000);
-    assert.equal(rows.find(model=>model.id==='kimi-k3').maxTokens,plan==='agent-plan'?128000:65536);
+    assert.equal(find('kimi-k2-8-preview').maxTokens,131072);
+    const k31=plan==='agent-plan'?find('kimi-k3-1-pro'):rows.find(model=>model.id==='kimi-k3.1-pro');
+    assert.equal(k31.contextWindow,1048576);
+    assert.equal(k31.maxTokens,131072);
+    assert.equal(find('glm-5.3').maxTokens,131072);
+    assert.equal(rows.find(model=>model.id==='kimi-k3').maxTokens,131072);
     assert.equal(find('kimi-k2.7-code').contextWindow,262144);
     assert.equal(find('kimi-k2.7-code').maxTokens,32768);
-    assert.equal(find('minimax-m3').maxTokens,131072);
   }
 });
-test('text-only V4 is not upgraded to V4.1 vision, and MiniMax modality is plan-scoped', () => {
+test('text-only V4 is not upgraded to V4.1 vision', () => {
   for (const plan of ['agent-plan','coding-plan']) {
     const rows=catalog(plan).models;
     assert.deepEqual(rows.find(model=>model.id.startsWith('deepseek-v4-pro')).input,['text']);
     assert.deepEqual(rows.find(model=>model.id.startsWith('deepseek-v4-1-flash')).input,['text','image']);
-    assert.deepEqual(rows.find(model=>model.id==='minimax-m3').input,plan==='agent-plan'?['text']:['text','image']);
   }
 });
 test('explicit aliases retain server output IDs and do not guess other version capabilities', () => {
   const result=normalizeCatalog('agent-plan',{plan:'agent-plan',models:[{model_id:'kimi-k3-1-pro-261001',output_name:'kimi-k3-1-pro-261024'},{model_id:'deepseek-v4-1-flash-991231',output_name:'deepseek-v4-1-flash-991231'}]});
-  assert.equal(result.models[0].id,'kimi-k3-1-pro-261024');assert.equal(result.models[0].contextWindow,1024000);
+  assert.equal(result.models[0].id,'kimi-k3-1-pro-261024');assert.equal(result.models[0].contextWindow,1048576);
   assert.equal(result.models[1].contextWindow,32768);assert.equal(result.models[1].capabilityUnverified,true);
 });
 test('old 32K cached metadata reconciles in memory without changing user settings, identity or model IDs', () => {
@@ -154,7 +156,7 @@ test('old 32K cached metadata reconciles in memory without changing user setting
   state.catalogs[key]={source:'arkcli',updatedAt:'2026-10-01T00:00:00Z',models:[{id,name:'Official Kimi',contextWindow:32768,maxTokens:8192,input:['text'],reasoningEfforts:false,compat:{forceAdaptiveThinking:false},capabilityUnverified:true}]};
   state.modelSettings[key]={[id]:{enabled:false,contextWindow:50000,maxTokens:2048,temperature:0.2}};
   const before=structuredClone(state),row=getModelRows(state,'default','coding-plan')[0];
-  assert.equal(row.id,id);assert.equal(row.name,'Official Kimi');assert.equal(row.defaults.contextWindow,1024000);assert.equal(row.defaults.maxTokens,1024000);
+  assert.equal(row.id,id);assert.equal(row.name,'Official Kimi');assert.equal(row.defaults.contextWindow,1048576);assert.equal(row.defaults.maxTokens,131072);
   assert.equal(row.effective.contextWindow,50000);assert.equal(row.effective.maxTokens,2048);assert.equal(row.settings.enabled,false);assert.deepEqual(state,before);
   const model=usableModels(state.catalogs[key],'coding-plan')[0];assert.deepEqual(model.input,['text','image']);assert.equal(model.aliases,undefined);assert.equal(model.capabilityUnverified,undefined);
 });
@@ -169,14 +171,13 @@ test('updated default output cannot exceed an explicit smaller context, but expl
 test('refreshed input and token capacities reach Core without metadata-only aliases', () => {
   const state=initialState();state.catalogs['default:agent-plan']=catalog('agent-plan');
   const models=profilesFor(state)[ROUTES['agent-plan']].models;
-  const kimi=models.find(model=>model.id==='kimi-k3-1-pro-261024');assert.equal(kimi.contextWindow,1024000);assert.deepEqual(kimi.input,['text','image']);
+  const kimi=models.find(model=>model.id==='kimi-k3-1-pro-261024');assert.equal(kimi.contextWindow,1048576);assert.deepEqual(kimi.input,['text','image']);
   for (const model of models) { assert.equal(model.aliases,undefined);assert.equal(model.capabilityUnverified,undefined); }
 });
 test('snapshot aliases are unique and partial capability notes do not erase documented effort maps', () => {
   for (const plan of ['agent-plan','coding-plan']) {
     const seen=new Set();for(const model of snapshot[plan].models)for(const id of [model.id,...model.aliases]){assert.equal(seen.has(id),false,id);seen.add(id);}
     const kimi=snapshot[plan].models.find(row=>row.id==='kimi-k2.7-code');assert.equal(kimi.reasoningEfforts,false);assert.equal(kimi.capabilityStatus,'partial');assert.match(kimi.capabilityNote,plan==='coding-plan'?/思考能力已确认/:/尚未单独确认/);
-    const minimax=snapshot[plan].models.find(row=>row.id==='minimax-m3');assert.deepEqual(minimax.reasoningEfforts,{low:'low',medium:'medium',high:'high'});assert.equal(minimax.defaultReasoning,'medium');assert.equal(minimax.capabilityStatus,'partial');
     assert.deepEqual(Object.keys(snapshot[plan].models.find(model=>model.id==='glm-5.3').reasoningEfforts),['low','high','max']);
   }
 });

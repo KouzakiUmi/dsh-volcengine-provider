@@ -111,7 +111,7 @@ function coreCapabilities(model) {
 	const {
 		aliases: _aliases, capabilityUnverified: _unverified, defaultReasoning: _default,
 		messagesThinkingMode: _mode, canDisableThinking: _disable,
-		capabilityStatus: _status, capabilityNote: _note,
+		capabilityStatus: _status, capabilityNote: _note, positioning: _positioning,
 		toolsEnabled: _tools, imageInput: _image, ...capabilities
 	} = model;
 	if ('input' in capabilities) {

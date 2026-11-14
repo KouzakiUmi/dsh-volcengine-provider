@@ -20,8 +20,7 @@ const expected = [
   ['deepseek-v4-pro', ['off','low','high','max'], 'high', 'enabled', true, 'documented'],
   ['deepseek-v4-flash', ['off','low','high','max'], 'high', 'enabled', true, 'documented'],
   ['kimi-k3', ['low','high','max'], null, 'enabled', false, 'partial'],
-  ['kimi-k2.7-code', false, null, 'server-default', null, 'partial'],
-  ['minimax-m3', ['low','medium','high'], 'medium', 'enabled', null, 'partial']
+  ['kimi-k2.7-code', false, null, 'server-default', null, 'partial']
 ];
 
 function lookup(models, id) {

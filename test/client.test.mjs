@@ -185,6 +185,7 @@ class FakeBackend {
     this.quotaMode = 'ok';
     this.quotaError = '';
     this.conflictOnce = false;
+    this.routingError = null;
   }
 
   bump() { this.revision = `rev-${this.calls.length}-${Math.random().toString(16).slice(2, 8)}`; }
@@ -195,6 +196,7 @@ class FakeBackend {
       accounts: this.accounts.map((account) => ({ ...account })),
       active: { ...this.active },
       enabled: { ...this.enabled },
+      ...(this.routingError ? { routingError: this.routingError } : {}),
       catalogs: this.accounts.flatMap((account) => ['agent-plan', 'coding-plan'].map((plan) => {
         const cached = this.catalogs.find((entry) => entry.accountId === account.id && entry.plan === plan);
         return {
@@ -648,7 +650,8 @@ test('官方身份优先、本地备注独立，OAuth 按套餐展示绑定与�
   assert.match(text, /额度鉴权：OAuth 已就绪/);
   assert.match(text, /套餐绑定：未绑定/);
   assert.doesNotMatch(text, /AK 引用：|SK 引用：|推理引用：|缺少 AK\/SK|模型调用会失败|没有可用的额度鉴权/);
-  assert.match(String(harness.selects()[0].props.children[1][0].props.children), /官方小明 · 备注：默认账号/);
+  assert.equal(String(harness.selects()[0].props.children[1][0].props.children), '官方小明（default）');
+  assert.match(String(harness.selects()[0].props.children[1][0].props.title), /本地备注：默认账号/);
   assert.match(text, /凭据状态：凭据服务不可用 token=\[REDACTED\]/);
   assert.doesNotMatch(text, /hidden-secret/);
   await harness.click('编辑');
@@ -698,7 +701,7 @@ test('额度重置时间已过时不把旧用尽状态冒充当前状态', async
   await harness.flush(); await harness.click('刷新额度');
   const rows = harness.find(harness.tree, node => node.props.className === 'vcp-quota-window');
   const textOf = row => harness.find(row, node => node.props.className === 'vcp-status-chip')[0]?.props.children;
-  assert.deepEqual(rows.map(textOf), ['已用尽', '待刷新']);
+  assert.deepEqual(rows.map(textOf), ['已用尽', '已用尽 · 待刷新']);
   assert.equal(harness.quotaBars().filter(bar => bar.props['aria-valuenow'] === 0).length, 2);
 });
 
@@ -911,6 +914,23 @@ test('删除正在编辑的账号会关闭旧表单，不留下可复活账号�
   assert.ok(h.buttonByText('网页登录'));
 });
 
+test('账号表单编辑中发起或确认登录会被拦截，草稿不丢失', async t => {
+  const h = createHarness(); t.after(() => h.dispose()); await h.flush();
+  await h.click('编辑'); assert.ok(h.buttonByText('保存'));
+  await h.click('登录其他账号');
+  assert.match(h.joined(), /先保存或取消账号表单/);
+  assert.equal(h.buttonByText('确认并生成登录链接'), undefined, '编辑中不应弹出登录确认');
+  assert.ok(h.buttonByText('保存'), '编辑草稿必须保留');
+  // 确认框先弹出、之后再打开表单的交错顺序同样拦截。
+  await h.click('取消');
+  await h.click('登录其他账号'); assert.ok(h.buttonByText('确认并生成登录链接'));
+  await h.click('编辑'); assert.ok(h.buttonByText('保存'));
+  await h.click('确认并生成登录链接');
+  assert.match(h.joined(), /先保存或取消账号表单/);
+  assert.ok(h.buttonByText('保存'), '确认登录不得清空编辑草稿');
+  assert.equal(h.backend.calls.filter(c => c.op === 'startLogin').length, 0);
+});
+
 test('已绑定账号可显式用于套餐，同时启用且不改变另一套餐', async t => {
   const backend = new FakeBackend(); backend.active['agent-plan'] = null; backend.enabled['agent-plan'] = false;
   backend.accounts[0] = { ...backend.accounts[0], authMode: 'oauth', oauthProfiles: { 'agent-plan': 'agent' }, hasQuotaAccess: { 'agent-plan': true, 'coding-plan': false } };
@@ -969,10 +989,8 @@ test('账号管理默认收起，展开编辑或登录进行中仍可访问', as
   const accountDetails = () => h.find(h.tree, node => node.type === 'details' && node.props.className === 'vcp-accounts-disclosure')[0];
   assert.equal(accountDetails().props.open, false);
   const summary = h.find(accountDetails(), node => node.type === 'summary')[0];
-  let prevented = false;
-  summary.props.onClick({ preventDefault() { prevented = true; } });
+  accountDetails().props.onToggle({ target: { open: true } });
   await h.flush();
-  assert.equal(prevented, true);
   assert.equal(accountDetails().props.open, true);
   await h.click('编辑');
   assert.equal(accountDetails().props.open, true);
@@ -1160,4 +1178,66 @@ test('真实构建产物通过宿主的单参数工厂返回插件导出', () =>
   assert.equal(exported.name, 'dsh-volcengine-provider');
   assert.deepEqual(exported.inject, ['slots', 'remote']);
   assert.equal(typeof exported.apply, 'function');
+});
+
+test('两套餐都用此账号：一次选择两个套餐，不改启用状态', async () => {
+  const backend = new FakeBackend();
+  backend.accounts.push({
+    id: 'other', label: '另一个方舟账号',
+    apiKeyRefs: { 'agent-plan': 'OTHER_AGENT_PLAN_API_KEY', 'coding-plan': 'OTHER_CODING_PLAN_API_KEY' },
+    accessKeyRef: 'OTHER_ACCESSKEY', secretKeyRef: 'OTHER_SECRETKEY',
+    hasApiKeys: { 'agent-plan': true, 'coding-plan': true }, hasQuotaKeys: true, authMode: 'references'
+  });
+  backend.active = { 'agent-plan': 'other', 'coding-plan': 'default' };
+  backend.enabled = { 'agent-plan': true, 'coding-plan': false };
+  const harness = createHarness({ backend });
+  await harness.flush();
+  // 首个账号卡是 default（仅 coding 选用）：点击后只需补选 agent。
+  await harness.click('两套餐都用此账号');
+  const selects = backend.calls.filter((call) => call.op === 'select');
+  // coding 已是 default 只需补 agent：不重复发已选中的套餐。
+  assert.deepEqual(selects.map((call) => [call.plan, call.accountId]), [['agent-plan', 'default']]);
+  assert.deepEqual(backend.active, { 'agent-plan': 'default', 'coding-plan': 'default' });
+  assert.equal(backend.enabled['coding-plan'], false, '一键同账号不得改变套餐启用状态');
+  assert.match(harness.joined(), /启用状态未动/);
+  harness.dispose();
+});
+
+test('套餐未绑定给出账号区重新登录入口', async () => {
+  const backend = new FakeBackend();
+  backend.accounts = [{
+    id: 'default', label: '默认账号', displayName: '官方小明', authMode: 'oauth',
+    identity: { name: '官方小明', userId: 'user-123', accountId: 'account-456' },
+    loggedAt: '2026-10-26T12:00:00Z', oauthProfiles: { 'agent-plan': 'agent-personal' },
+    hasApiKeys: {}, hasQuotaKeys: false,
+    hasQuotaAccess: { 'agent-plan': true, 'coding-plan': false }
+  }];
+  const harness = createHarness({ backend });
+  await harness.flush();
+  await harness.click('去账号区重新登录');
+  assert.match(harness.joined(), /确认并生成登录链接/);
+  harness.dispose();
+});
+
+test('路由错误可复制脱敏诊断', async () => {
+  const backend = new FakeBackend();
+  backend.routingError = '模型路由更新失败；已保留此前可用路由。';
+  const harness = createHarness({ backend });
+  await harness.flush();
+  await harness.click('复制诊断');
+  // 无剪贴板环境的回退路径也必须有明确结果，不能静默失败。
+  assert.match(harness.joined(), /已复制|复制失败/);
+  harness.dispose();
+});
+
+test('额度未就绪时两个套餐都给出账号区编辑入口', async () => {
+  const backend = new FakeBackend();
+  backend.accounts[0].accessKeyRef = '';
+  backend.accounts[0].secretKeyRef = '';
+  backend.accounts[0].hasQuotaKeys = false;
+  const harness = createHarness({ backend });
+  await harness.flush();
+  const edits = harness.find(harness.tree, (node) => node.type === 'button' && String(node.props.children) === '去账号区编辑');
+  assert.equal(edits.length, 2, '两个套餐卡片应各有一个编辑入口');
+  harness.dispose();
 });

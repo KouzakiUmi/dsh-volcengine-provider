@@ -140,6 +140,65 @@ const ADAPTIVE_MODE_HINTS = {
   false: `预算兼容模式：SDK 将 ${BUDGET_EFFORTS.join('/')} 转成预算，xhigh/max 会被折叠成 high，非 off 映射值须与档位同名；方舟官方档位使用原生模式。已有映射可手工调整 JSON。`
 };
 
+/**
+ * 思考预设：一键写入常用的档位组合，避免手写 JSON。
+ * 预设只组装已有的草稿字段（effortsMode/effortsText/defaultReasoning/adaptive），不引入新存储，
+ * 因此旧版 Host 与已有保存逻辑无需改动即可消费。
+ */
+const THINKING_PRESETS = [
+  { value: 'inherit', label: '继承目录默认' },
+  { value: 'server', label: '服务端默认（不强制档位）' },
+  { value: 'saver', label: '省 token（低档位）' },
+  { value: 'max', label: '最强思考（高档位）' },
+  { value: 'off', label: '关闭思考（如模型支持）' }
+];
+
+/** 省 token / 最强思考在目录档位里的候选顺序：按顺序取目录实际声明的第一个。 */
+const SAVER_TIER_ORDER = ['low', 'minimal', 'medium'];
+const MAX_TIER_ORDER = ['max', 'xhigh', 'high'];
+
+/**
+ * 计算各思考预设在当前模型上是否可用。
+ * 不可用时返回 null/false，界面据此禁用对应预设按钮并给出原因。
+ *
+ * @param {object} model 目录里的模型对象
+ * @returns {{saver: string|null, max: string|null, off: boolean}} 可用的档位（不可用为 null/false）
+ */
+function thinkingPresetAvailability(model) {
+  const inherited = inheritedEfforts(model);
+  const tiers = inherited && typeof inherited === 'object' ? Object.keys(inherited) : [];
+  const pick = (order) => order.find((tier) => tiers.includes(tier)) ?? null;
+  return {
+    saver: pick(SAVER_TIER_ORDER),
+    max: pick(MAX_TIER_ORDER),
+    off: tiers.includes('off') && model?.canDisableThinking !== false
+  };
+}
+
+/**
+ * 把思考预设展开成参数草稿补丁（只含已有草稿字段）。
+ * 省 token / 最强思考只改默认档位、不动档位映射，保留目录的全部可选档位；
+ * 关闭思考在目录已声明 off:null 时同样只改默认档位，否则才写入最小映射 {off:null}。
+ *
+ * @param {string} preset 预设标识
+ * @param {object} model 目录里的模型对象
+ * @returns {object|null} 草稿补丁，不可用时返回 null
+ */
+function applyThinkingPreset(preset, model) {
+  const availability = thinkingPresetAvailability(model);
+  if (preset === 'inherit') return { effortsMode: 'inherit', effortsText: '', defaultReasoning: 'inherit', adaptive: 'inherit' };
+  if (preset === 'server') return { effortsMode: 'inherit', effortsText: '', defaultReasoning: 'none', adaptive: 'inherit' };
+  if (preset === 'saver' && availability.saver) return { effortsMode: 'inherit', effortsText: '', defaultReasoning: availability.saver, adaptive: 'inherit' };
+  if (preset === 'max' && availability.max) return { effortsMode: 'inherit', effortsText: '', defaultReasoning: availability.max, adaptive: 'inherit' };
+  if (preset === 'off' && availability.off) {
+    const inherited = inheritedEfforts(model);
+    const declaredOff = inherited && typeof inherited === 'object' ? inherited.off : undefined;
+    if (declaredOff === null) return { effortsMode: 'inherit', effortsText: '', defaultReasoning: 'off', adaptive: 'inherit' };
+    return { effortsMode: 'map', effortsText: JSON.stringify({ off: null }), defaultReasoning: 'off', adaptive: 'inherit' };
+  }
+  return null;
+}
+
 /** 温度与输出 token 的已知约束：思考开启时上游可能忽略温度。 */
 const TEMPERATURE_HINT = '开启思考时上游可能忽略温度；输出 token 还受思考预算与上下文长度约束。';
 
@@ -598,7 +657,8 @@ function busyMessage(key) {
     quota: `正在查询${target}的额度…`, provider: `正在更新${target}的启用状态…`,
     model: `正在更新模型 ${model} 的启用状态…`, settings: `正在保存模型 ${model} 的参数…`,
     reset: `正在恢复模型 ${model} 的默认参数…`, login: '正在启动官方网页登录…',
-    'cancel-login': '正在取消登录…', save: '正在保存账号…', delete: '正在删除账号…'
+    'cancel-login': '正在取消登录…', save: '正在保存账号…', delete: '正在删除账号…',
+    'submit-login-code': '正在提交授权码并验证登录…'
   };
   return messages[operation] || '正在处理…';
 }
@@ -761,6 +821,11 @@ function draftTiers(draft, model) {
  */
 function parseModelSettings(draft, model) {
   const problems = [];
+  const fieldErrors = {};
+  const fail = (field, message) => {
+    problems.push(message);
+    if (!fieldErrors[field]) fieldErrors[field] = message;
+  };
   const settings = {};
   const text = (key) => String(draft?.[key] ?? '').trim();
 
@@ -769,7 +834,7 @@ function parseModelSettings(draft, model) {
     if (!raw) continue; // 空值＝继承目录默认，不写进负载。
     const value = Number(raw);
     if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value <= 0) {
-      problems.push(`${MODEL_FIELD_LABELS[key]} 须为正整数。`);
+      fail(key, `${MODEL_FIELD_LABELS[key]} 须为正整数。`);
       continue;
     }
     settings[key] = value;
@@ -778,7 +843,7 @@ function parseModelSettings(draft, model) {
   const temperature = text('temperature');
   if (temperature) {
     const value = Number(temperature);
-    if (!Number.isFinite(value) || value < 0 || value > 1) problems.push('温度 temperature 须为 0 到 1 之间的数值。');
+    if (!Number.isFinite(value) || value < 0 || value > 1) fail('temperature', '温度 temperature 须为 0 到 1 之间的数值。');
     else settings.temperature = value;
   }
 
@@ -811,7 +876,7 @@ function parseModelSettings(draft, model) {
       if (entries.some(([tier, value]) => tier !== 'off' && (typeof value !== 'string' || !value.trim()))) effortProblems.push('除 off 外的档位必须映射到非空字符串。');
       if (!entries.some(([tier]) => tier !== 'off')) effortProblems.push('至少要声明一个非 off 档位。');
     }
-    if (effortProblems.length) problems.push(...effortProblems);
+    if (effortProblems.length) effortProblems.forEach((message) => fail('effortsText', message));
     else {
       settings.reasoningEfforts = parsed;
       effortsMap = parsed;
@@ -835,17 +900,17 @@ function parseModelSettings(draft, model) {
       ? '；请手工调整 JSON 映射（不会自动删除已有映射）'
       : '；当前档位映射来自目录默认，请改为自定义 JSON 映射';
     if (badTiers.length || badValues.length) {
-      problems.push(`预算模式仅支持 ${BUDGET_EFFORTS.join('/')}，非 off 映射值与档位同名${suffix}`);
+      fail('adaptive', `预算模式仅支持 ${BUDGET_EFFORTS.join('/')}，非 off 映射值与档位同名${suffix}`);
     }
-    if (badOff.length) problems.push(`预算模式下 off 档位只能为空值（null）${suffix}`);
+    if (badOff.length) fail('adaptive', `预算模式下 off 档位只能为空值（null）${suffix}`);
   }
 
-  if (model?.canDisableThinking === false && effortsMap?.off === null) problems.push('该模型为常驻思考，请移除 off 映射或继承模型默认。');
+  if (model?.canDisableThinking === false && effortsMap?.off === null) fail('effortsText', '该模型为常驻思考，请移除 off 映射或改用思考预设。');
   const defaultReasoning = draft?.defaultReasoning ?? 'inherit';
   if (defaultReasoning === 'none') {
     settings.defaultReasoning = null;
   } else if (defaultReasoning !== 'inherit') {
-    if (!draftTiers(draft, model).includes(defaultReasoning)) problems.push('默认思考档位必须是有效档位，且要与档位映射一致。');
+    if (!draftTiers(draft, model).includes(defaultReasoning)) fail('defaultReasoning', '默认思考档位必须是有效档位建议改用思考预设一键写入。');
     else settings.defaultReasoning = defaultReasoning;
   }
 
@@ -853,8 +918,8 @@ function parseModelSettings(draft, model) {
   if (adaptive === 'true') settings.forceAdaptiveThinking = true;
   else if (adaptive === 'false') settings.forceAdaptiveThinking = false;
 
-  if (problems.length) return { settings: null, error: problems.join(' ') };
-  return { settings, error: null };
+  if (problems.length) return { settings: null, error: problems.join(' '), fieldErrors };
+  return { settings, error: null, fieldErrors: null };
 }
 
 // ── 展示组件 ─────────────────────────────────────────────────────────────────
@@ -951,7 +1016,7 @@ function QuotaWindows({ quota }) {
         return h('div', { key: `${item?.kind ?? 'w'}-${position}`, className: 'vcp-quota-window', 'data-tone': summary.tone },
           h('div', { className: 'vcp-quota-line' },
             h('span', { className: 'vcp-quota-name' }, label),
-            summary.tone !== 'muted' ? h(StatusChip, { tone: summary.tone }, resetPassed ? '待刷新' : summary.tone === 'error' ? '已用尽' : '余量不足') : null,
+            summary.tone !== 'muted' ? h(StatusChip, { tone: summary.tone }, resetPassed && remaining === 0 ? '已用尽 · 待刷新' : resetPassed ? '待刷新' : summary.tone === 'error' ? '已用尽' : '余量不足') : null,
             h('span', { className: 'vcp-quota-value' }, remaining === null
               ? h('span', { style: style.muted }, '百分比未提供')
               : [
@@ -964,12 +1029,113 @@ function QuotaWindows({ quota }) {
             'aria-label': `${label}剩余额度`, 'aria-valuetext': `剩余 ${formatPercent(remaining)}%`
           }, h('div', { className: 'vcp-quota-fill', style: { width: `${remaining}%`, minWidth: remaining > 0 ? 4 : 0 } })) : null,
           usageParts.length ? h('div', { className: 'vcp-quota-meta' }, usageParts.join(' · ')) : null,
-          h('div', { className: 'vcp-quota-reset' },
+          h('div', { className: 'vcp-quota-reset', 'aria-live': 'off' },
             h('span', null, resetCountdown(item?.resetsAt, now)),
             resetEpoch(item?.resetsAt) !== null
-              ? h('time', { dateTime: item.resetsAt }, `重置于 ${formatTime(item.resetsAt)}`) : null));
+              ? h('time', { dateTime: item.resetsAt, title: '仅在接口返回有效时间时显示倒计时' }, `重置于 ${formatTime(item.resetsAt)}`) : null));
       })
     ))
+  );
+}
+
+/**
+ * 按模型的目录理论上限给稀疏档位（codex 式 standard/extended/maximum 思路）：
+ * 上下文固定档 128K/256K/512K/1M，输出固定档 32K/64K/128K/256K，
+ * 只保留不超过该模型上限的部分；目录声明的上限总是顶档（"最大"），
+ * 已有自定义值保留为独立凹点，不因改成滑块而吞掉任意整数。
+ */
+const CAPACITY_LEVELS = {
+  contextWindow: [131072, 262144, 524288, 1048576],
+  maxTokens: [32768, 65536, 131072, 262144]
+};
+function capacityStops(key, inheritedValue, currentValue) {
+  const ceiling = Number.isSafeInteger(inheritedValue) && inheritedValue > 0 ? inheritedValue : undefined;
+  const stops = new Set((CAPACITY_LEVELS[key] ?? []).filter(level => ceiling === undefined || level <= ceiling));
+  if (ceiling !== undefined) stops.add(ceiling);
+  if (Number.isSafeInteger(currentValue) && currentValue > 0) stops.add(currentValue);
+  return [...stops].sort((a, b) => a - b);
+}
+
+/**
+ * codex-connect 式离散凹点滑块：键盘方向键/Home/End 与 pointer 拖拽均可到达档位。
+ * choices 为升序整数刻度；value 必须等于某个刻度（调用方负责把自定义值并进 choices）。
+ */
+function CapacitySlider({ choices, value, label, disabled, onChange }) {
+  const selected = Math.max(0, choices.indexOf(value));
+  const [preview, setPreview] = react.useState();
+  const drag = react.useRef();
+  react.useEffect(() => { if (drag.current === undefined) setPreview(undefined); }, [value]);
+  const locked = disabled || choices.length === 1;
+  const current = preview === undefined ? selected : preview;
+  const active = choices[Math.max(0, Math.min(choices.length - 1, Math.round(current)))];
+  const color = 'var(--dsw-alias-brand-primary, #2563eb)';
+  const position = (index) => `${(index + 0.5) * 100 / choices.length}%`;
+  const rawPosition = (event) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return rect.width > 0 ? Math.max(0, Math.min(choices.length - 1, (event.clientX - rect.left) / rect.width * choices.length - 0.5)) : selected;
+  };
+  const cancel = () => { drag.current = undefined; setPreview(undefined); };
+  const choose = (index) => {
+    const choice = choices[index];
+    if (!locked && choice !== undefined && choice !== value) onChange(choice);
+  };
+  return h('div', {
+    role: 'slider', tabIndex: locked ? -1 : 0,
+    'aria-label': label, 'aria-disabled': locked,
+    'aria-valuemin': 0, 'aria-valuemax': choices.length - 1,
+    'aria-valuenow': Math.round(current), 'aria-valuetext': formatTokenCount(active),
+    'data-stops': choices.join(','),
+    style: { position: 'relative', width: '100%', maxWidth: 560, height: 30, flexShrink: 0, touchAction: 'pan-y', userSelect: 'none', cursor: locked ? 'default' : 'ew-resize', opacity: disabled ? 0.5 : 1 },
+    onKeyDown: (event) => {
+      if (event.key === 'Escape') { cancel(); return; }
+      if (locked) return;
+      const index = event.key === 'Home' ? 0 : event.key === 'End' ? choices.length - 1
+        : event.key === 'ArrowLeft' || event.key === 'ArrowDown' ? Math.max(0, selected - 1)
+          : event.key === 'ArrowRight' || event.key === 'ArrowUp' ? Math.min(choices.length - 1, selected + 1) : undefined;
+      if (index !== undefined) { event.preventDefault(); choose(index); }
+    },
+    onPointerDown: (event) => {
+      if (locked || event.button !== 0) return;
+      event.preventDefault(); event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId);
+      const index = Math.round(rawPosition(event));
+      drag.current = { pointer: event.pointerId, index }; setPreview(index);
+    },
+    onPointerMove: (event) => {
+      const state = drag.current;
+      if (locked || state === undefined || state.pointer !== event.pointerId) return;
+      const raw = rawPosition(event);
+      // 边界滞回：指针越过凹点边界一段距离才切换，避免悬停抖动。
+      if (raw > state.index + 0.62 || raw < state.index - 0.62) state.index = Math.round(raw);
+      setPreview(state.index + Math.tanh((raw - state.index) * 3) * 0.09);
+    },
+    onPointerUp: (event) => {
+      const state = drag.current;
+      if (state === undefined || state.pointer !== event.pointerId) return;
+      const index = state.index;
+      drag.current = undefined;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      setPreview(index);
+      choose(index);
+    },
+    onPointerCancel: cancel,
+    onLostPointerCapture: cancel
+  },
+    h('span', {
+      'aria-hidden': 'true',
+      style: { display: 'grid', gridTemplateColumns: `repeat(${choices.length}, 1fr)`, fontSize: 10, lineHeight: '16px', textAlign: 'center' }
+    }, choices.map((choice, index) => h('span', {
+      key: choice,
+      style: { color: index === Math.round(current) ? color : 'var(--dsw-alias-label-secondary, #64748b)', whiteSpace: 'nowrap', overflow: 'hidden' }
+    }, formatTokenCount(choice)))),
+    h('span', { 'aria-hidden': 'true', style: { position: 'absolute', left: position(0), right: position(0), bottom: 5, height: 2, borderRadius: 999, background: 'var(--dsw-alias-border-l2, rgba(128,128,128,.35))' } }),
+    choices.map((choice, index) => h('span', {
+      key: choice, 'aria-hidden': 'true',
+      style: { position: 'absolute', left: position(index), transform: 'translateX(-50%)', bottom: 3, width: 6, height: 6, borderRadius: '50%', background: 'var(--dsw-alias-border-l2, rgba(128,128,128,.35))' }
+    })),
+    h('span', {
+      'aria-hidden': 'true', 'data-capacity-thumb': '',
+      style: { position: 'absolute', left: position(current), transform: 'translateX(-50%)', bottom: 0, width: 12, height: 12, borderRadius: '50%', border: 0, boxSizing: 'border-box', background: color, transition: drag.current === undefined ? 'left 100ms ease-out' : 'none' }
+    })
   );
 }
 
@@ -978,23 +1144,74 @@ function QuotaWindows({ quota }) {
  *
  * 空数字＝继承目录默认；档位映射可整段关闭（false）或自定义 JSON；
  * 默认档位分「继承 / 不强制 / 有效档位」三态；思考模式分「继承 / 原生 effort / 固定预算」。
+ * 上下文长度与最大输出用档位滑块选择（刻度含目录默认与已有自定义值），勾选「继承」时不写覆盖。
  *
  * @param {object} props 组件属性
  * @returns {object} 元素树
  */
-function ModelSettingsEditor({ model, draft, error, disabled, onChange, onSave, onCancel }) {
+function ModelSettingsEditor({ model, draft, error, fieldErrors, disabled, onChange, onSave, onCancel }) {
   const stackedField = { ...style.field, flex: '0 0 auto', minWidth: 0 };
   const effortsMode = draft?.effortsMode ?? 'inherit';
   const tiers = draftTiers(draft, model);
   const selectedDefault = draft?.defaultReasoning ?? 'inherit';
   const staleDefault = !['inherit', 'none'].includes(selectedDefault) && !tiers.includes(selectedDefault);
+  const presetAvailability = thinkingPresetAvailability(model);
+  const presetUsable = (value) => {
+    if (value === 'inherit' || value === 'server') return { usable: true, reason: '' };
+    if (value === 'saver') return presetAvailability.saver
+      ? { usable: true, reason: `将默认档位设为 ${presetAvailability.saver}，保留目录的全部可选档位。` }
+      : { usable: false, reason: '该模型目录未声明低档位（low/minimal/medium），无法使用省 token 预设。' };
+    if (value === 'max') return presetAvailability.max
+      ? { usable: true, reason: `将默认档位设为 ${presetAvailability.max}，保留目录的全部可选档位。` }
+      : { usable: false, reason: '该模型目录未声明高档位（max/xhigh/high），无法使用最强思考预设。' };
+    return presetAvailability.off
+      ? { usable: true, reason: '将默认档位设为关闭思考。' }
+      : { usable: false, reason: model?.canDisableThinking === false ? '该模型为常驻思考，不支持关闭。' : '该模型目录未声明 off 档位，无法使用关闭预设。' };
+  };
+  const fieldError = (key) => fieldErrors?.[key]
+    ? h('p', { role: 'alert', style: style.error }, fieldErrors[key])
+    : null;
   const numberField = (key, label) => h('label', { style: style.field },
     h('span', { style: style.label }, label),
     h('input', {
       type: 'text', inputMode: 'numeric', style: style.input, value: draft?.[key] ?? '', disabled,
       'aria-label': label, placeholder: '留空表示继承目录默认', autoComplete: 'off', spellCheck: false,
       onChange: (event) => onChange({ [key]: event.target.value })
-    }));
+    }),
+    fieldError(key));
+  /**
+   * 容量档位滑块行：勾选「继承目录默认」不写覆盖（草稿为空），取消勾选落到目录默认值上再拖档。
+   * 刻度 = 固定档位 ∪ 目录默认 ∪ 当前自定义值（旧设置里的任意整数保留为独立凹点，不被滑块吞掉）。
+   */
+  const capacityRow = (key, label) => {
+    const inherited = (draft?.[key] ?? '') === '';
+    const inheritedValue = model?.defaults?.[key];
+    const draftValue = Number.parseInt(draft?.[key], 10);
+    const sliderValue = inherited ? inheritedValue : draftValue;
+    const stops = capacityStops(key, inheritedValue, Number.isFinite(sliderValue) ? sliderValue : undefined);
+    return h('div', { style: { display: 'grid', gap: 6 } },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
+        h('span', { style: style.label }, label),
+        h('label', { className: 'vcp-plan-toggle', style: { display: 'inline-flex', alignItems: 'center', gap: 6 } },
+          h('input', {
+            type: 'checkbox', checked: inherited, disabled,
+            'aria-label': `继承 ${label}`,
+            style: { width: 18, height: 18, margin: 0, flex: '0 0 auto', accentColor: 'var(--dsw-alias-brand-primary, Highlight)' },
+            onChange: (event) => onChange({ [key]: event.target.checked ? '' : String(stops[stops.length - 1] ?? '') })
+          }),
+          h('span', { style: { fontSize: 12 } }, '继承目录默认')),
+        h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary, #64748b)', fontVariantNumeric: 'tabular-nums' } },
+          inherited
+            ? `目录默认 ${formatTokenCount(inheritedValue)}`
+            : `当前 ${formatTokenCount(sliderValue)}（${Number.isFinite(sliderValue) ? sliderValue : '—'} token）`)),
+      h(CapacitySlider, {
+        choices: stops,
+        value: stops.includes(sliderValue) ? sliderValue : stops[0],
+        label, disabled: disabled || inherited,
+        onChange: (choice) => onChange({ [key]: String(choice) })
+      }),
+      fieldError(key));
+  };
   const capabilityCheckbox = (key, label) => {
     const mode = draft?.[key] ?? 'inherit';
     const inherited = model?.defaults?.[key];
@@ -1021,10 +1238,10 @@ function ModelSettingsEditor({ model, draft, error, disabled, onChange, onSave, 
     capabilityCheckbox(key, label), h('span', null, text));
   return h('div', { className: 'vcp-editor' },
     h('div', { style: { fontWeight: 650, fontSize: 13 } }, `模型参数：${model?.name || model?.id}`),
-    h('div', { className: 'vcp-fields vcp-fields-three' },
-      numberField('contextWindow', MODEL_FIELD_LABELS.contextWindow),
-      numberField('maxTokens', MODEL_FIELD_LABELS.maxTokens),
+    h('div', { className: 'vcp-fields' },
       numberField('temperature', MODEL_FIELD_LABELS.temperature)),
+    capacityRow('contextWindow', MODEL_FIELD_LABELS.contextWindow),
+    capacityRow('maxTokens', MODEL_FIELD_LABELS.maxTokens),
     h('p', { style: style.muted }, TEMPERATURE_HINT),
     h('section', { className: 'vcp-section', 'aria-label': '模型输入与工具调用' },
       h('div', { className: 'vcp-actions' },
@@ -1049,48 +1266,67 @@ function ModelSettingsEditor({ model, draft, error, disabled, onChange, onSave, 
         ? h('p', { style: style.muted }, '禁用后模型不能发起新工具调用；历史消息中的工具调用回放保留。') : null,
       h('p', { style: style.muted }, '音频 / 视频：本 DSH 通道不可用，不提供能力覆盖开关。'),
       h('p', { style: style.muted }, '独立 JSON Schema 结构化输出：本 DSH 通道暂不可用，不提供配置开关。')),
-    h('label', { style: stackedField },
-      h('span', { style: style.label }, '思考档位映射 reasoningEfforts'),
-      h('select', {
-        style: style.input, value: effortsMode, disabled, 'aria-label': '思考档位映射 reasoningEfforts',
-        onChange: (event) => onChange({ effortsMode: event.target.value })
-      },
-        h('option', { value: 'inherit' }, '继承目录默认'),
-        h('option', { value: 'none' }, '不提供可选思考档位（false）'),
-        h('option', { value: 'map' }, '自定义 JSON 映射'))),
-    effortsMode === 'none'
-      ? h('p', { style: style.muted }, 'reasoningEfforts=false 表示不提供可选思考档位（按模型默认）；底层可能不发 thinking 字段，不等于强制关闭思考。真正关闭思考需要把默认档位设为 off 且映射声明 off:null。')
-      : null,
-    effortsMode === 'map'
-      ? h('label', { style: stackedField },
-        h('span', { style: style.label }, 'JSON 映射'),
-        h('textarea', {
-          style: { ...style.input, minHeight: 64 }, value: draft?.effortsText ?? '', disabled,
-          'aria-label': 'JSON 映射', spellCheck: false, autoComplete: 'off',
-          onChange: (event) => onChange({ effortsText: event.target.value })
-        }))
-      : null,
-    effortsMode === 'map' ? h('p', { style: style.muted }, EFFORTS_HINT) : null,
-    h('label', { style: stackedField },
-      h('span', { style: style.label }, '默认思考档位 defaultReasoning'),
-      h('select', {
-        style: style.input, value: draft?.defaultReasoning ?? 'inherit', disabled,
-        'aria-label': '默认思考档位 defaultReasoning',
-        onChange: (event) => onChange({ defaultReasoning: event.target.value })
-      },
-        h('option', { value: 'inherit' }, '继承目录默认'),
-        h('option', { value: 'none' }, '不强制档位（使用服务端默认）'),
-        staleDefault ? h('option', { value: selectedDefault, disabled: true }, `${selectedDefault}（已失效，请重选）`) : null,
-        tiers.map((tier) => h('option', { key: tier, value: tier }, tier)))),
-    h('label', { style: stackedField },
-      h('span', { style: style.label }, '思考模式 forceAdaptiveThinking'),
-      h('select', {
-        style: style.input, value: draft?.adaptive ?? 'inherit', disabled,
-        'aria-label': '思考模式 forceAdaptiveThinking',
-        onChange: (event) => onChange({ adaptive: event.target.value })
-      },
-        ADAPTIVE_MODE_OPTIONS.map((option) => h('option', { key: option.value, value: option.value }, option.label)))),
-    ADAPTIVE_MODE_HINTS[draft?.adaptive] ? h('p', { style: style.muted }, ADAPTIVE_MODE_HINTS[draft.adaptive]) : null,
+    h('section', { className: 'vcp-section', 'aria-label': '思考配置（高级）' },
+      h('strong', { style: { fontSize: 13 } }, '思考配置（高级）'),
+      h('p', { style: style.muted }, '多数情况用预设一键写入即可；只有需要自定义档位组合时才手工改 JSON。'),
+      h('div', { className: 'vcp-actions', role: 'group', 'aria-label': '思考预设' },
+        THINKING_PRESETS.map((preset) => {
+          const state = presetUsable(preset.value);
+          return h('button', {
+            key: preset.value, type: 'button', style: style.btn,
+            disabled: disabled || !state.usable, title: state.reason || preset.label,
+            'aria-label': `思考预设：${preset.label}`,
+            onClick: () => {
+              const patch = applyThinkingPreset(preset.value, model);
+              if (patch) onChange(patch);
+            }
+          }, preset.label);
+        })),
+      h('label', { style: stackedField },
+        h('span', { style: style.label }, '思考档位映射 reasoningEfforts'),
+        h('select', {
+          style: style.input, value: effortsMode, disabled, 'aria-label': '思考档位映射 reasoningEfforts',
+          onChange: (event) => onChange({ effortsMode: event.target.value })
+        },
+          h('option', { value: 'inherit' }, '继承目录默认'),
+          h('option', { value: 'none' }, '不提供可选思考档位（false）'),
+          h('option', { value: 'map' }, '自定义 JSON 映射'))),
+      effortsMode === 'none'
+        ? h('p', { style: style.muted }, 'reasoningEfforts=false 表示不提供可选思考档位（按模型默认）；底层可能不发 thinking 字段，不等于强制关闭思考。真正关闭思考需要把默认档位设为 off 且映射声明 off:null。')
+        : null,
+      effortsMode === 'map'
+        ? h('label', { style: stackedField },
+          h('span', { style: style.label }, 'JSON 映射'),
+          h('textarea', {
+            style: { ...style.input, minHeight: 64 }, value: draft?.effortsText ?? '', disabled,
+            'aria-label': 'JSON 映射', spellCheck: false, autoComplete: 'off',
+            onChange: (event) => onChange({ effortsText: event.target.value })
+          }),
+          fieldError('effortsText'))
+        : null,
+      effortsMode === 'map' ? h('p', { style: style.muted }, EFFORTS_HINT) : null,
+      h('label', { style: stackedField },
+        h('span', { style: style.label }, '默认思考档位 defaultReasoning'),
+        h('select', {
+          style: style.input, value: draft?.defaultReasoning ?? 'inherit', disabled,
+          'aria-label': '默认思考档位 defaultReasoning',
+          onChange: (event) => onChange({ defaultReasoning: event.target.value })
+        },
+          h('option', { value: 'inherit' }, '继承目录默认'),
+          h('option', { value: 'none' }, '不强制档位（使用服务端默认）'),
+          staleDefault ? h('option', { value: selectedDefault, disabled: true }, `${selectedDefault}（已失效，请重选）`) : null,
+          tiers.map((tier) => h('option', { key: tier, value: tier }, tier)))),
+        fieldError('defaultReasoning'),
+      h('label', { style: stackedField },
+        h('span', { style: style.label }, '思考模式 forceAdaptiveThinking'),
+        h('select', {
+          style: style.input, value: draft?.adaptive ?? 'inherit', disabled,
+          'aria-label': '思考模式 forceAdaptiveThinking',
+          onChange: (event) => onChange({ adaptive: event.target.value })
+        },
+          ADAPTIVE_MODE_OPTIONS.map((option) => h('option', { key: option.value, value: option.value }, option.label)))),
+        ADAPTIVE_MODE_HINTS[draft?.adaptive] ? h('p', { style: style.muted }, ADAPTIVE_MODE_HINTS[draft.adaptive]) : null,
+        fieldError('adaptive')),
     error ? h('p', { role: 'alert', style: style.error }, error) : null,
     h('div', { style: style.row },
       h('button', { type: 'button', style: style.primary, disabled, onClick: onSave }, '保存参数'),
@@ -1106,7 +1342,7 @@ function ModelSettingsEditor({ model, draft, error, disabled, onChange, onSave, 
  * @param {object} props 组件属性
  * @returns {object} 元素树
  */
-function ModelRow({ plan, model, disabled, routingError, editor, draftError, onToggle, onOpenEditor, onCloseEditor, onChangeDraft, onSave, onReset }) {
+function ModelRow({ plan, model, disabled, routingError, editor, draftError, fieldErrors, onToggle, onOpenEditor, onCloseEditor, onChangeDraft, onSave, onReset }) {
   const enabled = model?.enabled !== false;
   const editing = editor?.modelId === model?.id;
   const effectiveSummary = describeEffective(model);
@@ -1123,11 +1359,12 @@ function ModelRow({ plan, model, disabled, routingError, editor, draftError, onT
           onChange: (event) => onToggle(model, Boolean(event.target.checked))
         }),
         h('span', { className: 'vcp-model-heading' },
-          h('span', { className: 'vcp-model-name', title: model?.id }, model?.name || model?.id),
-          h(ConsumptionBadge, { plan, consumption: model?.consumption }))),
+          h('span', { className: 'vcp-model-name', title: model?.id }, model?.name || model?.id))),
+      h(ConsumptionBadge, { plan, consumption: model?.consumption }),
       h('span', { className: 'vcp-chip-row' },
         capabilityLabel ? h('span', { style: style.chip }, capabilityLabel) : null,
         enabled ? null : h('span', { style: style.chip }, '已停用'))),
+    model?.positioning ? h('p', { style: { ...style.muted, margin: 0, fontSize: 12, lineHeight: 1.6 } }, model.positioning) : null,
     h('div', { className: 'vcp-model-tags' },
       h(ModelTag, { tone: values.imageInput ? 'accent' : 'muted' }, values.imageInput ? '视觉' : '纯文本'),
       h(ModelTag, { tone: values.reasoningEfforts ? 'accent' : 'muted' }, thinkingLabel),
@@ -1147,7 +1384,7 @@ function ModelRow({ plan, model, disabled, routingError, editor, draftError, onT
     model?.settingsWarning ? h('p', { role: 'alert', style: style.warn }, model.settingsWarning) : null,
     editing
       ? h(ModelSettingsEditor, {
-        model, draft: editor.draft, error: draftError, disabled,
+        model, draft: editor.draft, error: draftError, fieldErrors, disabled,
         onChange: onChangeDraft, onSave: () => onSave(model), onCancel: onCloseEditor
       })
       : null
@@ -1163,7 +1400,7 @@ function ModelRow({ plan, model, disabled, routingError, editor, draftError, onT
  * @param {object} props 组件属性
  * @returns {object} 元素树
  */
-function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModels, onQuota, onToggleProvider, onToggleModel, onSaveModelSettings, onResetModelSettings }) {
+function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModels, onQuota, onToggleProvider, onToggleModel, onSaveModelSettings, onResetModelSettings, onGoLogin, onScrollAccounts }) {
   const accounts = Array.isArray(snapshot?.accounts) ? snapshot.accounts : [];
   const activeId = snapshot?.active?.[plan] ?? null;
   const account = accounts.find((item) => item?.id === activeId) ?? null;
@@ -1188,11 +1425,13 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
   const [storedEditor, setEditor] = react.useState(null);
   const [modelsOpen, setModelsOpen] = react.useState(false);
   const [draftError, setDraftError] = react.useState(null);
+  const [draftFieldErrors, setDraftFieldErrors] = react.useState(null);
   // 渲染与提交时立即隔离旧账号草稿，effect 再清掉本地状态。
   const editor = storedEditor?.accountId === activeId ? storedEditor : null;
   react.useEffect(() => {
     setEditor(null);
     setDraftError(null);
+    setDraftFieldErrors(null);
     setModelsOpen(false);
   }, [activeId]);
 
@@ -1212,11 +1451,13 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
   const openEditor = (model) => {
     setEditor({ accountId: activeId, modelId: model.id, draft: modelDraftFrom(model), synced: JSON.stringify(model?.settings ?? null) });
     setDraftError(null);
+    setDraftFieldErrors(null);
   };
 
   const closeEditor = () => {
     setEditor(null);
     setDraftError(null);
+    setDraftFieldErrors(null);
   };
 
   const changeDraft = (patch) => {
@@ -1228,6 +1469,7 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
       return { ...previous, draft };
     });
     setDraftError(null);
+    setDraftFieldErrors(null);
   };
 
   // 校验不通过时不发 RPC：只在界面上说明原因。
@@ -1236,9 +1478,11 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
     const parsed = parseModelSettings(editor.draft, model);
     if (parsed.error) {
       setDraftError(parsed.error);
+      setDraftFieldErrors(parsed.fieldErrors);
       return;
     }
     setDraftError(null);
+    setDraftFieldErrors(null);
     onSaveModelSettings(plan, activeId, model.id, parsed.settings);
   };
 
@@ -1281,21 +1525,24 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
           onChange: (event) => onSelect(plan, event.target.value || null)
         },
           h('option', { value: '' }, '未选择'),
-          accounts.map((item) => h('option', { key: item.id, value: item.id }, `${accountName(item)}${item.label && item.label !== accountName(item) ? ` · 备注：${item.label}` : ''}（${item.id}）`)))),
+          accounts.map((item) => h('option', { key: item.id, value: item.id, title: `${accountName(item)}（${item.id}）${item.label && item.label !== accountName(item) ? ` · 本地备注：${item.label}` : ''}` }, `${accountName(item)}（${item.id}）`)))),
       !providerEnabled ? h('p', { className: 'vcp-plan-note', style: style.muted }, '路由已停用；账号选择与模型参数保留。') : null),
     !account ? h('p', { style: style.muted }, '该套餐尚未选择账号，请选择已登录的账号。') : null,
     account && auth.oauth && !auth.bound
-      ? h(Notice, { tone: 'warn' }, '此账号尚未绑定该套餐，暂不能拉取模型或查询额度。请先确认已订阅此个人套餐，再到账号管理区重新网页登录更新绑定。')
+      ? h(Notice, { tone: 'warn', action: h('button', { type: 'button', style: style.btn, disabled, onClick: () => onGoLogin(account.id) }, '去账号区重新登录') }, '此账号尚未绑定该套餐，暂不能拉取模型或查询额度。请先确认已订阅此个人套餐，再到账号管理区重新网页登录更新绑定。')
       : null,
     account && !auth.oauth && !auth.inference
-      ? h(Notice, { tone: 'warn' }, '该账号尚未配置此套餐的推理凭据，请在账号高级配置中填写引用名，或使用网页登录。')
+      ? h(Notice, { tone: 'warn', action: h('button', { type: 'button', style: style.btn, disabled, onClick: onScrollAccounts }, '去账号区编辑') }, '该账号尚未配置此套餐的推理凭据，请在账号高级配置中填写引用名，或使用网页登录。')
       : null,
     h('section', { className: 'vcp-quota-section', 'aria-busy': Boolean(quotaBusy), 'aria-label': `${PLAN_TITLES[plan]}额度` },
       h('div', { className: 'vcp-heading' },
         h('h4', { style: { margin: 0, fontSize: 13, fontWeight: 650 } }, '套餐额度'),
         h('button', { type: 'button', style: style.btn, disabled: disabled || quotaBusy || !auth.quota, 'aria-busy': quotaBusy || undefined, onClick: () => onQuota(plan) }, quotaBusy ? '正在刷新额度…' : quota?.state === 'error' ? '重试额度查询' : '刷新额度')),
       account && !auth.quota && (!auth.oauth || auth.bound)
-        ? h('p', { style: style.warn }, auth.oauth ? '该套餐的登录身份暂不可查询额度，请重新登录后重试。' : '该账号缺少 AK/SK 凭据引用，额度窗口无法查询。')
+        ? h(Notice, { tone: 'warn', action: auth.oauth
+          ? h('button', { type: 'button', style: style.btn, disabled, onClick: () => onGoLogin(account.id) }, '去账号区重新登录')
+          : h('button', { type: 'button', style: style.btn, disabled, onClick: onScrollAccounts }, '去账号区编辑') },
+        auth.oauth ? '该套餐的登录身份暂不可查询额度，请重新登录后重试。' : '该账号缺少 AK/SK 凭据引用，额度窗口无法查询。')
         : null,
       quotaBusy ? h('p', { role: 'status', style: style.muted }, `正在查询${PLAN_TITLES[plan]}的额度…`) : null,
       !account ? h('p', { style: style.muted }, '请先登录或添加账号，再为此套餐选择账号。')
@@ -1325,7 +1572,7 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
           h('div', { className: 'vcp-model-list' },
             models.map((model, index) => h(ModelRow, {
               key: model?.id ?? `model-${index}`,
-              plan, model, disabled, routingError: snapshot?.routingError, editor, draftError,
+              plan, model, disabled, routingError: snapshot?.routingError, editor, draftError, fieldErrors: draftFieldErrors,
               onToggle: (item, enabled) => onToggleModel(plan, activeId, item.id, enabled),
               onOpenEditor: openEditor,
               onCloseEditor: closeEditor,
@@ -1354,7 +1601,7 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
  * @param {object} props 组件属性
  * @returns {object} 元素树
  */
-function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, busy, onNew, onEdit, onCancelEdit, onChangeDraft, onSave, onRequestDelete, onConfirmDelete, onCancelDelete, onRequestLogin, onConfirmLogin, onCancelLoginConfirm, onCancelLogin, onSubmitLoginCode, onUsePlan }) {
+function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, busy, onNew, onEdit, onCancelEdit, onChangeDraft, onSave, onRequestDelete, onConfirmDelete, onCancelDelete, onRequestLogin, onConfirmLogin, onCancelLoginConfirm, onCancelLogin, onSubmitLoginCode, onUsePlan, onUseBoth }) {
   const accounts = Array.isArray(snapshot?.accounts) ? snapshot.accounts : [];
   const disabled = busy !== null;
   const loginActive = LOGIN_ACTIVE_STATES.includes(login.state);
@@ -1362,6 +1609,9 @@ function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, bu
   const [loginCode, setLoginCode] = react.useState('');
   const [accountsOpen, setAccountsOpen] = react.useState(false);
   const mustShowAccounts = !accounts.length || loginActive || Boolean(editor || confirmDelete || loginConfirm || loginUrl);
+  // 新登录任务开始 / 登录结束时清理授权码，避免跨会话残留误提交；提交失败保留原值。
+  react.useEffect(() => { setLoginCode(''); }, [login.jobId]);
+  react.useEffect(() => { if (!loginActive) setLoginCode(''); }, [loginActive]);
   react.useEffect(() => {
     if (loginActive || editor || confirmDelete || loginConfirm) setAccountsOpen(true);
   }, [loginActive, editor, confirmDelete, loginConfirm]);
@@ -1369,16 +1619,19 @@ function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, bu
   const loginAccount = accounts.find((item) => item?.id === login.accountId) ?? null;
   const authMode = loginAccount?.authMode ?? login.authMode ?? null;
 
-  return h('section', { className: 'vcp-card vcp-account-panel', style: style.card, 'data-section': '01', 'aria-label': '账号管理' },
+  return h('section', { id: 'vcp-account-panel', className: 'vcp-card vcp-account-panel', style: style.card, 'data-section': '01', 'aria-label': '账号管理' },
     h(SectionHeading, {
       title: '账号与登录',
       action: h('span', { style: style.chip }, `${accounts.length} 个账号`)
     }),
-    h('details', { className: 'vcp-accounts-disclosure', open: mustShowAccounts || accountsOpen },
-      h('summary', { className: 'vcp-account-summary', onClick: (event) => {
-        event?.preventDefault?.();
-        if (!mustShowAccounts) setAccountsOpen(previous => !previous);
-      } }, accounts.length ? `管理账号 · ${accounts.slice(0, 2).map(accountName).join('、')}${accounts.length > 2 ? ' 等' : ''}` : '添加账号'),
+    h('details', { className: 'vcp-accounts-disclosure', open: mustShowAccounts || accountsOpen,
+      onToggle: (event) => {
+        const nextOpen = event?.target?.open ?? false;
+        // 强制展开期间（登录/编辑/确认）不允许折叠：原生切换已发生，直接回写保持可见。
+        if (mustShowAccounts && !nextOpen && event?.target) event.target.open = true;
+        if (!mustShowAccounts) setAccountsOpen(nextOpen);
+      } },
+      h('summary', { className: 'vcp-account-summary' }, accounts.length ? `管理账号 · ${accounts.slice(0, 2).map(accountName).join('、')}${accounts.length > 2 ? ' 等' : ''}` : '添加账号'),
       h('div', { className: 'vcp-account-body' },
     accounts.length
       ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
@@ -1396,7 +1649,15 @@ function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, bu
             if (!planAuth(account, plan).inference || (selected && providerEnabledOf(snapshot, plan))) return null;
             return h('button', { key: plan, type: 'button', style: style.primary, disabled: disabled || loginActive,
               onClick: () => onUsePlan(plan, account.id) }, `${selected ? '启用' : '用于'} ${plan === 'agent-plan' ? 'Agent' : '编程'}套餐`);
-          })),
+          }).concat(
+            PLANS.every((plan) => planAuth(account, plan).inference)
+            && !PLANS.every((plan) => snapshot?.active?.[plan] === account.id)
+              ? [h('button', {
+                key: '__both__', type: 'button', style: style.btn, disabled: disabled || loginActive,
+                title: '两个套餐同时选择此账号；启用状态不动，可在套餐卡片分别启停。',
+                onClick: () => onUseBoth(account.id)
+              }, '两套餐都用此账号')]
+              : [])),
           h('details', { className: 'vcp-details' },
             h('summary', { style: style.summary }, '账号高级配置与标识'),
             h('div', { className: 'vcp-details-body' },
@@ -1452,14 +1713,18 @@ function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, bu
         h('button', { type: 'button', style: style.btn, disabled, onClick: onCancelLoginConfirm }, '取消'))) : null,
     editor ? h(AccountForm, { editor, busy: busy ?? (loginActive ? 'login-active' : null), onChangeDraft, onSave, onCancel: onCancelEdit }) : null,
     login.state === 'idle' && !login.message && !loginUrl ? null
-      : login.state === 'success' && !loginUrl
-        ? h(Notice, { tone: 'success', role: 'status' }, login.message ? `${LOGIN_STATE_LABELS.success} ${login.message}` : LOGIN_STATE_LABELS.success)
+      : ['success', 'cancelled', 'error'].includes(login.state)
+        ? h(Notice, {
+          tone: login.state === 'success' ? 'success' : login.state === 'cancelled' ? 'muted' : 'error',
+          role: login.state === 'success' ? 'status' : 'alert'
+        }, `${loginAccount ? `账号 ${accountName(loginAccount)}：` : ''}${LOGIN_STATE_LABELS[login.state] ?? login.state}${login.message ? ` ${login.message}` : ''}`)
         : h('div', { className: 'vcp-login-status', role: loginActive ? 'status' : undefined },
       h('div', { style: { fontWeight: 650, fontSize: 13 } }, '登录状态'),
       loginAccount ? h('p', { style: style.muted }, `当前登录账号：${accountName(loginAccount)}（${loginAccount.id}）`) : null,
       authMode ? h('p', { style: style.muted }, `凭据来源：${AUTH_MODE_LABELS[authMode] ?? authMode}`) : null,
       h('p', { style: style.muted }, LOGIN_STATE_LABELS[login.state] ?? login.state),
       login.message ? h('p', { style: style.muted }, login.message) : null,
+      login.url && !loginUrl ? h(Notice, { tone: 'error', role: 'alert' }, '登录链接未通过安全校验，已隐藏；请重新发起登录。') : null,
       loginUrl ? h('a', { href: loginUrl, target: '_blank', rel: 'noopener noreferrer', style: { fontSize: 12, color: 'var(--dsw-alias-link, inherit)' } }, '打开官方登录链接') : null,
       loginUrl && login.state === 'waiting'
         ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
@@ -1467,9 +1732,16 @@ function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, bu
             h('span', { style: style.label }, '粘贴官方页面显示的授权码'),
             h('input', {
               type: 'text', style: style.input, value: loginCode,
-              placeholder: '授权码', autoComplete: 'off', spellCheck: false,
-              disabled: disabled || !login.jobId,
-              onChange: (event) => setLoginCode(String(event?.target?.value ?? ''))
+              placeholder: '授权码', autoComplete: 'one-time-code', spellCheck: false, maxLength: 512,
+              enterKeyHint: 'send', disabled: disabled || !login.jobId,
+              onChange: (event) => setLoginCode(String(event?.target?.value ?? '')),
+              onKeyDown: (event) => {
+                if (event?.key !== 'Enter') return;
+                event.preventDefault();
+                const value = loginCode.trim();
+                if (!value || disabled || !login.jobId) return;
+                onSubmitLoginCode?.(value);
+              }
             })),
           h('div', { style: style.row },
             h('button', {
@@ -1478,7 +1750,6 @@ function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, bu
               onClick: () => {
                 const value = loginCode.trim();
                 if (!value) return;
-                setLoginCode('');
                 onSubmitLoginCode?.(value);
               }
             }, '提交授权码'))) : null,
@@ -1613,8 +1884,12 @@ function VolcengineProviderSection({ client }) {
   react.useEffect(() => { void refresh(); }, [refresh]);
 
   // 统一的忙态闸门：同一时刻只跑一个写操作，避免 revision 互相打架。
+  // 忙时重复点击直接忽略会让人以为按钮失灵，这里抛一个可读错误由调用方提示。
   const run = async (key, task) => {
-    if (busyRef.current) return;
+    if (busyRef.current) {
+      setNotice({ ok: false, text: '已有操作正在进行，请等待完成后再试。' });
+      return;
+    }
     busyRef.current = key;
     setBusy(key);
     try {
@@ -1665,6 +1940,22 @@ function VolcengineProviderSection({ client }) {
     } catch (error) { await reportSaveError(error, '启用套餐失败'); }
   });
 
+  // Explicit onboarding action: use the verified account for both plans without touching
+  // provider enablement; the user toggles each plan card separately afterwards.
+  const useBothAccounts = (accountId) => run('select:both', async () => {
+    let current = snapshot;
+    if (!current?.revision) return;
+    try {
+      for (const plan of PLANS) {
+        if (current.active?.[plan] === accountId) continue;
+        current = await client.invoke({ op: 'select', revision: current.revision, plan, accountId });
+        applySnapshot(current);
+      }
+      setQuotas((previous) => ({ ...previous, 'agent-plan': null, 'coding-plan': null }));
+      setNotice({ ok: true, text: '已为两个套餐选择此账号（启用状态未动）可在套餐卡片分别启停。' });
+    } catch (error) { await reportSaveError(error, '为两个套餐选择账号失败'); }
+  });
+
   const pullModels = (plan) => run(`models:${plan}`, async () => {
     const accountId = snapshot?.active?.[plan] ?? null;
     if (!snapshot?.revision || !accountId) return;
@@ -1686,7 +1977,7 @@ function VolcengineProviderSection({ client }) {
     try {
       const value = await client.invoke({ op: 'quota', plan, accountId, force: true });
       if (!aliveRef.current || epoch !== quotaEpochRef.current) return;
-      setQuotas((previous) => ({ ...previous, [plan]: value }));
+      setQuotas((previous) => ({ ...previous, [plan]: { ...value, accountId, plan } }));
     } catch (error) {
       if (!aliveRef.current || epoch !== quotaEpochRef.current) return;
       setQuotas((previous) => ({ ...previous, [plan]: { accountId, plan, state: 'error', windows: [], error: describeError(error), updatedAt: new Date().toISOString() } }));
@@ -1758,7 +2049,7 @@ function VolcengineProviderSection({ client }) {
         const saved = await client.invoke({ op: 'saveAccount', revision, account: { id: accountId, label: '方舟账号', apiKeyRefs: {}, accessKeyRef: '', secretKeyRef: '' } });
         applySnapshot(saved);
         revision = saved.revision;
-        setEditor(null);
+        // 编辑草稿由 requestLogin / confirmLogin 两道门保护；此处不再清空，避免任何竞态下丢弃用户输入。
       }
       const value = await client.invoke({ op: 'startLogin', revision, accountId });
       if (aliveRef.current) setLogin(normalizeLogin(value));
@@ -1773,18 +2064,89 @@ function VolcengineProviderSection({ client }) {
       } else if (isRevisionConflict(error)) {
         setNotice({ ok: false, text: '设置已在别处被改动，已刷新；请重新确认登录。', refresh: true });
       } else {
-        setNotice({ ok: false, text: `启动登录失败：${describeError(error)}。已创建的本地账号会保留，可在该账号上重试。`, refresh: true });
+        setNotice({
+          ok: false,
+          text: (() => {
+            const message = describeError(error);
+            return /ArkCli|arkCliPath|原生可执行文件/.test(message)
+              ? `启动登录失败：${message} 请在插件配置中填写 arkCliPath（官方 ArkCli 原生可执行文件绝对路径，Windows 指向 .exe，不是 .cmd/.bat），或确认 PATH 能找到官方 CLI；插件不会自动安装或升级 CLI。已创建的本地账号会保留，配置好 CLI 后可在该账号上重试。`
+              : `启动登录失败：${message}。已创建的本地账号会保留，可在该账号上重试。`;
+          })(),
+          refresh: true,
+          copyText: `火山方舟 Provider 登录诊断\n时间：${new Date().toISOString()}\n错误：${describeError(error)}`,
+        })
       }
     }
   });
 
   // 登录前先把副作用讲清楚，确认后才让后端打开官方窗口。
+  // 表单编辑中不允许另起登录，避免 setEditor(null) 丢弃草稿。
   const requestLogin = (accountId) => {
+    if (editor) {
+      setNotice({ ok: false, text: '请先保存或取消账号表单，再开始网页登录，避免草稿丢失。' });
+      return;
+    }
+    setConfirmDelete(null);
     setLoginConfirm(accountId);
     setNotice(null);
   };
 
+  // 从套餐卡片一键回到账号区：滚动到账号面板并为指定账号展开登录确认。
+  const scrollToAccounts = () => {
+    try { document.getElementById('vcp-account-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {
+      // 非浏览器预览环境没有 document：登录确认本身会强制展开账号区。
+    }
+  };
+  const goAccountLogin = (accountId) => { scrollToAccounts(); requestLogin(accountId); };
+
+  // 复制脱敏诊断信息：只含文案不含密钥，失败时给明确提示。
+  const copyText = async (value) => {
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        return true;
+      }
+    } catch {
+      // 回退到 textarea 方案。
+    }
+    try {
+      const area = document.createElement('textarea');
+      area.value = value;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.append(area);
+      area.select();
+      const ok = document.execCommand('copy');
+      area.remove();
+      return ok;
+    } catch { return false; }
+  };
+  const copyDiagnostics = (value) => {
+    void copyText(value).then((ok) => {
+      if (!aliveRef.current) return;
+      setNotice(ok
+        ? { ok: true, text: '诊断信息已复制，粘贴到 Issue 时请确认不含密钥与授权码。' }
+        : { ok: false, text: '复制失败，请手动记录错误文案。' });
+    });
+  };
+  // 路由错误的诊断包：所选与实际生效账号对照，方便一次定位。
+  const routingDiagnostics = () => [
+    '火山方舟 Provider 路由诊断',
+    `时间：${new Date().toISOString()}`,
+    `错误：${describeError(snapshot?.routingError)}`,
+    ...PLANS.map((option) => {
+      const applied = snapshot?.appliedAccounts?.[option];
+      return `${PLAN_TITLES[option]}：所选 ${snapshot?.active?.[option] ?? '未选择'} / 生效 ${applied ? applied.id : '无'}`;
+    }),
+  ].join('\n');
+
   const confirmLogin = (accountId) => {
+    // 确认框弹出后用户仍可能打开账号表单，此处再拦一次，避免 startLogin 丢弃草稿。
+    if (editor) {
+      setNotice({ ok: false, text: '请先保存或取消账号表单，再确认网页登录，避免草稿丢失。' });
+      return;
+    }
     setLoginConfirm(null);
     void startLogin(accountId);
   };
@@ -1929,11 +2291,18 @@ function VolcengineProviderSection({ client }) {
     busy ? h(Notice, { role: 'status' }, h('span', { 'aria-live': 'polite' }, busyMessage(busy))) : null,
     loginActive ? h(Notice, { tone: 'warn', role: 'status' }, '登录期间暂不能修改账号与套餐，请完成登录或取消后继续。') : null,
     loadError ? h(Notice, { tone: 'error', role: 'alert', action: h('button', { type: 'button', style: style.btn, disabled: busyAccount || loading, onClick: () => { void refresh(); } }, '重试读取状态') }, `读取状态失败：${loadError}`) : null,
-    snapshot?.routingError ? h(Notice, { tone: 'error', role: 'alert' }, describeError(snapshot.routingError)) : null,
+    snapshot?.routingError ? h(Notice, {
+      tone: 'error', role: 'alert',
+      action: h('button', { type: 'button', style: style.btn, disabled: busyAccount, onClick: () => { void copyDiagnostics(routingDiagnostics()); } }, '复制诊断')
+    }, describeError(snapshot.routingError)) : null,
     notice
       ? h(Notice, {
         tone: notice.ok ? 'success' : 'error', role: notice.ok ? 'status' : 'alert',
-        action: notice.refresh ? h('button', { type: 'button', style: style.btn, disabled: busyAccount, onClick: () => { setNotice(null); void refresh(); } }, '刷新') : null
+        action: (notice.refresh || notice.copyText)
+          ? h('div', { style: style.row },
+            notice.refresh ? h('button', { type: 'button', style: style.btn, disabled: busyAccount, onClick: () => { setNotice(null); void refresh(); } }, '刷新') : null,
+            notice.copyText ? h('button', { type: 'button', style: style.btn, disabled: busyAccount, onClick: () => { void copyDiagnostics(notice.copyText); } }, '复制诊断') : null)
+          : null
       }, notice.text)
       : null,
     !snapshot
@@ -1944,23 +2313,26 @@ function VolcengineProviderSection({ client }) {
           plan: 'agent-plan', snapshot, rawQuota: quotas['agent-plan'], busy: planBusy, quotaBusy: Boolean(quotaBusy['agent-plan']),
           onSelect: selectAccount, onModels: pullModels, onQuota: pullQuota,
           onToggleProvider: toggleProvider, onToggleModel: toggleModel,
-          onSaveModelSettings: saveModelSettings, onResetModelSettings: resetModelSettings
+          onSaveModelSettings: saveModelSettings, onResetModelSettings: resetModelSettings,
+          onGoLogin: goAccountLogin, onScrollAccounts: scrollToAccounts
         }),
         h(PlanCard, {
           plan: 'coding-plan', snapshot, rawQuota: quotas['coding-plan'], busy: planBusy, quotaBusy: Boolean(quotaBusy['coding-plan']),
           onSelect: selectAccount, onModels: pullModels, onQuota: pullQuota,
           onToggleProvider: toggleProvider, onToggleModel: toggleModel,
-          onSaveModelSettings: saveModelSettings, onResetModelSettings: resetModelSettings
+          onSaveModelSettings: saveModelSettings, onResetModelSettings: resetModelSettings,
+          onGoLogin: goAccountLogin, onScrollAccounts: scrollToAccounts
         })),
         h(AccountPanel, {
           snapshot, editor, confirmDelete, loginConfirm, login, busy,
           onNew: openNew, onEdit: openEdit, onCancelEdit: () => setEditor(null),
           onChangeDraft: changeDraft, onSave: saveAccount,
-          onRequestDelete: (accountId) => setConfirmDelete(accountId),
+          onRequestDelete: (accountId) => { setLoginConfirm(null); setConfirmDelete(accountId); },
           onConfirmDelete: (accountId) => { void removeAccount(accountId); },
           onCancelDelete: () => setConfirmDelete(null),
           onRequestLogin: requestLogin,
           onUsePlan: usePlan,
+          onUseBoth: useBothAccounts,
           onConfirmLogin: confirmLogin,
           onCancelLoginConfirm: () => setLoginConfirm(null),
           onCancelLogin: () => { void cancelLogin(); },
