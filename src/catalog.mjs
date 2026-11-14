@@ -112,6 +112,7 @@ function coreCapabilities(model) {
 		aliases: _aliases, capabilityUnverified: _unverified, defaultReasoning: _default,
 		messagesThinkingMode: _mode, canDisableThinking: _disable,
 		capabilityStatus: _status, capabilityNote: _note, positioning: _positioning,
+		maxTokensCeiling: _maxCeiling, maxReasoningTokenLength: _maxReasoning,
 		toolsEnabled: _tools, imageInput: _image, ...capabilities
 	} = model;
 	if ('input' in capabilities) {
@@ -199,13 +200,19 @@ export function modelDefaults(plan, model) {
 	const base = snapshot[assertPlan(plan)];
 	const contextWindow = positiveInteger(model?.contextWindow) ?? positiveInteger(base.defaultContextWindow) ?? 32768;
 	const maxTokens = positiveInteger(model?.maxTokens) ?? positiveInteger(base.defaultMaxTokens) ?? 8192;
+	// 输出能力上限：部分模型（如 Kimi 系）可协商输出上限高于目录默认 maxTokens；
+	// 仅作设置页滑块顶档展示，不进入 Core 路由、不改动默认生效值。
+	const maxTokensCeiling = positiveInteger(model?.maxTokensCeiling);
+	// 思考模式输出上限：DeepSeek V4 系开启思考时输出被约束到 131072，低于非思考 393216；
+	// 仅作设置页滑块/校验上限展示，不进入 Core 路由。
+	const maxReasoningTokenLength = positiveInteger(model?.maxReasoningTokenLength);
 	const efforts = model && model.reasoningEfforts !== undefined ? model.reasoningEfforts : false;
 	const forceAdaptiveThinking = typeof model?.compat?.forceAdaptiveThinking === 'boolean'
 		? model.compat.forceAdaptiveThinking
 		: typeof base.compat?.forceAdaptiveThinking === 'boolean' ? base.compat.forceAdaptiveThinking : false;
 	// 图片输入取模型实际声明的模态；工具开关默认开启，保持既有工具行为不变。
 	const imageInput = Array.isArray(model?.input) && model.input.includes('image');
-	return { contextWindow, maxTokens, reasoningEfforts: efforts, defaultReasoning: defaultReasoningFor(efforts, model?.defaultReasoning), forceAdaptiveThinking, imageInput, toolsEnabled: true };
+	return { contextWindow, maxTokens, maxTokensCeiling, maxReasoningTokenLength, reasoningEfforts: efforts, defaultReasoning: defaultReasoningFor(efforts, model?.defaultReasoning), forceAdaptiveThinking, imageInput, toolsEnabled: true };
 }
 
 /** 目录默认与用户覆盖合并后的有效参数。 */

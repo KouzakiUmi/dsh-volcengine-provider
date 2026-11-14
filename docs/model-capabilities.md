@@ -19,15 +19,15 @@
 | Doubao Seed 2.1 Pro | 1048576 | 262144 | text、image | 官方 Plan 目录注册值 |
 | Doubao Seed 2.1 Lite | 1048576 | 262144 | text、image | 官方 Plan 目录注册值 |
 | Doubao Seed 2.0 Mini | 262144 | 131072 | text、image | 官方 Plan 目录注册值（Pi 的 128000 为文案取整） |
-| Kimi K3.1 Pro | 1048576 | 131072 | text、image | 厂商默认输出 131072，上限 1M 可协商；阿里云注册 1048576/1048576 |
-| DeepSeek V4.1 Flash | 1048576 | 393216 | text、image | 两套 Plan Pi 与原厂注册一致 |
-| DeepSeek V4.1 Flash Economy | 1048576 | 393216 | text、image | 官方 Plan 目录 `1048576`（Pi 的 1024000 为文案值） |
-| Kimi K2.8 Preview | 1048576 | 131072 | text、image | 官方 Plan 目录 `131072`（Pi/概览的 1024k 输出为文案误抄上下文） |
+| Kimi K3.1 Pro | 1048576 | 131072（上限 1048576） | text、image | 厂商默认输出 131072，`max_completion_tokens` 上限 1M 可显式设置；阿里云注册 1048576/1048576 |
+| DeepSeek V4.1 Flash | 1048576 | 393216（思考时 131072） | text、image | 两套 Plan Pi 与原厂注册一致；思考模式输出上限 128K |
+| DeepSeek V4.1 Flash Economy | 1048576 | 393216（思考时 131072） | text、image | 官方 Plan 目录 `1048576`（Pi 的 1024000 为文案值）；思考模式输出上限 128K |
+| Kimi K2.8 Preview | 1048576 | 131072（上限 1048576） | text、image | 官方 Plan 目录 `131072`（Pi/概览的 1024k 输出为文案误抄上下文）；厂商 `max_completion_tokens` 上限 1M |
 | GLM 5.3 Flash | 1048576 | 131072 | text、image | 官方 Plan 目录 `131072`；智谱文档"128K" |
 | GLM 5.3 | 1048576 | 131072 | text | 官方 Plan 目录 `131072` |
-| DeepSeek V4 Pro GA | 1048576 | 393216 | text | 两套 Plan Pi，不从 V4.1 推导视觉能力 |
-| DeepSeek V4 Flash GA | 1048576 | 393216 | text | 两套 Plan Pi |
-| Kimi K3 | 1048576 | 131072 | text、image | 厂商默认输出 131072，上限 1M；Coding Pi 的 65536 为保守示例 |
+| DeepSeek V4 Pro GA | 1048576 | 393216（思考时 131072） | text | 两套 Plan Pi，不从 V4.1 推导视觉能力；思考模式输出上限 128K |
+| DeepSeek V4 Flash GA | 1048576 | 393216（思考时 131072） | text | 两套 Plan Pi；思考模式输出上限 128K |
+| Kimi K3 | 1048576 | 131072（上限 1048576） | text、image | 厂商默认输出 131072，`max_completion_tokens` 上限 1M；Coding Pi 的 65536 为保守示例 |
 | Kimi K2.7 Code | 262144 | 32768 | text、image | 官方 Plan 插件精确整数，两套套餐概览均记 256k/32k |
 | ark-code-latest（Auto） | 256000 | 32000 | text | 官方插件的控制台路由配置，不代表固定模型的真实边界 |
 
@@ -64,8 +64,8 @@
 Pi 接入示例是面向配置文件的"文案值"，与模型注册的真实整数值不一致时，一律以官方 Plan 目录注册整数与厂商公开参数为准（Pi 的十进制取整与"输出=上下文"的误抄不进入快照）：
 
 - Doubao 2.1/Evolving 输出：Pi `256000` → 注册 `262144`；Mini `128000` → `131072`。
-- Kimi K3.1 Pro：上下文 `1024000`（Pi）→ `1048576`（阿里云注册）；输出 `1024000`（Pi，等于上下文的可疑值）→ 厂商默认 `131072`，上限 1M 可协商。
-- Kimi K2.8 Preview 输出：`1048576`（Pi/概览，复制上下文的文案错误）→ 注册 `131072`。
+- Kimi K3.1 Pro：上下文 `1024000`（Pi）→ `1048576`（阿里云注册）；输出 `1024000`（Pi，等于上下文的可疑值）→ 厂商默认 `131072`，`max_completion_tokens` 上限 1M 可显式设置；上限以快照 `maxTokensCeiling` 单独声明，设置页滑块可到顶档。
+- Kimi K2.8 Preview 输出：`1048576`（Pi/概览，复制上下文的文案错误）→ 注册 `131072`；`max_completion_tokens` 上限 1M 同以 `maxTokensCeiling` 声明。
 - V4.1 Flash Economy 上下文：`1024000`（Pi）→ `1048576`（官方 Plan 目录）。
 - GLM 5.3/5.3 Flash 输出：`128000`（Pi）→ `131072`（官方 Plan 目录，智谱"128K"）。
 - Kimi K3 输出：Agent `128000`/Coding `65536`（保守示例）→ 统一 `131072`（厂商默认，上限 1M）。

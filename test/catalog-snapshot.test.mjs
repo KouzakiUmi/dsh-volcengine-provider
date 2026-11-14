@@ -128,11 +128,15 @@ test('vendor-registered exact integers are preserved, including mixed units', ()
     assert.equal(find('doubao-seed-evolving').maxTokens,262144);
     assert.equal(find('deepseek-v4-1-flash-economy').contextWindow,1048576);
     assert.equal(find('deepseek-v4-1-flash-economy').maxTokens,393216);
+    assert.equal(find('deepseek-v4-1-flash-economy').maxReasoningTokenLength,131072);
     assert.equal(find('deepseek-v4-pro').maxTokens,393216);
+    assert.equal(find('deepseek-v4-pro').maxReasoningTokenLength,131072);
+    assert.equal(find('deepseek-v4-flash').maxReasoningTokenLength,131072);
     assert.equal(find('kimi-k2-8-preview').maxTokens,131072);
     const k31=plan==='agent-plan'?find('kimi-k3-1-pro'):rows.find(model=>model.id==='kimi-k3.1-pro');
     assert.equal(k31.contextWindow,1048576);
     assert.equal(k31.maxTokens,131072);
+    assert.equal(k31.maxTokensCeiling,1048576);
     assert.equal(find('glm-5.3').maxTokens,131072);
     assert.equal(rows.find(model=>model.id==='kimi-k3').maxTokens,131072);
     assert.equal(find('kimi-k2.7-code').contextWindow,262144);

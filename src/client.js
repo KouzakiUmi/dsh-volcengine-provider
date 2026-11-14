@@ -1041,15 +1041,17 @@ function QuotaWindows({ quota }) {
 /**
  * 按模型的目录理论上限给稀疏档位（codex 式 standard/extended/maximum 思路）：
  * 上下文固定档 128K/256K/512K/1M，输出固定档 32K/64K/128K/256K，
- * 只保留不超过该模型上限的部分；目录声明的上限总是顶档（"最大"），
+ * 只保留不超过该模型上限的部分；理论上限本身总是顶档（"最大"），
  * 已有自定义值保留为独立凹点，不因改成滑块而吞掉任意整数。
+ * ceiling 为字段的真实上限：上下文取目录 contextWindow，输出取目录 maxTokensCeiling
+ * （未声明时退回默认 maxTokens）——部分模型可协商输出上限高于目录默认值。
  */
 const CAPACITY_LEVELS = {
   contextWindow: [131072, 262144, 524288, 1048576],
   maxTokens: [32768, 65536, 131072, 262144]
 };
-function capacityStops(key, inheritedValue, currentValue) {
-  const ceiling = Number.isSafeInteger(inheritedValue) && inheritedValue > 0 ? inheritedValue : undefined;
+function capacityStops(key, ceilingValue, currentValue) {
+  const ceiling = Number.isSafeInteger(ceilingValue) && ceilingValue > 0 ? ceilingValue : undefined;
   const stops = new Set((CAPACITY_LEVELS[key] ?? []).filter(level => ceiling === undefined || level <= ceiling));
   if (ceiling !== undefined) stops.add(ceiling);
   if (Number.isSafeInteger(currentValue) && currentValue > 0) stops.add(currentValue);
@@ -1186,9 +1188,22 @@ function ModelSettingsEditor({ model, draft, error, fieldErrors, disabled, onCha
   const capacityRow = (key, label) => {
     const inherited = (draft?.[key] ?? '') === '';
     const inheritedValue = model?.defaults?.[key];
+    // 滑块顶档是字段真实上限：输出取目录声明的可协商上限（未声明时即默认值）。
+    // 上游注册目录另有 maxReasoningTokenLength：思考开启时输出上限更低（如 DeepSeek V4 系
+    // 非思考 384K / 思考 128K）。思考映射整体停用（effortsMode 'none'）时才放开到非思考上限。
+    let ceiling = key === 'maxTokens' ? (model?.defaults?.maxTokensCeiling ?? inheritedValue) : inheritedValue;
+    let reasoningCapped = false;
+    if (key === 'maxTokens') {
+      const mr = model?.defaults?.maxReasoningTokenLength;
+      const thinkingOn = (draft?.effortsMode ?? 'inherit') !== 'none';
+      if (thinkingOn && Number.isSafeInteger(mr) && mr > 0 && mr < ceiling) {
+        ceiling = mr;
+        reasoningCapped = true;
+      }
+    }
     const draftValue = Number.parseInt(draft?.[key], 10);
     const sliderValue = inherited ? inheritedValue : draftValue;
-    const stops = capacityStops(key, inheritedValue, Number.isFinite(sliderValue) ? sliderValue : undefined);
+    const stops = capacityStops(key, ceiling, Number.isFinite(sliderValue) ? sliderValue : undefined);
     return h('div', { style: { display: 'grid', gap: 6 } },
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
         h('span', { style: style.label }, label),
@@ -1197,13 +1212,14 @@ function ModelSettingsEditor({ model, draft, error, fieldErrors, disabled, onCha
             type: 'checkbox', checked: inherited, disabled,
             'aria-label': `继承 ${label}`,
             style: { width: 18, height: 18, margin: 0, flex: '0 0 auto', accentColor: 'var(--dsw-alias-brand-primary, Highlight)' },
-            onChange: (event) => onChange({ [key]: event.target.checked ? '' : String(stops[stops.length - 1] ?? '') })
+            // 取消继承先落到目录默认值，再由用户向顶档拖；不直接跳到理论上限。
+            onChange: (event) => onChange({ [key]: event.target.checked ? '' : String(inheritedValue ?? stops[stops.length - 1] ?? '') })
           }),
           h('span', { style: { fontSize: 12 } }, '继承目录默认')),
         h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary, #64748b)', fontVariantNumeric: 'tabular-nums' } },
           inherited
-            ? `目录默认 ${formatTokenCount(inheritedValue)}`
-            : `当前 ${formatTokenCount(sliderValue)}（${Number.isFinite(sliderValue) ? sliderValue : '—'} token）`)),
+            ? `目录默认 ${formatTokenCount(inheritedValue)}${ceiling && ceiling !== inheritedValue ? ` · 上限 ${formatTokenCount(ceiling)}${reasoningCapped ? '（思考）' : ''}` : ''}`
+            : `当前 ${formatTokenCount(sliderValue)}（${Number.isFinite(sliderValue) ? sliderValue : '—'} token）${reasoningCapped ? ` · 思考上限 ${formatTokenCount(ceiling)}` : ''}`)),
       h(CapacitySlider, {
         choices: stops,
         value: stops.includes(sliderValue) ? sliderValue : stops[0],

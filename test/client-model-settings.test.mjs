@@ -552,6 +552,16 @@ test('能力状态区分文档缺项和动态路由，常驻模型不提供关�
   const h=createHarness({backend});t.after(()=>h.dispose());await h.flush();
   assert.doesNotMatch(h.joined(),/能力未核实/);assert.match(h.joined(),/动态路由/);assert.match(h.joined(),/部分参数未公开/);assert.match(h.joined(),/常驻思考/);assert.match(h.joined(),/默认档位 max/);
   await h.clicks(h.byLabel('button','模型参数 kimi-k3-1-pro-261024'));
+  // 取消「继承目录默认」先落回目录默认 131072，而非直接跳到顶档。
+  await h.toggle(h.byLabel('input','继承 最大输出 token maxTokens'),false);
+  const sliderNow=h.find(h.tree,node=>node.props?.role==='slider'&&node.props?.['aria-label']==='最大输出 token maxTokens')[0];
+  assert.equal(String(sliderNow.props['aria-valuetext']),'128K','取消继承未落回目录默认值');
+  await h.toggle(h.byLabel('input','继承 最大输出 token maxTokens'),true);
+  // 输出滑块顶档是模型可协商上限 1M（厂商注册），而非目录默认 128K；
+  // 显式拖到顶档保存为 1048576（不超过上下文 1M，校验通过）。
+  const mtSlider=h.find(h.tree,node=>node.props?.role==='slider'&&node.props?.['aria-label']==='最大输出 token maxTokens')[0];
+  assert.match(String(mtSlider.props['data-stops']),/1048576/,'输出滑块缺少 1M 顶档');
+  await h.slide('最大输出 token maxTokens',1048576);
   assert.ok(!h.find(h.byLabel('select','默认思考档位 defaultReasoning'),node=>node.type==='option').some(node=>node.props.value==='off'));
   await h.change(h.byLabel('select','思考档位映射 reasoningEfforts'),'map');
   await h.change(h.byLabel('textarea','JSON 映射'),'{"off":null,"low":"low"}');
@@ -560,7 +570,7 @@ test('能力状态区分文档缺项和动态路由，常驻模型不提供关�
   await h.change(h.byLabel('textarea','JSON 映射'),'{"off":"low","low":"high"}');
   await h.change(h.byLabel('select','默认思考档位 defaultReasoning'),'off');
   await h.clicks(h.find(h.tree,node=>node.type==='button'&&node.props.children==='保存参数')[0]);
-  const saved=backend.calls.find(call=>call.op==='saveModelSettings');assert.equal(saved.settings.defaultReasoning,'off');assert.deepEqual(saved.settings.reasoningEfforts,{off:'low',low:'high'});
+  const saved=backend.calls.find(call=>call.op==='saveModelSettings');assert.equal(saved.settings.defaultReasoning,'off');assert.equal(saved.settings.maxTokens,1048576);assert.deepEqual(saved.settings.reasoningEfforts,{off:'low',low:'high'});
 });
 
 test('旧快照缺少 enabled 时按启用处理', async () => {
