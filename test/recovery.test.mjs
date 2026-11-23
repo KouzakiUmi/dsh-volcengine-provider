@@ -230,15 +230,21 @@ test('clearCaches 之后推理 Key 会重新向 CLI 取值', async () => {
 	assert.equal(apiKeyCalls.length, 2, 'clearCaches 之后应重新取值');
 });
 
-test('clearCaches 同时让额度缓存失效', async () => {
+test('clearCaches 默认保留额度快照，身份级失效才重采', async () => {
 	const { controller, fetchCalls } = await setup();
 	await controller.invoke({ op: 'quota', plan: 'coding-plan', accountId: 'default' });
 	await controller.invoke({ op: 'quota', plan: 'coding-plan', accountId: 'default' });
 	assert.equal(fetchCalls.length, 1, '额度结果应命中缓存');
 
+	// 目录采集、普通设置变化不该让额度重新拉一次：中间层继续服务到 TTL 过期。
 	controller.clearCaches();
 	await controller.invoke({ op: 'quota', plan: 'coding-plan', accountId: 'default' });
-	assert.equal(fetchCalls.length, 2, 'clearCaches 之后额度应重新请求');
+	assert.equal(fetchCalls.length, 1, '默认 clearCaches 不清额度快照');
+
+	// 凭据引用变化、重新登录这类身份级事件才让快照整体作废。
+	controller.clearCaches({ quotas: true });
+	await controller.invoke({ op: 'quota', plan: 'coding-plan', accountId: 'default' });
+	assert.equal(fetchCalls.length, 2, '身份级失效后额度应重新采集');
 });
 
 // ── dispose ─────────────────────────────────────────────────────────────────────

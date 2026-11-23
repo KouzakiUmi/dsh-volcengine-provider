@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename, rm, open } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { normalizeMediaState } from './media.mjs';
 
 export const STATE_VERSION = 2;
 export const PLANS = ['agent-plan', 'coding-plan'];
@@ -169,7 +170,8 @@ export function initialState() {
 		enabled: { 'agent-plan': true, 'coding-plan': true },
 		catalogs: {},
 		oauth: {},
-		modelSettings: {}
+		modelSettings: {},
+		media: normalizeMediaState()
 	};
 }
 export function validateState(value) {
@@ -208,7 +210,8 @@ export function validateState(value) {
 		enabled[plan] = declared ?? Boolean(active[plan]);
 	}
 	const modelSettings = normalizeModelSettingsMap(value.modelSettings, accounts);
-	return { version: STATE_VERSION, accounts, active, enabled, catalogs, oauth, modelSettings };
+	const media = normalizeMediaState(value.media);
+	return { version: STATE_VERSION, accounts, active, enabled, catalogs, oauth, modelSettings, media };
 }
 /** Only explicitly supported, non-secret identity fields may enter metadata or RPC. */
 export function normalizeIdentity(value) {

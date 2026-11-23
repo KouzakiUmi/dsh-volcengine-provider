@@ -6,6 +6,15 @@ import { catalogStatus, effectiveModel, getModelRows, normalizeCatalog, override
 import { ArkCli, locateCli } from './cli.mjs';
 import { ArkOAuth } from './oauth.mjs';
 import { fetchUsage, parseAgentUsage, parseCodingUsage } from './quota.mjs';
+import { defaultMediaState, mediaToolEnabled, normalizeMediaState } from './media.mjs';
+import { QuotaSnapshotStore } from './snapshot.mjs';
+import { readOAuthExpiry } from './oauth-expiry.mjs';
+
+// 中间层参数：额度由 Host 定期采集，Client 只读快照。
+const QUOTA_TTL = 60000;
+const QUOTA_BACKOFF_MAX = 8;
+const CATALOG_TTL = 15 * 60000;
+const COLLECT_TICK = 15000;
 
 export function planProfiles(status) {
   if (!Array.isArray(status?.profiles_summary)) throw new Error('CLI 身份摘要缺少 profiles_summary，请核对 ArkCli 版本');
@@ -35,6 +44,13 @@ export class ArkController {
     this.life = new AbortController(); this.disposed = false; this.cache = new Map(); this.inflight = new Map();
     this.inferenceCache = new Map(); this.inferenceInflight = new Map(); this.cacheGeneration = 0;
     this.identityCache = new Map(); this.identityInflight = new Map();
+    this.expiryCache = new Map();
+    // 失败负缓存与按账号串行锁：凭据/登录失效时避免反复 spawn ArkCli 拖慢宿主。
+    this.inferenceFailure = new Map(); this.executablePromise = undefined; this.quotaQueue = new Map();
+    // 中间层：Host 定期采集的额度快照（内存 + 同目录原子落盘），Client 只读不触发采集。
+    this.quotaSnapshots = new QuotaSnapshotStore({ path: join(dirname(statePath), 'quota-snapshot.json') });
+    this.quotaFailures = new Map(); this.catalogFailures = new Map(); this.catalogInflight = new Map();
+    this.collectorTimer = null; this.collecting = false;
     this.oauth = new ArkOAuth({ spawn: spawnImpl, onSuccess: (id, rev, signal, homeId) => this.bindLogin(id, rev, signal, homeId) });
     this.onChange = async () => {}; this.operations = Promise.resolve();
   }
@@ -44,16 +60,44 @@ export class ArkController {
     if (!owner) throw new Error('账号不存在');
     return owner;
   }
-  async cli(owner, binding = this.store.current.oauth?.[owner.id]) {
+  /** 账号隔离 CLI home：新绑定用会话目录，旧绑定沿用账号根目录。 */
+  homeFor(owner, binding = this.store.current.oauth?.[owner.id]) {
     const root = join(dirname(this.store.path), 'accounts', owner.id);
-    const home = binding?.homeId ? join(root, 'sessions', binding.homeId) : root;
-    if (this.cliFactory) return this.cliFactory(owner, home);
-    return new ArkCli({ executable: await locateCli(this.arkCliPath), home });
+    return binding?.homeId ? join(root, 'sessions', binding.homeId) : root;
   }
-  clearCaches() {
+  async cli(owner, binding = this.store.current.oauth?.[owner.id]) {
+    const home = this.homeFor(owner, binding);
+    if (this.cliFactory) return this.cliFactory(owner, home);
+    // 定位可执行文件的 PATH/require 探测只做一次；失败不缓存，保证装上 CLI 后能恢复。
+    this.executablePromise ??= locateCli(this.arkCliPath);
+    let executable;
+    try { executable = await this.executablePromise; }
+    catch (error) { this.executablePromise = undefined; throw error; }
+    return new ArkCli({ executable, home });
+  }
+  /** 同一账号的额度查询串行执行：两个套餐同时刷新时不并发 spawn 多个 ArkCli。 */
+  async withQuotaLock(id, task) {
+    const previous = this.quotaQueue.get(id) ?? Promise.resolve();
+    const next = previous.then(task, task);
+    const settled = next.then(() => {}, () => {});
+    this.quotaQueue.set(id, settled);
+    try { return await next; }
+    finally { if (this.quotaQueue.get(id) === settled) this.quotaQueue.delete(id); }
+  }
+  /**
+   * 清身份与推理缓存。额度快照默认保留（采集器会按 TTL 刷新）；
+   * 凭据引用变化、重新登录、卸载这类身份级事件传 quotas: true 一并作废。
+   */
+  clearCaches({ quotas = false, persist = true } = {}) {
     this.cacheGeneration++;
     this.cache.clear(); this.inflight.clear(); this.inferenceCache.clear(); this.inferenceInflight.clear();
-    this.identityCache.clear(); this.identityInflight.clear();
+    this.identityCache.clear(); this.identityInflight.clear(); this.inferenceFailure.clear();
+    this.expiryCache.clear();
+    if (quotas) {
+      this.quotaSnapshots.entries.clear();
+      // 卸载时只清内存，不再排队落盘：避免与调用方删除数据目录竞争。
+      if (persist) this.quotaSnapshots.save();
+    }
   }
   async inferenceKey(owner, plan, selection = { binding: this.store.current.oauth?.[owner.id] }) {
     if (this.disposed) throw new Error('插件已卸载');
@@ -62,6 +106,9 @@ export class ArkController {
       const profile = binding.profiles[plan];
       if (!profile) return undefined; // Never borrow a different identity/key pool after OAuth binding.
       const cacheKey = revision({ accountId: owner.id, plan, profile, loggedAt: binding.loggedAt, homeId: binding.homeId });
+      // 同一失败在 20 秒内直接复用：登录/协议失效时不要再为每条请求 spawn 一次 ArkCli。
+      const failure = this.inferenceFailure.get(cacheKey);
+      if (failure && Date.now() - failure.at < 20000) throw failure.error;
       const cached = this.inferenceCache.get(cacheKey);
       if (cached && Date.now() - cached.at < 30000) return cached.value;
       if (this.inferenceInflight.has(cacheKey)) return this.inferenceInflight.get(cacheKey);
@@ -73,6 +120,15 @@ export class ArkController {
           if (this.disposed || this.life.signal.aborted) throw new Error('插件已卸载');
           if (generation === this.cacheGeneration) this.inferenceCache.set(cacheKey, { at: Date.now(), value: key });
           return key;
+        } catch (error) {
+          if (this.disposed || this.life.signal.aborted) throw error;
+          const wrapped = new Error(error?.arkKind === 'auth'
+            ? '方舟登录凭据需要重新确认：请在插件设置页重新网页登录（ArkCli SSO）后重试'
+            : '方舟推理凭据获取失败：请检查登录状态、网络与 ArkCli 版本');
+          wrapped.cause = error;
+          wrapped.arkKind = error?.arkKind ?? 'unknown';
+          if (generation === this.cacheGeneration) this.inferenceFailure.set(cacheKey, { at: Date.now(), error: wrapped });
+          throw wrapped;
         } finally { if (this.inferenceInflight.get(cacheKey) === task) this.inferenceInflight.delete(cacheKey); }
       })();
       this.inferenceInflight.set(cacheKey, task);
@@ -121,7 +177,7 @@ export class ArkController {
       const identity = await this.identityFor(owner, oauth);
       const hasQuotaAccess = Object.fromEntries(PLANS.map(plan => [plan, oauth ? Boolean(oauth.profiles[plan]) : hasQuotaKeys]));
       return { ...owner, displayName: identity?.name || (identity?.accountId ? `方舟账号 ${identity.accountId}` : owner.label),
-        ...(identity ? { identity } : {}), ...(oauth ? { oauthProfiles: { ...oauth.profiles }, loggedAt: oauth.loggedAt } : {}),
+        ...(identity ? { identity } : {}), ...(oauth ? { oauthProfiles: { ...oauth.profiles }, loggedAt: oauth.loggedAt, oauthExpiresAt: await this.oauthExpiry(owner, oauth) } : {}),
         ...(credentialError ? { credentialError: '凭据服务检查失败；可编辑引用或稍后刷新重试。' } : {}),
         hasApiKeys, hasQuotaKeys, hasQuotaAccess, authMode: oauth ? 'oauth' : 'references' };
     }));
@@ -141,8 +197,24 @@ export class ArkController {
           ...(status.updatedAt ? { updatedAt: status.updatedAt } : {}),
           models
         };
-      })), login: this.oauth.status()
+      })), login: this.oauth.status(),
+      media: { ...state.media },
+      // 中间层：额度快照随 read 一起下发，设置页首屏不需要再发查询请求。
+      quotas: this.snapshotView().quotas
     };
+  }
+  /**
+   * OAuth 登录态到期时间（ISO 字符串）：只读 refresh_token 的 exp 元数据，按绑定缓存；
+   * 官方 SSO 续期不延长 refresh_token，该值即登录态权威到期。未知时 null。
+   */
+  async oauthExpiry(owner, binding) {
+    if (!binding) return null;
+    const key = revision({ id: owner.id, homeId: binding.homeId ?? null, loggedAt: binding.loggedAt });
+    if (this.expiryCache.has(key)) return this.expiryCache.get(key);
+    const expiry = await readOAuthExpiry(this.homeFor(owner, binding));
+    const value = expiry === null ? null : new Date(expiry).toISOString();
+    if (!this.disposed) this.expiryCache.set(key, value);
+    return value;
   }
   async bindLogin(id, rev, signal, homeId) {
     const owner = this.owner(id);
@@ -158,50 +230,194 @@ export class ArkController {
       for (const plan of PLANS) delete next.catalogs[`${id}:${plan}`];
       return next;
     }, { signal });
-    this.clearCaches();
+    this.clearCaches({ quotas: true });
     // Identity was already verified and committed. A routing failure is a separate, visible state.
     try { await this.onChange(); }
     catch { this.routingError ??= '登录身份已保存，但模型路由更新失败；此前可用路由仍保留。'; }
   }
+  /** 账号+套餐的采集指纹：身份、绑定或凭据引用变化后旧快照自动失效。 */
+  quotaFingerprint(id) {
+    const owner = this.store.current?.accounts.find(a => a.id === id);
+    if (!owner) return null;
+    return revision({ owner, binding: this.store.current.oauth?.[id] });
+  }
+  /** 中间层视图：Client 只读这里，不触发任何上游请求。 */
+  snapshotView() {
+    const quotas = {};
+    for (const [key, entry] of Object.entries(this.quotaSnapshots.map())) {
+      const [id] = key.split(':');
+      const fingerprint = this.quotaFingerprint(id);
+      if (!fingerprint) continue;
+      if (!this.quotaSnapshots.get(key, fingerprint)) continue;
+      quotas[key] = entry;
+    }
+    return { revision: revision(this.store.current), quotas };
+  }
+  /**
+   * Client 读额度：有中间层快照就直接返回，过期只在后台补采，读取本身不等上游。
+   * force=true 才清掉快照并立即重采（对应「刷新额度」）。
+   */
   async quota(plan, id, force) {
-    assertPlan(plan); const owner = this.owner(id);
+    assertPlan(plan); this.owner(id);
+    const key = `${id}:${plan}`;
+    const fingerprint = this.quotaFingerprint(id);
+    if (force) this.quotaSnapshots.delete(key);
+    const entry = force ? undefined : this.quotaSnapshots.get(key, fingerprint);
+    if (entry) {
+      if (Date.now() - entry.at >= QUOTA_TTL) void this.collectQuota(plan, id).catch(() => {});
+      return structuredClone(entry.value);
+    }
+    // 手动刷新要能突破退避：force 时忽略失败退避，立即重采。
+    return this.collectQuota(plan, id, { force });
+  }
+  /** 取上次成功值作底：刷新失败时保留窗口，只附加失败原因。 */
+  mergeQuotaSnapshot(key, fingerprint, value) {
+    const previous = this.quotaSnapshots.get(key, fingerprint)?.value;
+    if (value.state !== 'ok' && previous?.state === 'ok' && Array.isArray(previous.windows) && previous.windows.length) {
+      return { ...previous, refreshError: value.error ?? '额度更新失败', errorKind: value.errorKind, refreshFailedAt: value.updatedAt };
+    }
+    return value;
+  }
+  /** 真正拉取一次额度并写入中间层；失败按次数退避，避免登录失效时反复 spawn CLI。 */
+  collectQuota(plan, id, { force = false } = {}) {
+    assertPlan(plan);
+    const owner = this.owner(id);
     const binding = this.store.current.oauth[id];
-    const fingerprint = revision({ owner, binding });
-    const key = `${id}:${plan}:${fingerprint}`;
-    if (force) this.cache.delete(key);
-    const cached = this.cache.get(key);
-    if (!force && cached && Date.now() - cached.at < 60000) return structuredClone(cached.value);
-    if (this.inflight.has(key)) return this.inflight.get(key);
-    const generation = this.cacheGeneration;
-    const task = (async () => {
+    const fingerprint = this.quotaFingerprint(id);
+    const key = `${id}:${plan}`;
+    const running = this.inflight.get(key);
+    if (running) return running;
+    const failure = this.quotaFailures.get(key);
+    // 退避期内不重试（手动刷新例外）：没有快照时返回上次失败结论，也不 spawn CLI。
+    if (!force && failure && failure.until > Date.now()) {
+      const cached = this.quotaSnapshots.get(key, fingerprint)?.value ?? failure.value;
+      if (cached) return Promise.resolve(structuredClone(cached));
+    }
+    const task = this.withQuotaLock(id, async () => {
       await Promise.resolve();
+      let value;
       const base = { accountId: id, plan, updatedAt: new Date().toISOString() };
       try {
         let parsed;
         if (binding) {
           const profile = binding.profiles[plan];
-          if (!profile) return { ...base, state: 'no-key', windows: [], error: '此 OAuth 账号未绑定该订阅' };
-          const cli = await this.cli(owner, binding);
-          const action = plan === 'agent-plan' ? 'usage.get_afp_usage' : 'usage.get_coding_plan_usage';
-          const raw = await cli.run(['api', action, '--params', '{}', '--profile', profile], { signal: this.life.signal });
-          // Raw OpenAPI owns the AFP daily window; usage plan intentionally omits it.
-          const payload = plan === 'agent-plan' && raw && !raw.Result && ['AFPFiveHour', 'AFPWeekly', 'AFPMonthly', 'AFPDaily'].some(field => Object.hasOwn(raw, field)) ? { Result: raw } : raw;
-          parsed = (plan === 'agent-plan' ? parseAgentUsage : parseCodingUsage)(payload);
+          if (!profile) value = { ...base, state: 'no-key', windows: [], error: '此 OAuth 账号未绑定该订阅' };
+          else {
+            const cli = await this.cli(owner, binding);
+            const action = plan === 'agent-plan' ? 'usage.get_afp_usage' : 'usage.get_coding_plan_usage';
+            // 额度查询是后台刷新：给比默认更短的超时，避免 CLI 卡住时占着账号串行锁。
+            const raw = await cli.run(['api', action, '--params', '{}', '--profile', profile], { signal: this.life.signal, timeout: 15000 });
+            // Raw OpenAPI owns the AFP daily window; usage plan intentionally omits it.
+            const payload = plan === 'agent-plan' && raw && !raw.Result && ['AFPFiveHour', 'AFPWeekly', 'AFPMonthly', 'AFPDaily'].some(field => Object.hasOwn(raw, field)) ? { Result: raw } : raw;
+            parsed = (plan === 'agent-plan' ? parseAgentUsage : parseCodingUsage)(payload);
+          }
         } else {
           const accessKeyId = owner.accessKeyRef ? await this.resolveRef(owner.accessKeyRef) : undefined;
           const secretAccessKey = owner.secretKeyRef ? await this.resolveRef(owner.secretKeyRef) : undefined;
-          if (!accessKeyId || !secretAccessKey) return { ...base, state: 'no-key', windows: [], error: '额度查询需要 IAM AK/SK，不是推理 API Key；也可使用网页登录' };
-          parsed = await fetchUsage(plan, { accessKeyId, secretAccessKey }, { ...(this.fetchImpl ? { fetchImpl: this.fetchImpl } : {}), signal: this.life.signal });
+          if (!accessKeyId || !secretAccessKey) value = { ...base, state: 'no-key', windows: [], error: '额度查询需要 IAM AK/SK，不是推理 API Key；也可使用网页登录' };
+          else parsed = await fetchUsage(plan, { accessKeyId, secretAccessKey }, { ...(this.fetchImpl ? { fetchImpl: this.fetchImpl } : {}), signal: this.life.signal });
         }
-        const { plan: planName, ...usage } = parsed;
-        const value = { ...base, state: parsed.windows.length ? 'ok' : 'error', ...usage, ...(planName ? { planName } : {}), ...(!parsed.windows.length ? { error: '接口未返回可展示的额度窗口；未确认订阅或额度状态' } : {}) };
-        if (!this.disposed && generation === this.cacheGeneration) this.cache.set(key, { at: Date.now(), value });
-        return structuredClone(value);
-      } catch {
-        return { ...base, state: 'error', windows: [], error: '额度读取失败；请检查该账号的鉴权、权限、网络及 CLI 版本' };
-      } finally { if (this.inflight.get(key) === task) this.inflight.delete(key); }
+        if (!value) {
+          const { plan: planName, ...usage } = parsed;
+          value = { ...base, state: parsed.windows.length ? 'ok' : 'error', ...usage, ...(planName ? { planName } : {}), ...(!parsed.windows.length ? { error: '接口未返回可展示的额度窗口；未确认订阅或额度状态' } : {}) };
+        }
+      } catch (error) {
+        // 登录/协议失效时给出可操作结论；失败也进中间层与退避表，轮询重试不再反复 spawn ArkCli。
+        const kind = error?.arkKind ?? 'unknown';
+        value = {
+          ...base,
+          state: kind === 'auth' ? 'no-key' : 'error',
+          windows: [],
+          errorKind: kind,
+          error: kind === 'auth'
+            ? 'OAuth 登录凭据需要重新确认：请在账号区重新网页登录（ArkCli SSO）后重试'
+            : kind === 'network'
+              ? '额度查询超时或网络不可用；稍后会自动重试'
+              : '额度读取失败；请检查该账号的鉴权、权限、网络及 CLI 版本'
+        };
+      }
+      const merged = this.mergeQuotaSnapshot(key, fingerprint, value);
+      if (!this.disposed) this.quotaSnapshots.set(key, fingerprint, merged);
+      if (merged.state === 'ok') this.quotaFailures.delete(key);
+      else {
+        const count = Math.min((this.quotaFailures.get(key)?.count ?? 0) + 1, 3);
+        this.quotaFailures.set(key, { count, until: Date.now() + QUOTA_TTL * Math.min(2 ** count, QUOTA_BACKOFF_MAX), value: structuredClone(merged) });
+      }
+      if (this.inflight.get(key) === task) this.inflight.delete(key);
+      return structuredClone(merged);
+    });
+    this.inflight.set(key, task);
+    return task;
+  }
+  /** 采集模型目录并写回状态文件；失败退避，冲突交给下一轮重试。 */
+  collectCatalog(plan, id) {
+    assertPlan(plan);
+    const owner = this.owner(id);
+    const binding = this.store.current.oauth[id];
+    const profile = binding ? binding.profiles[plan] : owner.cliProfile;
+    const key = `${id}:${plan}`;
+    if (!profile) return Promise.resolve(undefined);
+    const running = this.catalogInflight.get(key);
+    if (running) return running;
+    const failure = this.catalogFailures.get(key);
+    if (failure && failure.until > Date.now()) return Promise.resolve(undefined);
+    const task = (async () => {
+      try {
+        const catalog = normalizeCatalog(plan, await (await this.cli(owner)).models(plan, profile, this.life.signal));
+        if (this.disposed) return undefined;
+        // 采集写入可能撞上用户编辑：跳过后下一轮再试，不覆盖别人刚保存的设置。
+        await this.store.mutate(revision(this.store.current), next => { next.catalogs[key] = catalog; return next; });
+        this.catalogFailures.delete(key);
+        try { await this.onChange(); }
+        catch { this.routingError ??= '模型路由更新失败；设置已同步，实际路由仍为此前账号。'; }
+        return catalog;
+      } catch (error) {
+        // 与用户编辑撞 revision 不是故障：跳过这一轮，不进入长退避。
+        if (!/设置已改变/.test(String(error?.message ?? ''))) {
+          const count = Math.min((this.catalogFailures.get(key)?.count ?? 0) + 1, 4);
+          this.catalogFailures.set(key, { count, until: Date.now() + CATALOG_TTL * Math.min(2 ** (count - 1), 4) });
+        }
+        throw error;
+      } finally { if (this.catalogInflight.get(key) === task) this.catalogInflight.delete(key); }
     })();
-    this.inflight.set(key, task); return task;
+    this.catalogInflight.set(key, task);
+    return task;
+  }
+  /** 一轮采集：只处理已启用且有选中账号的套餐；额度每 QUOTA_TTL、目录每 CATALOG_TTL 刷新。 */
+  async collectOnce() {
+    if (this.disposed || this.collecting || !this.store.current) return;
+    this.collecting = true;
+    try {
+      const state = this.store.current;
+      const jobs = [];
+      for (const plan of PLANS) {
+        if (state.enabled?.[plan] === false) continue;
+        const id = state.active?.[plan];
+        if (!id || !state.accounts.some(a => a.id === id)) continue;
+        const fingerprint = this.quotaFingerprint(id);
+        const quota = this.quotaSnapshots.get(`${id}:${plan}`, fingerprint);
+        if (!quota || Date.now() - quota.at >= QUOTA_TTL) jobs.push(this.collectQuota(plan, id).catch(() => {}));
+        const catalog = state.catalogs?.[`${id}:${plan}`];
+        const updatedAt = catalog?.updatedAt ? Date.parse(catalog.updatedAt) : NaN;
+        if (!Number.isFinite(updatedAt) || Date.now() - updatedAt >= CATALOG_TTL) jobs.push(this.collectCatalog(plan, id).catch(() => {}));
+      }
+      this.quotaSnapshots.prune(key => {
+        const [id] = key.split(':');
+        return Boolean(this.quotaFingerprint(id));
+      });
+      await Promise.allSettled(jobs);
+    } finally { this.collecting = false; }
+  }
+  /** 启动后台采集；与设置页是否打开无关。 */
+  startCollector() {
+    if (this.collectorTimer || this.disposed) return;
+    void this.collectOnce();
+    this.collectorTimer = setInterval(() => { void this.collectOnce(); }, COLLECT_TICK);
+    if (typeof this.collectorTimer.unref === 'function') this.collectorTimer.unref();
+  }
+  stopCollector() {
+    if (this.collectorTimer) clearInterval(this.collectorTimer);
+    this.collectorTimer = null;
   }
   async invoke(request) {
     if (this.disposed) throw new Error('插件已卸载');
@@ -220,6 +436,8 @@ export class ArkController {
       return read;
     }
     if (op === 'loginStatus') return this.oauth.status();
+    // 轻量读取中间层：只读内存快照与状态 revision，不触发任何上游请求。
+    if (op === 'snapshots') return this.snapshotView();
     if (op === 'cancelLogin') return this.oauth.cancel(request.jobId);
     if (op === 'submitLoginCode') return this.oauth.submitCode(request.jobId, request.code);
     if (op === 'quota') return this.quota(request.plan, request.accountId, request.force === true);
@@ -307,10 +525,45 @@ export class ArkController {
         for (const id of overrideKeys(request.modelId)) delete bucket[id];
         if (Object.keys(bucket).length) next.modelSettings[key] = bucket; else delete next.modelSettings[key];
       }
+      else if (op === 'setMedia') {
+        next.media = normalizeMediaState({
+          ...next.media,
+          ...(request.riskAcknowledged !== undefined ? { riskAcknowledged: request.riskAcknowledged === true } : {}),
+          ...(request.imageTool !== undefined ? { imageTool: request.imageTool === true } : {}),
+          ...(request.imageModel !== undefined ? { imageModel: request.imageModel } : {})
+        });
+      }
       else throw new Error('未知操作');
       return next;
     });
     this.clearCaches(); await this.onChange(); return this.read();
   }
-  dispose() { this.disposed = true; this.oauth.dispose(); this.life.abort(); this.clearCaches(); }
+  media() {
+    return this.store.current?.media ?? defaultMediaState();
+  }
+  mediaEnabled(key) {
+    return mediaToolEnabled(this.media(), key);
+  }
+  /** 媒体工具运行时上下文：附件服务、账号清单与推理凭据。 */
+  mediaContext() {
+    const state = this.store.current;
+    const accountIds = state ? state.accounts.map(a => a.id) : [];
+    return {
+      media: this.media(),
+      accountIds,
+      credentials: async accountId => {
+        const current = this.store.current;
+        if (!current) throw new Error('账号状态不可用');
+        const active = current.active['agent-plan'];
+        if (active === null || active === undefined) throw new Error('Agent Plan 未选择账号，请先在设置页选择账号');
+        const id = accountId ?? active;
+        const owner = this.owner(id);
+        const binding = current.oauth[id];
+        const key = await this.inferenceKey(owner, 'agent-plan', { binding });
+        if (!key) throw new Error(binding ? '此账号未绑定 Agent Plan profile' : `凭据引用 ${owner.apiKeyRefs['agent-plan']} 无法解析`);
+        return { accountId: id, key };
+      }
+    };
+  }
+  dispose() { this.disposed = true; this.stopCollector(); this.oauth.dispose(); this.life.abort(); this.clearCaches({ quotas: true, persist: false }); this.quotaSnapshots.close(); }
 }

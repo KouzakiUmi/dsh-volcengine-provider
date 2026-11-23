@@ -1,5 +1,45 @@
 # 验证记录
 
+## [未发布] 设置页按套餐分区与图片生成单开关
+
+- 设置页四分区改为「Agent 套餐 / 编程套餐 / 账号与登录 / 图片生成」，每套餐一张卡片完整承载启用、账号、额度窗口、模型目录与技术细节；模型列表与高级信息默认折叠。`.vcp-tabs` 固定 `overflow-y:hidden` 并横向可滚，消除标签条多余滚动条。
+- 图片生成由「风险确认 + 工具开关」两道门合并为单个「启用图片生成」开关，一次 `setMedia` 同时写入 `riskAcknowledged` 与 `imageTool`（后端既有合并语义，未改）；计费说明保留在卡片内。
+- 已执行：`node scripts/check.mjs`、`node scripts/build.mjs`（22 文件）、`node --test test/*.test.mjs` **433 项通过**、`python -m unittest discover -s test -p 'test_*.py'` **10 项通过**。
+- 真实 React/Chrome 离线验证通过（前端资产自本机 `app.asar` 的 `dsh-web-frontend` 提取，假 RPC、HTTP(S) 阻断）：四标签导航与键盘操作、隐藏分区不卸载、模型列表默认折叠可展开、单一「启用图片生成」开关 check→uncheck→check 各产生一次 `setMedia` 双字段、390px 窄面板无横向溢出且四标签容纳、768px 双套餐逐一切换、深浅色 × 两种 secondary 令牌配置共 4 组 WCAG AA 全过（最低 text 4.67:1 / control 5.17:1）；截图 `test-output/client-preview*.png`。
+- 未覆盖：真实 Ark 生图调用、真实生产 DSH 页面、真实读屏器。
+
+## 0.2.17 图片渲染壳与设置页四分区（分区方案已被上方「按套餐分区」取代）
+
+- 设置页改为「概览与额度 / 模型目录 / 账号与登录 / 图片生成」四标签；工作区隐藏不卸载，模型编辑器、账号表单与登录状态跨标签保留；空账号自动进入账号与登录。标签支持方向键/Home/End，`aria-controls` 指向同一个持久 tabpanel，跨分区跳转在渲染后滚动并聚焦目标。
+- 图片卡片在 `tool.call.toolview` 注册 `volc_imagine`：生成中/失败/空结果、原图画廊、大图缩放、下载、复制提示词、原图 `onError` 重试、损坏原图回退预览、旧 `owner.loadImage` / `sessions.readAttachment` 兼容与 Blob URL 回收。
+- 原图与预览分离：`saveFile` 逐字节保存原始 PNG/JPEG，`saveImage` 另存宿主规范化视觉输入；下载字节 sniff 与 `output_format` 不一致时失败。原图回源路由校验回环/同源、附件参数与流出长度，成功响应使用私有缓存，错误响应不缓存。
+- 独立 UI/UX 审查（Claude Sonnet 5.5 / high）发现的原图失败态、跨标签焦点/滚动、`aria-controls`、焦点环、原图/预览标识与术语问题已修复并补回归；审查未操作生产 GUI。
+- 已执行：`node scripts/check.mjs`、`node scripts/build.mjs`、`node --test test/*.test.mjs` **433 项通过**；`python -m unittest discover -s test -p 'test_*.py'` **10 项通过**；`python scripts/pack.py --output-dir test-output/media-tabs-package` 与 `verify-package.py` 通过（48 文件，SHA256 `a1360247b9030af240eefd75d2a5e35b7200a9f6131286673ed6d888ec4d1d1d`）。
+- 当前宿主 Core 隔离 Host smoke 通过：真实 Core schema、RPC registry、隔离凭据、双模型目录、选择与 dispose，无网络。宿主脚本中 Economy 上下文断言按当前快照由 1024000 修正为 1048576。
+- 真实 React/Chrome 离线验证通过：四标签导航、账号/套餐/模型操作、额度分组与倒计时、图片模型选择、原图回源、原生下载、大图缩放/Escape、390px 无横向溢出、深浅色与两种 secondary 令牌配置对比度均通过；截图 `test-output/client-with-tabs.png`、`test-output/client-media-preview.png`。
+- 未覆盖：真实 Ark 生图调用、真实生产 DSH 页面、真实读屏器；全局 ArkCli 当前认证失效，本轮未重登或修改其凭据。
+
+## 0.2.17 设置页紧凑化适配受限容器
+
+- 背景：宿主设置对话框是严格限制大小的小容器（实测内容列约 360px、固定高度滚动）；插件原尺寸层级（32px 控件、18px 主标题、18px 卡片内边距、16px 间距）与该容器密度不匹配。
+- 改动：整体紧凑化——控件 minHeight 26px、主标题 15px、卡片标题 13px、卡片内边距 12px、区块间距 10px、开关 30×18、圆角收敛；额度主数字 18px、状态条 6px、状态色与对比度保持不变。
+- 已执行：436 项单元测试通过（含按新尺寸更新的样式快照断言）；真实 React/Chrome 离线验证改用 360×440 受限容器：无横向溢出、按钮 28px / 下拉 27px / 主标题 15px，深浅色截图无 pageerror（`test-output/compact-*.png`）。
+- 安装：desktop profile 0.2.16 → 0.2.17（`file:` 本次 tarball，SHA256 41a78cb3…），dependency spec / lockfile / 安装 manifest 与 bundle 四项一致；运行中宿主仍加载旧 bundle，真实 GUI 生效待重启后核验。
+
+## 0.2.17 登录态到期提醒与官方时限说明
+
+- 根因诊断（真实本机，ArkCli 1.0.48）：官方 SSO cross-device refresh_token 为 JWT，`exp - iat` 恰为 48 小时，续期不轮换、不延长；到期后服务端拒绝续期（`invalid_request - The request parameter refresh_token is invalid`），CLI 要求重新登录。STS / ID token 有效期 15 分钟，有效期内 CLI 自动续期（凭据文件时间戳与一次成功续期落盘证实）。诊断只读取令牌的时间 claim 与文件时间戳，未输出凭据内容。
+- Host：新增 `src/oauth-expiry.mjs`，只解读 refresh_token 的 exp claim、从隔离身份目录读取到期；`read` 按 OAuth 绑定下发 `oauthExpiresAt`（ISO 字符串或 null），按绑定缓存，重新登录 / 凭据变化 / 卸载时失效。凭据引用账号不带该字段。
+- Client：账号卡片正常 / 临期（剩余 ≤2 小时）/ 到期三态提醒；登录确认与等待授权码界面增加 48 小时登录态、10 分钟授权码时限说明；到期未知不显示文字。
+- 已执行：`node scripts/check.mjs`、`node scripts/build.mjs`、`node --test test/*.test.mjs` 436 项通过（含新增到期模块 7 项、manager 集成 2 项、client 提醒 5 项）；`python -m unittest discover -s test -p 'test_*.py'` 10 项通过。
+- 真实 React/Chrome 离线验证（桌面 0.2.1-rc.4 前端资产自 app.asar 提取，假 RPC、HTTP(S) 阻断）：OAuth 账号三态文本 / 字重 / role 断言通过，到期未知不显示，登录确认时限说明可见，深浅色截图无 pageerror；截图在 `test-output/expiry-*.png`（临时目录，不进归档）。
+- 未覆盖：真实授权码端到端登录仍未验收；48 小时为当前官方服务实测值（ArkCli 1.0.48），不是长期契约，界面文案以实测值为据。
+- 既有问题（与本次改动无关，未修复）：工作区 `scripts/browser-smoke.cjs` 登录段仍用旧浏览器桥按钮文案（「确认并打开官方登录页」），与两段式 UI 不同步；账号区展开状态在套餐启停触发的重渲染后丢失（移除本次新增行的基线对照复现相同）。
+
+## 0.2.17 媒体生成（已被图片渲染壳与四分区记录取代）
+
+- 本节早期草稿曾包含视频任务与视频路由；当前版本已移除视频工具、任务存储和路由，仅保留 `volc_imagine`。实际覆盖与未验收范围以顶部「图片渲染壳与设置页四分区」为准。
+
 ## 目标与范围
 
 - 已核验宿主有两个：桌面 **DSH Core 0.2.1-rc.4**（`DSH NEXT` 的 Core / llm / llm-pi-ai / credentials / launch-environment / typert-protocol manifest，pi-ai `1.1.0`）与手机版 **the agent harness 0.2.2-rc.1**（Node 24.22.1，pi-ai `1.5.0`）。五个 Core 包的 Peer 声明为 `>=0.2.1-rc.4 <0.3.0 || >=0.2.2-rc.1 <0.3.0`，pi-ai 为 `>=1.1.0 <2.0.0`；范围内其他版本未逐一验证。并集范围使 npm 默认 semver 与宿主 `includePrerelease` 判定同时匹配两个已核验的预发行宿主。

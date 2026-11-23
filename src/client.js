@@ -3,6 +3,8 @@
 // 页面职责：
 //   1. 账号管理：新增 / 编辑 / 删除账号。表单只填「凭据引用名」，页面永远拿不到明文密钥。
 //   2. 双套餐卡片：Agent 套餐与编程套餐各自独立选择账号、拉取模型目录、刷新额度。
+//      额度随设置页可见自动轮询（打开即查、每 60 秒一次、失败退避、隐藏时暂停），
+//      结果在模块作用域留存，重开设置页先显示上次结果。
 //   3. 网页登录：登录前先讲清副作用，登录中只展示状态与取消入口；
 //      官方 CLI 在系统默认浏览器里完成授权，页面既不接触授权码，也不接触 token。
 //   4. 模型管理：套餐启用开关、逐模型启用开关、模型参数编辑与恢复默认。
@@ -43,6 +45,23 @@ const PLAN_HINTS = {
   'coding-plan': '展示 5 小时 / 周 / 月三个额度窗口，接口只给已用百分比。'
 };
 
+const SETTINGS_TABS = [
+  { id: 'agent-plan', label: 'Agent 套餐' },
+  { id: 'coding-plan', label: '编程套餐' },
+  { id: 'accounts', label: '账号与登录' },
+  { id: 'media', label: '图片生成' }
+];
+
+function settingsTabAfter(key, current) {
+  const index = SETTINGS_TABS.findIndex(tab => tab.id === current);
+  if (index < 0) return null;
+  if (key === 'Home') return SETTINGS_TABS[0].id;
+  if (key === 'End') return SETTINGS_TABS[SETTINGS_TABS.length - 1].id;
+  if (key === 'ArrowRight') return SETTINGS_TABS[(index + 1) % SETTINGS_TABS.length].id;
+  if (key === 'ArrowLeft') return SETTINGS_TABS[(index - 1 + SETTINGS_TABS.length) % SETTINGS_TABS.length].id;
+  return null;
+}
+
 /** 额度窗口名的展示词。 */
 const WINDOW_KIND_LABELS = { '5h': '5 小时', week: '每周', month: '每月', day: '每日' };
 
@@ -52,6 +71,13 @@ const WINDOW_GROUP_LABELS = {
   all: '全能力月度额度',
   'daily-capabilities': '每日能力限额'
 };
+
+/**
+ * 额度中间层：Host 定期采集，Client 只读快照。
+ * 这里只负责按固定间隔拉一次轻量视图（内存读取，不触发上游查询），
+ * 并据此刷新页面；采集节奏、失败退避和「保留上次成功值」都在 Host 侧完成。
+ */
+const QUOTA_POLL_MS = 30000;
 
 /** 处于这三个状态时登录流程仍在进行，页面按秒轮询进度。 */
 const LOGIN_ACTIVE_STATES = ['launching', 'waiting', 'verifying'];
@@ -210,7 +236,9 @@ const LOGIN_CONFIRM_NOTES = [
   '登录使用官方 ArkCli 的无浏览器两段式流程：先生成官方登录链接，你在任意设备的浏览器完成 SSO 后，把页面显示的授权码粘贴回设置页；官方 CLI 负责完成交换与凭据落盘，插件不打开浏览器、不读取网页或授权码内容。',
   '登录得到的凭据保存在本插件为该账号准备的隔离目录里，不会改变你原有 CLI 的默认身份。',
   '取消登录或删除账号元数据都不会删除已经保存的凭据；需要清理时请自行处理该账号的隔离目录。',
-  'OAuth 登录会绑定该账号可用的个人套餐，模型调用与额度查询使用对应套餐的登录身份，无需另外填写 AK/SK。'
+  'OAuth 登录会绑定该账号可用的个人套餐，模型调用与额度查询使用对应套餐的登录身份，无需另外填写 AK/SK。',
+  '官方 SSO 登录态有效期 48 小时：有效期内官方 CLI 自动续期凭据，到期后需要重新网页登录。',
+  '授权码 10 分钟内有效；过期请取消本次登录并重新生成登录链接。'
 ];
 
 /** 账号 ID、凭据引用名、Profile 名的取值规则（与 Host 端 state.mjs 保持一致）。 */
@@ -226,41 +254,41 @@ const LOGIN_POLL_MS = 1000;
 // ── 主题样式（只用设计令牌与继承，兼容深浅色） ───────────────────────────────
 
 const style = {
-  root: { display: 'flex', flexDirection: 'column', gap: 12 },
-  title: { margin: 0, fontSize: 18, fontWeight: 650, lineHeight: 1.35, letterSpacing: '-.015em' },
+  root: { display: 'flex', flexDirection: 'column', gap: 10 },
+  title: { margin: 0, fontSize: 15, fontWeight: 650, lineHeight: 1.35, letterSpacing: '-.015em' },
   card: {
     minWidth: 0,
     border: '1px solid var(--dsw-alias-border-l3, var(--dsw-alias-border-l2, rgba(128,128,128,.24)))',
     borderRadius: 12,
     background: 'var(--dsw-alias-bg-layer-1, rgba(128,128,128,.025))'
   },
-  cardTitle: { margin: 0, fontSize: 15, lineHeight: 1.4, fontWeight: 650 },
-  row: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 },
-  field: { display: 'flex', flexDirection: 'column', gap: 5, flex: '1 1 180px', minWidth: 0 },
+  cardTitle: { margin: 0, fontSize: 13, lineHeight: 1.4, fontWeight: 650 },
+  row: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', minWidth: 0 },
+  field: { display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 180px', minWidth: 0 },
   label: { fontSize: 12, lineHeight: 1.5, color: 'var(--dsw-alias-label-secondary, inherit)' },
   input: {
-    width: '100%', minWidth: 0, minHeight: 32, boxSizing: 'border-box', padding: '6px 9px',
-    borderRadius: 7, fontSize: 12,
+    width: '100%', minWidth: 0, minHeight: 26, boxSizing: 'border-box', padding: '4px 8px',
+    borderRadius: 6, fontSize: 12,
     border: '1px solid var(--dsw-alias-border-l3, var(--dsw-alias-border-l2, rgba(128,128,128,.35)))',
     background: 'var(--dsw-alias-bg-layer-2, Canvas)', color: 'inherit', font: 'inherit'
   },
   btn: {
-    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minHeight: 32,
-    padding: '6px 10px', borderRadius: 7, fontSize: 12,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minHeight: 26,
+    padding: '4px 9px', borderRadius: 6, fontSize: 12,
     border: '1px solid var(--dsw-alias-border-l3, var(--dsw-alias-border-l2, rgba(128,128,128,.3)))',
     background: 'var(--dsw-alias-bg-layer-2, rgba(128,128,128,.06))', color: 'inherit', cursor: 'pointer', font: 'inherit'
   },
   primary: {
-    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minHeight: 32,
-    padding: '6px 10px', borderRadius: 7, fontSize: 12, fontWeight: 600,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minHeight: 26,
+    padding: '4px 9px', borderRadius: 6, fontSize: 12, fontWeight: 600,
     border: '1px solid var(--dsw-alias-brand-primary, #2563eb)',
     background: 'var(--dsw-alias-button-primary-fill, var(--dsw-alias-brand-primary, #2563eb))',
     color: 'var(--dsw-alias-label-primary-foreground, #fff)',
     cursor: 'pointer', font: 'inherit'
   },
   danger: {
-    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minHeight: 32,
-    padding: '6px 10px', borderRadius: 7, fontSize: 12,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minHeight: 26,
+    padding: '4px 9px', borderRadius: 6, fontSize: 12,
     border: '1px solid var(--dsw-alias-state-error-primary, rgba(220,38,38,.55))',
     background: 'transparent', color: 'var(--dsw-alias-label-primary, inherit)',
     cursor: 'pointer', font: 'inherit'
@@ -276,46 +304,61 @@ const style = {
     background: 'var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.08))'
   },
   subcard: {
-    display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0, padding: '12px',
-    borderRadius: 10, background: 'var(--dsw-alias-bg-layer-2, rgba(128,128,128,.04))'
+    display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0, padding: '10px',
+    borderRadius: 8, background: 'var(--dsw-alias-bg-layer-2, rgba(128,128,128,.04))'
   },
-  summary: { cursor: 'pointer', minHeight: 30, padding: '5px 0', fontSize: 12, color: 'var(--dsw-alias-label-secondary, inherit)' }
+  summary: { cursor: 'pointer', minHeight: 26, padding: '4px 0', fontSize: 12, color: 'var(--dsw-alias-label-secondary, inherit)' }
 };
 
 // Scoped CSS supplies interaction states and responsive grids which inline styles cannot express.
 const CLIENT_STYLES = `
-.vcp-settings{color:var(--dsw-alias-label-primary,inherit);color-scheme:light;max-width:960px;padding:6px 2px 24px;font-size:13px;line-height:1.5;container-type:inline-size;container-name:vcp}
+.vcp-settings{color:var(--dsw-alias-label-primary,inherit);color-scheme:light;max-width:960px;padding:4px 2px 16px;font-size:12px;line-height:1.5;container-type:inline-size;container-name:vcp}
 body[data-ds-dark-theme] .vcp-settings{color-scheme:dark}
-.vcp-settings *{box-sizing:border-box}.vcp-settings :focus-visible{outline:2px solid var(--dsw-alias-brand-primary,Highlight);outline-offset:3px}.vcp-settings input::placeholder,.vcp-settings textarea::placeholder{color:var(--dsw-alias-label-secondary,GrayText);opacity:1}.vcp-card{padding:12px 14px}
-.vcp-content{display:flex;flex-direction:column;gap:14px}.vcp-content[data-empty=true] .vcp-account-panel{order:-1}.vcp-plan-workspace{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:1px;padding:0;overflow:hidden;background:var(--dsw-alias-border-l4,rgba(128,128,128,.16));align-items:start}.vcp-plan{display:flex;flex-direction:column;gap:12px;min-width:0;padding:16px;background:var(--dsw-alias-bg-layer-1,Canvas)}.vcp-plan-setup{display:flex;align-items:end;gap:10px;flex-wrap:wrap}.vcp-plan-toggle{display:flex;align-items:center;gap:7px;min-height:32px;white-space:nowrap;font-size:12px;font-weight:600}.vcp-plan-account{flex:1 1 170px}.vcp-plan-note{flex-basis:100%}
-.vcp-account-body{display:flex;flex-direction:column;gap:12px;padding:12px 0 0}.vcp-accounts-disclosure>summary{display:flex;align-items:center;gap:10px;min-height:32px;cursor:pointer;list-style:none}.vcp-accounts-disclosure>summary::-webkit-details-marker{display:none}.vcp-accounts-disclosure>summary::after{content:'›';margin-left:auto;font-size:18px;line-height:1;transform:rotate(90deg)}.vcp-accounts-disclosure[open]>summary::after{transform:rotate(-90deg)}.vcp-accounts-disclosure[open]>summary{border-bottom:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.14));padding-bottom:10px}
-.vcp-header{display:flex;align-items:center;gap:12px;padding:0 2px 2px}.vcp-header-copy{flex:1;min-width:0}.vcp-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.vcp-heading-copy{flex:1 1 180px;min-width:0}.vcp-heading-copy p{margin-top:4px}.vcp-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-width:0}
+.vcp-settings *{box-sizing:border-box}.vcp-settings :focus-visible{outline:2px solid var(--dsw-alias-brand-primary,Highlight);outline-offset:2px}.vcp-settings input::placeholder,.vcp-settings textarea::placeholder{color:var(--dsw-alias-label-secondary,GrayText);opacity:1}.vcp-card{padding:10px 12px}
+.vcp-content{display:flex;flex-direction:column;gap:10px}.vcp-content[data-empty=true] .vcp-account-panel{order:-1}.vcp-plan{display:flex;flex-direction:column;gap:10px;min-width:0;padding:12px;background:var(--dsw-alias-bg-layer-1,Canvas)}.vcp-plan-setup{display:flex;align-items:end;gap:8px;flex-wrap:wrap}.vcp-plan-toggle{display:flex;align-items:center;gap:6px;min-height:24px;white-space:nowrap;font-size:12px;font-weight:600}.vcp-plan-account{flex:1 1 170px}.vcp-plan-note{flex-basis:100%}
+.vcp-account-body{display:flex;flex-direction:column;gap:8px;padding:8px 0 0}.vcp-accounts-disclosure>summary{display:flex;align-items:center;gap:8px;min-height:26px;cursor:pointer;list-style:none}.vcp-accounts-disclosure>summary::-webkit-details-marker{display:none}.vcp-accounts-disclosure>summary::after{content:'›';margin-left:auto;font-size:14px;line-height:1;transform:rotate(90deg)}.vcp-accounts-disclosure[open]>summary::after{transform:rotate(-90deg)}.vcp-accounts-disclosure[open]>summary{border-bottom:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.14));padding-bottom:8px}
+.vcp-header{display:flex;align-items:center;gap:8px;padding:0 2px 2px}.vcp-header-copy{flex:1;min-width:0}.vcp-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}.vcp-heading-copy{flex:1 1 180px;min-width:0}.vcp-heading-copy p{margin-top:3px}.vcp-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
 .vcp-select{width:100%;min-width:0;max-width:100%;flex:none}.vcp-settings select option{color:var(--dsw-alias-label-primary,CanvasText);background:var(--dsw-alias-bg-layer-1,Canvas)}.vcp-settings select option:disabled{color:var(--dsw-alias-label-secondary,GrayText)}.vcp-chip-row{display:flex;gap:6px;flex-wrap:wrap;min-width:0}.vcp-section{border-top:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.14));padding-top:10px;display:flex;flex-direction:column;gap:6px;min-width:0}
-.vcp-notice{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border-radius:9px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.18));border-left:3px solid var(--dsw-alias-border-l3,rgba(128,128,128,.4));background:var(--dsw-alias-bg-layer-2,Canvas);overflow-wrap:anywhere}.vcp-notice>p{flex:1 1 180px;min-width:0}.vcp-notice-icon{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--dsw-alias-label-secondary,#94a3b8);color:var(--dsw-alias-bg-layer-1,#fff);font-size:13px;font-weight:750;line-height:1}.vcp-notice[data-tone=error]{border-left-color:var(--dsw-alias-state-error-primary,#dc2626)}.vcp-notice[data-tone=warn]{border-left-color:var(--dsw-alias-state-warn-primary,#b45309)}.vcp-notice[data-tone=success]{border-left-color:var(--dsw-alias-state-success-primary,#16a34a)}.vcp-notice[data-tone=error] .vcp-notice-icon{background:var(--dsw-alias-state-error-primary,#dc2626)}.vcp-notice[data-tone=warn] .vcp-notice-icon{background:var(--dsw-alias-state-warn-primary,#b45309)}.vcp-notice[data-tone=success] .vcp-notice-icon{background:var(--dsw-alias-state-success-primary,#16a34a)}
-.vcp-account{display:flex;flex-direction:column;gap:8px;min-width:0;padding:14px 0;border-top:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.14))}.vcp-account:first-child{padding-top:0;border-top:0}.vcp-account-title{font-size:13px;font-weight:650;overflow-wrap:anywhere}.vcp-model-list{display:flex;flex-direction:column;margin-top:6px}.vcp-model{display:flex;flex-direction:column;gap:7px;min-width:0;padding:12px 0;border-top:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.14))}.vcp-model:first-child{border-top:0}.vcp-model-name{font-weight:600;min-width:0;overflow-wrap:anywhere}.vcp-model-id{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace;font-size:11px}
+.vcp-notice{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.18));border-left:3px solid var(--dsw-alias-border-l3,rgba(128,128,128,.4));background:var(--dsw-alias-bg-layer-2,Canvas);overflow-wrap:anywhere}.vcp-notice>p{flex:1 1 180px;min-width:0}.vcp-notice-icon{display:inline-flex;align-items:center;justify-content:center;flex:none;width:18px;height:18px;border-radius:50%;background:var(--dsw-alias-label-secondary,#94a3b8);color:var(--dsw-alias-bg-layer-1,#fff);font-size:11px;font-weight:750;line-height:1}.vcp-notice[data-tone=error]{border-left-color:var(--dsw-alias-state-error-primary,#dc2626)}.vcp-notice[data-tone=warn]{border-left-color:var(--dsw-alias-state-warn-primary,#b45309)}.vcp-notice[data-tone=success]{border-left-color:var(--dsw-alias-state-success-primary,#16a34a)}.vcp-notice[data-tone=error] .vcp-notice-icon{background:var(--dsw-alias-state-error-primary,#dc2626)}.vcp-notice[data-tone=warn] .vcp-notice-icon{background:var(--dsw-alias-state-warn-primary,#b45309)}.vcp-notice[data-tone=success] .vcp-notice-icon{background:var(--dsw-alias-state-success-primary,#16a34a)}
+.vcp-account{display:flex;flex-direction:column;gap:6px;min-width:0;padding:10px 0;border-top:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.14))}.vcp-account:first-child{padding-top:0;border-top:0}.vcp-account-title{font-size:12.5px;font-weight:650;overflow-wrap:anywhere}.vcp-model-list{display:flex;flex-direction:column;margin-top:4px}.vcp-model{display:flex;flex-direction:column;gap:6px;min-width:0;padding:9px 0;border-top:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.14))}.vcp-model:first-child{border-top:0}.vcp-model-name{font-weight:600;min-width:0;overflow-wrap:anywhere}.vcp-model-id{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace;font-size:11px}
 .vcp-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.vcp-fields-three{grid-template-columns:repeat(3,minmax(0,1fr))}.vcp-quota-section{display:flex;flex-direction:column;gap:8px;min-width:0}.vcp-quota{display:grid;gap:10px}.vcp-quota-group{display:grid;gap:7px}.vcp-quota-group+.vcp-quota-group{margin-top:3px}.vcp-quota-group-title{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,inherit)}.vcp-quota-window{display:grid;gap:7px;min-width:0;padding:10px 11px;border-radius:9px;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.07))}.vcp-quota-window[data-tone=error]{background:var(--dsw-alias-state-error-bg,rgba(220,38,38,.08))}.vcp-quota-window[data-tone=warn]{background:var(--dsw-alias-state-warn-bg,rgba(180,83,9,.08))}.vcp-quota-line{display:flex;align-items:center;gap:7px;min-width:0}.vcp-quota-name{font-size:12px;font-weight:600}.vcp-quota-value{display:flex;align-items:baseline;gap:4px;margin-left:auto;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}.vcp-quota-percent{font-size:20px;line-height:1.05;font-weight:700;letter-spacing:-.025em;color:var(--dsw-alias-label-primary,inherit)}.vcp-quota-percent small{font-size:12px;font-weight:600}.vcp-quota-remaining{font-size:12px;color:var(--dsw-alias-label-secondary,inherit)}.vcp-quota-track{width:100%;height:8px;border-radius:99px;overflow:hidden;background:var(--dsw-alias-interactive-bg-active,rgba(128,128,128,.2))}.vcp-quota-fill{height:100%;border-radius:99px;background:var(--dsw-alias-brand-primary,#3b82f6)}.vcp-quota-window[data-tone=error] .vcp-quota-fill{background:var(--dsw-alias-state-error-primary,#dc2626)}.vcp-quota-window[data-tone=warn] .vcp-quota-fill{background:var(--dsw-alias-state-warn-primary,#b45309)}.vcp-quota-meta{display:grid;gap:2px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary,inherit);overflow-wrap:anywhere}.vcp-quota-reset{display:flex;justify-content:space-between;gap:2px 10px;flex-wrap:wrap;font-size:11px;line-height:1.5;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary,inherit)}.vcp-status-chip{display:inline-flex;align-items:center;gap:5px;padding:1px 7px;border-radius:99px;font-size:10.5px;line-height:1.5;white-space:nowrap;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.09))}.vcp-status-chip::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-secondary,#94a3b8)}.vcp-status-chip[data-tone=warn]{background:var(--dsw-alias-state-warn-bg,rgba(180,83,9,.1))}.vcp-status-chip[data-tone=warn]::before{background:var(--dsw-alias-state-warn-primary,#b45309)}.vcp-status-chip[data-tone=error]{background:var(--dsw-alias-state-error-bg,rgba(220,38,38,.1))}.vcp-status-chip[data-tone=error]::before{background:var(--dsw-alias-state-error-primary,#dc2626)}.vcp-status-chip[data-tone=success]::before{background:var(--dsw-alias-state-success-primary,#16a34a)}
-.vcp-details>summary{cursor:pointer}.vcp-details-body{display:flex;flex-direction:column;gap:7px;margin-top:6px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.14))}.vcp-model-meta{display:flex;flex-direction:column;gap:4px}.vcp-editor,.vcp-confirm,.vcp-login-status{display:flex;flex-direction:column;gap:8px;padding:12px 0;border-top:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.16))}.vcp-confirm,.vcp-login-status{padding:10px 12px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.18));border-left:3px solid var(--dsw-alias-state-warn-primary,#b45309);border-radius:8px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.04))}.vcp-empty{display:flex;flex-direction:column;gap:9px}
+.vcp-details>summary{cursor:pointer}.vcp-details-body{display:flex;flex-direction:column;gap:6px;margin-top:4px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.14))}.vcp-model-meta{display:flex;flex-direction:column;gap:4px}.vcp-editor,.vcp-confirm,.vcp-login-status{display:flex;flex-direction:column;gap:6px;padding:8px 0;border-top:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.16))}.vcp-confirm,.vcp-login-status{padding:8px 10px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.18));border-left:3px solid var(--dsw-alias-state-warn-primary,#b45309);border-radius:8px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.04))}.vcp-empty{display:flex;flex-direction:column;gap:8px}
 .vcp-button:hover:not(:disabled){box-shadow:0 0 0 1px var(--dsw-alias-brand-primary,Highlight)}.vcp-button:disabled{opacity:.55;cursor:not-allowed}.vcp-settings summary:hover{color:var(--dsw-alias-label-primary,inherit)}
 @media(max-width:680px){.vcp-fields,.vcp-fields-three{grid-template-columns:1fr}.vcp-select{width:100%;min-width:0}}
-@media(max-width:420px){.vcp-settings{padding:2px 0 20px}.vcp-card{padding:12px}.vcp-plan-workspace{padding:0}.vcp-plan{padding:12px}.vcp-header{flex-wrap:wrap}.vcp-header>.vcp-actions{width:100%;justify-content:space-between}.vcp-heading{gap:8px}.vcp-heading>.vcp-actions{width:100%}.vcp-actions .vcp-button{flex:1 1 auto}.vcp-account-body{padding:12px 0 0}.vcp-section{padding-top:12px}.vcp-quota-reset{flex-direction:column}.vcp-plan-account{flex-basis:100%}}
+@media(max-width:420px){.vcp-settings{padding:2px 0 16px}.vcp-card{padding:10px}.vcp-plan{padding:10px}.vcp-header{flex-wrap:wrap}.vcp-header>.vcp-actions{width:100%;justify-content:space-between}.vcp-heading{gap:8px}.vcp-heading>.vcp-actions{width:100%}.vcp-actions .vcp-button{flex:1 1 auto}.vcp-account-body{padding:8px 0 0}.vcp-section{padding-top:8px}.vcp-quota-reset{flex-direction:column}.vcp-plan-account{flex-basis:100%}}
 @container vcp (max-width:680px){.vcp-fields,.vcp-fields-three{grid-template-columns:1fr}}
-@container vcp (max-width:420px){.vcp-settings{padding:2px 0 20px}.vcp-plan{padding:12px}.vcp-header{flex-wrap:wrap}.vcp-header>.vcp-actions{width:100%;justify-content:space-between}.vcp-heading>.vcp-actions{width:100%}.vcp-actions .vcp-button{flex:1 1 auto}.vcp-account-body{padding:12px 0 0}.vcp-quota-reset{flex-direction:column}.vcp-plan-account{flex-basis:100%}}
+@container vcp (max-width:420px){.vcp-settings{padding:2px 0 16px}.vcp-plan{padding:10px}.vcp-header{flex-wrap:wrap}.vcp-header>.vcp-actions{width:100%;justify-content:space-between}.vcp-heading>.vcp-actions{width:100%}.vcp-actions .vcp-button{flex:1 1 auto}.vcp-account-body{padding:8px 0 0}.vcp-quota-reset{flex-direction:column}.vcp-plan-account{flex-basis:100%}}
 
 /* Provider workspace: independent plan cards, compact quotas and model badges. */
-.vcp-settings{max-width:1080px;padding:4px 2px 32px;gap:16px;-webkit-font-smoothing:antialiased}
-.vcp-content{gap:16px}.vcp-hero{position:relative;overflow:hidden;padding:20px 22px;border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.2));border-radius:18px;background:linear-gradient(145deg,color-mix(in srgb,var(--dsw-alias-brand-primary,#2563eb) 8%,var(--dsw-alias-bg-layer-1,#fff)),var(--dsw-alias-bg-layer-1,#fff) 58%);box-shadow:0 8px 28px rgba(15,23,42,.05)}
-.vcp-brand-mark{display:flex;align-items:center;justify-content:center;flex:none;width:42px;height:42px;border-radius:13px;background:var(--dsw-alias-brand-primary,#2563eb);color:var(--dsw-alias-label-primary-foreground,#fff);font-size:20px;font-weight:750;box-shadow:0 6px 16px color-mix(in srgb,var(--dsw-alias-brand-primary,#2563eb) 24%,transparent)}
-.vcp-hero-subtitle{margin:5px 0 0;max-width:64ch;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-secondary,inherit)}.vcp-eyebrow{margin-bottom:3px;font-size:10px;font-weight:700;letter-spacing:.09em;color:var(--dsw-alias-label-secondary,inherit)}
-.vcp-plan-workspace{gap:14px;padding:0;border:0;background:transparent;overflow:visible;align-items:start}.vcp-plan{gap:14px;padding:18px;border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.2));border-radius:16px;background:var(--dsw-alias-bg-layer-1,Canvas);box-shadow:0 3px 14px rgba(15,23,42,.035)}.vcp-plan-setup{align-items:stretch}.vcp-plan-account{flex-basis:100%}.vcp-plan-toggle{display:inline-flex;align-items:center;gap:7px;min-height:28px;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer}
-.vcp-switch-input{appearance:none;-webkit-appearance:none;position:relative;flex:none;width:34px;height:20px;margin:0;border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.35));border-radius:999px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.12));color:var(--dsw-alias-label-primary,#1f2937);cursor:pointer}.vcp-switch-input::after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:currentColor;box-shadow:0 1px 3px rgba(0,0,0,.2)}.vcp-switch-input:checked{border-color:var(--dsw-alias-brand-primary,#2563eb);background:var(--dsw-alias-brand-primary,#2563eb);color:var(--dsw-alias-label-primary-foreground,#fff)}.vcp-switch-input:checked::after{transform:translateX(14px)}body[data-ds-dark-theme] .vcp-switch-input:checked{color:#11161e}.vcp-switch-input:disabled{opacity:.55;cursor:not-allowed}
+.vcp-settings{max-width:1080px;padding:2px 0 16px;gap:10px;-webkit-font-smoothing:antialiased}
+.vcp-content{gap:10px}.vcp-hero{position:relative;overflow:hidden;padding:12px 14px;border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.2));border-radius:12px;background:linear-gradient(145deg,color-mix(in srgb,var(--dsw-alias-brand-primary,#2563eb) 8%,var(--dsw-alias-bg-layer-1,#fff)),var(--dsw-alias-bg-layer-1,#fff) 58%);box-shadow:0 4px 14px rgba(15,23,42,.04)}
+.vcp-brand-mark{display:flex;align-items:center;justify-content:center;flex:none;width:32px;height:32px;border-radius:10px;background:var(--dsw-alias-brand-primary,#2563eb);color:var(--dsw-alias-label-primary-foreground,#fff);font-size:16px;font-weight:750;box-shadow:0 3px 8px color-mix(in srgb,var(--dsw-alias-brand-primary,#2563eb) 24%,transparent)}
+.vcp-hero-subtitle{margin:3px 0 0;max-width:64ch;font-size:11px;line-height:1.55;color:var(--dsw-alias-label-secondary,inherit)}.vcp-eyebrow{margin-bottom:2px;font-size:10px;font-weight:700;letter-spacing:.09em;color:var(--dsw-alias-label-secondary,inherit)}
+.vcp-plan{gap:10px;padding:12px;border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.2));border-radius:12px;background:var(--dsw-alias-bg-layer-1,Canvas);box-shadow:0 2px 8px rgba(15,23,42,.03)}.vcp-plan-setup{align-items:stretch}.vcp-plan-account{flex-basis:100%}.vcp-plan-toggle{display:inline-flex;align-items:center;gap:6px;min-height:24px;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer}
+.vcp-switch-input{appearance:none;-webkit-appearance:none;position:relative;flex:none;width:30px;height:18px;margin:0;border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.35));border-radius:999px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.12));color:var(--dsw-alias-label-primary,#1f2937);cursor:pointer}.vcp-switch-input::after{content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:currentColor;box-shadow:0 1px 3px rgba(0,0,0,.2)}.vcp-switch-input:checked{border-color:var(--dsw-alias-brand-primary,#2563eb);background:var(--dsw-alias-brand-primary,#2563eb);color:var(--dsw-alias-label-primary-foreground,#fff)}.vcp-switch-input:checked::after{transform:translateX(12px)}body[data-ds-dark-theme] .vcp-switch-input:checked{color:#11161e}.vcp-switch-input:disabled{opacity:.55;cursor:not-allowed}
 .vcp-status-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.18));border-radius:999px;font-size:10.5px;line-height:1.6;white-space:nowrap;color:var(--dsw-alias-label-secondary,inherit);background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.06))}.vcp-status-chip::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor}.vcp-status-chip[data-tone=success]{color:var(--dsw-alias-state-success-primary,#15803d);border-color:color-mix(in srgb,currentColor 30%,transparent);background:color-mix(in srgb,currentColor 8%,transparent)}.vcp-status-chip[data-tone=warn]{color:var(--dsw-alias-state-warn-primary,#b45309);border-color:color-mix(in srgb,currentColor 30%,transparent);background:color-mix(in srgb,currentColor 8%,transparent)}
-.vcp-quota{grid-template-columns:1fr;gap:8px}.vcp-quota-group{grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:8px}.vcp-quota-group-title{grid-column:1/-1}.vcp-quota-window{padding:10px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.12));background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.045))}.vcp-quota-track{height:6px}.vcp-quota-percent{font-size:18px}.vcp-quota-meta{font-size:11px}.vcp-section{gap:8px;padding-top:12px}
-.vcp-model-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:10px;margin-top:10px}.vcp-model{position:relative;display:flex;flex-direction:column;gap:10px;min-width:0;padding:13px;border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.18));border-radius:12px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.035));box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}.vcp-model:first-child{border-top:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.18))}.vcp-model[data-disabled=true]{opacity:.66}.vcp-model-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;min-width:0}.vcp-model-toggle{display:flex;align-items:flex-start;gap:9px;flex:1 1 auto;min-width:0;cursor:pointer}.vcp-model-toggle .vcp-switch-input{margin-top:1px}.vcp-model-heading{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0;font-size:13px;line-height:1.45}.vcp-model-name{font-size:13.5px;font-weight:650;overflow-wrap:anywhere}.vcp-model-tags{display:flex;gap:5px;flex-wrap:wrap}.vcp-model-tag{display:inline-flex;align-items:center;padding:2px 7px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.16));border-radius:999px;font-size:10px;line-height:1.55;white-space:nowrap;color:var(--dsw-alias-label-secondary,inherit);background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.04))}.vcp-model-tag[data-tone=accent]{color:var(--dsw-alias-brand-primary,#2563eb);border-color:color-mix(in srgb,currentColor 25%,transparent);background:color-mix(in srgb,currentColor 6%,transparent)}.vcp-model-tag[data-tone=warn]{color:var(--dsw-alias-state-warn-primary,#b45309)}
+.vcp-quota{grid-template-columns:1fr;gap:8px}.vcp-quota-group{grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:8px}.vcp-quota-group-title{grid-column:1/-1}.vcp-quota-window{padding:8px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.12));background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.045))}.vcp-quota-track{height:6px}.vcp-quota-percent{font-size:18px}.vcp-quota-meta{font-size:11px}.vcp-section{gap:6px;padding-top:8px}
+.vcp-model-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:8px;margin-top:8px}.vcp-model{position:relative;display:flex;flex-direction:column;gap:8px;min-width:0;padding:10px;border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.18));border-radius:10px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.035));box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}.vcp-model:first-child{border-top:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.18))}.vcp-model[data-disabled=true]{opacity:.66}.vcp-model-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;min-width:0}.vcp-model-toggle{display:flex;align-items:flex-start;gap:9px;flex:1 1 auto;min-width:0;cursor:pointer}.vcp-model-toggle .vcp-switch-input{margin-top:1px}.vcp-model-heading{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0;font-size:13px;line-height:1.45}.vcp-model-name{font-size:13.5px;font-weight:650;overflow-wrap:anywhere}.vcp-model-tags{display:flex;gap:5px;flex-wrap:wrap}.vcp-model-tag{display:inline-flex;align-items:center;padding:2px 7px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.16));border-radius:999px;font-size:10px;line-height:1.55;white-space:nowrap;color:var(--dsw-alias-label-secondary,inherit);background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.04))}.vcp-model-tag[data-tone=accent]{color:var(--dsw-alias-brand-primary,#2563eb);border-color:color-mix(in srgb,currentColor 25%,transparent);background:color-mix(in srgb,currentColor 6%,transparent)}.vcp-model-tag[data-tone=warn]{color:var(--dsw-alias-state-warn-primary,#b45309)}
 .vcp-rate-badge{display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary,#2563eb) 35%,transparent);border-radius:999px;background:color-mix(in srgb,var(--dsw-alias-brand-primary,#2563eb) 8%,transparent);color:var(--dsw-alias-brand-primary,#2563eb);font-size:10.5px;font-weight:750;line-height:1.6;white-space:nowrap;font-variant-numeric:tabular-nums}.vcp-rate-badge small{font-size:8.5px;font-weight:650;opacity:1}.vcp-rate-badge[data-discount=true]{color:var(--dsw-alias-state-success-primary,#15803d);border-color:color-mix(in srgb,currentColor 35%,transparent);background:color-mix(in srgb,currentColor 9%,transparent)}
-.vcp-model-actions{display:flex;justify-content:flex-end;gap:7px;flex-wrap:wrap;margin-top:auto}.vcp-model-actions .vcp-button{min-height:29px;padding:4px 10px;font-size:11px}.vcp-model .vcp-details{padding-top:2px;border-top:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.12))}.vcp-model .vcp-details>summary{min-height:25px;padding:3px 0;font-size:11px}.vcp-account-panel{border-radius:16px;padding:16px 18px}.vcp-button{transition:border-color .15s ease,box-shadow .15s ease}.vcp-button-primary{border-color:var(--dsw-alias-brand-primary,#2563eb)}
-@media(max-width:680px){.vcp-hero{padding:16px}.vcp-plan{padding:15px}.vcp-model-list{grid-template-columns:1fr}}
-@media(max-width:420px){.vcp-plan{padding:12px}.vcp-brand-mark{width:36px;height:36px;border-radius:11px;font-size:17px}.vcp-hero .vcp-header-copy{flex:1 1 calc(100% - 52px)}.vcp-hero-subtitle{font-size:11px}.vcp-model-head{flex-direction:column}.vcp-model-head>.vcp-chip-row{padding-left:43px}.vcp-quota{grid-template-columns:1fr}}
+.vcp-model-actions{display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap;margin-top:auto}.vcp-model-actions .vcp-button{min-height:24px;padding:3px 8px;font-size:11px}.vcp-model .vcp-details{padding-top:2px;border-top:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.12))}.vcp-model .vcp-details>summary{min-height:22px;padding:3px 0;font-size:11px}.vcp-account-panel{border-radius:12px;padding:12px 14px}.vcp-button{transition:border-color .15s ease,box-shadow .15s ease}.vcp-button-primary{border-color:var(--dsw-alias-brand-primary,#2563eb)}
+@media(max-width:680px){.vcp-hero{padding:12px}.vcp-plan{padding:12px}.vcp-model-list{grid-template-columns:1fr}}
+@media(max-width:420px){.vcp-plan{padding:10px}.vcp-brand-mark{width:30px;height:30px;border-radius:9px;font-size:15px}.vcp-hero .vcp-header-copy{flex:1 1 calc(100% - 42px)}.vcp-hero-subtitle{font-size:11px}.vcp-model-head{flex-direction:column}.vcp-model-head>.vcp-chip-row{padding-left:39px}.vcp-quota{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){.vcp-settings *{scroll-behavior:auto!important;transition:none!important}}
+.vcp-media-billing{margin:0;padding:8px 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.18));background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.04));font-size:12px;line-height:1.5}
+.vcp-media-tool{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:6px 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.14))}
+.vcp-media-tool-copy{flex:1 1 200px;min-width:0}
+.vcp-media-tool-name{font-size:13px;font-weight:650}
+.vcp-media-tool-name code{font-size:11px;font-weight:400;color:var(--dsw-alias-label-secondary,inherit)}
+.vcp-media-tool p{margin:2px 0 0;font-size:12px}
+.vcp-media-model{display:grid;gap:4px;flex:1 1 240px;min-width:0}
+.vcp-media-model>span{font-size:12px;color:var(--dsw-alias-label-secondary,inherit)}
+.vcp-tabs{display:flex;gap:2px;overflow-x:auto;overflow-y:hidden;border-bottom:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.16));scrollbar-width:thin;padding:2px 2px 0}
+.vcp-tab{flex:none;min-height:34px;padding:6px 11px;margin-bottom:-1px;border:0;border-bottom:2px solid transparent;border-radius:7px 7px 0 0;background:transparent;color:var(--dsw-alias-label-secondary,inherit);cursor:pointer;font:inherit;font-size:12px;white-space:nowrap}
+.vcp-tab:focus-visible{outline-offset:-2px}
+.vcp-tab:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.07));color:var(--dsw-alias-label-primary,inherit)}
+.vcp-tab[aria-selected=true]{border-bottom-color:var(--dsw-alias-brand-primary,Highlight);color:var(--dsw-alias-label-primary,inherit);font-weight:650}
+.vcp-tabpanel,.vcp-tab-section{display:flex;flex-direction:column;gap:10px;min-width:0}
+.vcp-tab-section[hidden],.vcp-plan-section[hidden]{display:none!important}
 `;
 
 function installStyles() {
@@ -476,7 +519,8 @@ function resetCountdown(value, now) {
   const target = resetEpoch(value);
   if (target === null) return value ? '重置时间不可用' : '重置时间未提供';
   const seconds = Math.ceil((target - now) / 1000);
-  if (seconds <= 0) return '已到重置时间，请刷新额度';
+  // 轮询会自动更新窗口；到期本身不推断额度已恢复，只提示等待下一次刷新。
+  if (seconds <= 0) return '已到重置时间，等待自动刷新';
   const days = Math.floor(seconds / 86400);
   const hours = Math.floor(seconds % 86400 / 3600);
   const minutes = Math.floor(seconds % 3600 / 60);
@@ -484,6 +528,39 @@ function resetCountdown(value, now) {
   if (days) return `距重置 ${days}天${hours ? ` ${hours}小时` : ''}`;
   if (hours) return `距重置 ${hours}小时${minutes ? ` ${minutes}分钟` : ''}`;
   return `距重置 ${minutes ? `${minutes}分 ` : ''}${remainder}秒`;
+}
+
+/** 登录态临期提醒阈值：剩余不足 2 小时升级为警告。 */
+const LOGIN_EXPIRY_WARN_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * OAuth 登录态到期展示：只使用 Host 下发的到期元数据（refresh_token 的 exp），未知时不显示。
+ * 到期与临期给出重新登录指引，其余展示绝对时间与剩余时长；剩余时间随页面轮询重算。
+ *
+ * @param {object} account 账号快照
+ * @param {number} [now] 当前毫秒时间戳
+ * @returns {{tone: string, text: string}|null} 提示色调与文本；不适用时 null
+ */
+function loginExpiryView(account, now = Date.now()) {
+  if (!isOAuth(account) || typeof account.oauthExpiresAt !== 'string') return null;
+  const at = Date.parse(account.oauthExpiresAt);
+  if (!Number.isFinite(at)) return null;
+  const remaining = at - now;
+  if (remaining <= 0) return { tone: 'error', text: '登录态已到期，请重新网页登录；到期后额度查询与凭据续期不可用。' };
+  const minutes = Math.ceil(remaining / 60000);
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor(minutes % 1440 / 60);
+  const mins = minutes % 60;
+  const label = days ? `${days}天${hours ? ` ${hours}小时` : ''}` : hours ? `${hours}小时${mins ? ` ${mins}分钟` : ''}` : `${mins}分钟`;
+  if (remaining <= LOGIN_EXPIRY_WARN_MS) return { tone: 'warn', text: `登录态将在 ${label}后到期（${formatTime(account.oauthExpiresAt)}），请及时重新网页登录。` };
+  return { tone: 'muted', text: `登录态有效至 ${formatTime(account.oauthExpiresAt)}（剩余 ${label}），有效期内官方 CLI 自动续期。` };
+}
+
+/** 账号卡片上的登录态到期提示。 */
+function LoginExpiryNote({ account }) {
+  const view = loginExpiryView(account);
+  if (!view) return null;
+  return h('p', { style: style[view.tone] || style.muted, role: view.tone === 'error' ? 'alert' : undefined }, view.text);
 }
 
 /**
@@ -658,7 +735,7 @@ function busyMessage(key) {
     model: `正在更新模型 ${model} 的启用状态…`, settings: `正在保存模型 ${model} 的参数…`,
     reset: `正在恢复模型 ${model} 的默认参数…`, login: '正在启动官方网页登录…',
     'cancel-login': '正在取消登录…', save: '正在保存账号…', delete: '正在删除账号…',
-    'submit-login-code': '正在提交授权码并验证登录…'
+    'submit-login-code': '正在提交授权码并验证登录…', media: '正在更新图片生成设置…'
   };
   return messages[operation] || '正在处理…';
 }
@@ -973,7 +1050,7 @@ function QuotaWindows({ quota }) {
     }, 1000);
     return () => clearInterval(timer);
   }, [resetSignature]);
-  if (!quota) return h('p', { style: style.muted }, '尚未查询额度，点击「刷新额度」获取当前账号的数据。');
+  if (!quota) return h('p', { style: style.muted }, '后台正在采集额度，采集完成后会自动显示；也可点击「刷新额度」立即采集。');
   if (quota.state === 'no-key') {
     // no-key 有两种成因：OAuth 账号没绑定该套餐，或引用名账号缺 AK/SK。
     // 先显示后端给的原因，再补一条网页登录的出路。
@@ -1416,6 +1493,56 @@ function ModelRow({ plan, model, disabled, routingError, editor, draftError, fie
  * @param {object} props 组件属性
  * @returns {object} 元素树
  */
+// ── 图片生成：Seedream 默认模型与单开关（启用即确认计费） ────────────────────
+
+function MediaCard({ snapshot, busy, onToggleImage, onSelectModel, onNavigate }) {
+  const media = snapshot?.media ?? { riskAcknowledged: false, imageTool: false, imageModel: DEFAULT_IMAGE_MODEL };
+  const acknowledged = media.riskAcknowledged === true;
+  const enabled = acknowledged && media.imageTool === true;
+  const activeId = snapshot?.active?.['agent-plan'] ?? null;
+  const account = (Array.isArray(snapshot?.accounts) ? snapshot.accounts : []).find((item) => item?.id === activeId) ?? null;
+  const providerOn = providerEnabledOf(snapshot, 'agent-plan');
+  const disabled = busy !== null;
+  const tone = enabled ? 'success' : 'muted';
+  const state = enabled ? '图片工具已开启' : '图片工具未开启';
+
+  return h('section', { className: 'vcp-plan vcp-card', 'data-section': '04', 'aria-label': '图片生成' },
+    h(SectionHeading, {
+      eyebrow: 'IMAGE GENERATION',
+      title: '图片生成',
+      description: '调用 Agent Plan 内的 Seedream 模型；原图与聊天预览分开保存，下载保留请求的输出格式。',
+      action: h('div', { className: 'vcp-actions' }, h(StatusChip, { tone }, state))
+    }),
+    h('p', { className: 'vcp-media-billing' },
+      h('strong', null, '图片生成按用量计费'),
+      '，图片调用消耗 Agent 套餐 AFP 额度；关闭后已生成的附件保留。'),
+    h('div', { className: 'vcp-media-tool' },
+      h('div', { className: 'vcp-media-tool-copy' },
+        h('span', { className: 'vcp-media-tool-name' }, '生图（Seedream） ', h('code', null, 'volc_imagine')),
+        h('p', { style: style.muted }, '文生图与参考图编辑；原始 PNG/JPEG 文件和会话预览分别入库。')),
+      h('label', { className: 'vcp-plan-toggle', title: '启用即确认图片生成的计费规则' },
+        h('input', {
+          className: 'vcp-switch-input', type: 'checkbox',
+          checked: enabled, disabled,
+          'aria-label': '启用图片生成',
+          onChange: (event) => onToggleImage(Boolean(event.target.checked))
+        }),
+        h('span', null, '启用'))),
+    h('div', { className: 'vcp-media-tool' },
+      h('label', { className: 'vcp-media-model' },
+        h('span', null, '默认图片模型（启用后可改；单次调用可覆盖）'),
+        h('select', {
+          className: 'vcp-select', style: style.input, value: media.imageModel ?? DEFAULT_IMAGE_MODEL,
+          disabled: disabled || !acknowledged, 'aria-label': '默认图片模型',
+          onChange: event => onSelectModel(event.target.value)
+        }, IMAGE_MODEL_OPTIONS.map(option => h('option', { key: option.id, value: option.id }, option.label))))),
+    enabled && (!providerOn || !account)
+      ? h(Notice, { tone: 'warn', role: 'alert', action: h('button', { type: 'button', style: style.btn, onClick: () => onNavigate('agent-plan') }, '前往 Agent 套餐') }, !providerOn
+          ? 'Agent 套餐当前已停用：媒体工具需要启用 Agent 套餐并选择账号后才能调用。'
+          : 'Agent 套餐尚未选择账号：请先在 Agent 套餐页选择账号，图片工具才能调用。')
+      : null);
+}
+
 function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModels, onQuota, onToggleProvider, onToggleModel, onSaveModelSettings, onResetModelSettings, onGoLogin, onScrollAccounts }) {
   const accounts = Array.isArray(snapshot?.accounts) ? snapshot.accounts : [];
   const activeId = snapshot?.active?.[plan] ?? null;
@@ -1550,22 +1677,33 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
     account && !auth.oauth && !auth.inference
       ? h(Notice, { tone: 'warn', action: h('button', { type: 'button', style: style.btn, disabled, onClick: onScrollAccounts }, '去账号区编辑') }, '该账号尚未配置此套餐的推理凭据，请在账号高级配置中填写引用名，或使用网页登录。')
       : null,
-    h('section', { className: 'vcp-quota-section', 'aria-busy': Boolean(quotaBusy), 'aria-label': `${PLAN_TITLES[plan]}额度` },
+    h('section', { className: 'vcp-quota-section vcp-plan-section', 'aria-busy': Boolean(quotaBusy), 'aria-label': `${PLAN_TITLES[plan]}额度` },
       h('div', { className: 'vcp-heading' },
         h('h4', { style: { margin: 0, fontSize: 13, fontWeight: 650 } }, '套餐额度'),
-        h('button', { type: 'button', style: style.btn, disabled: disabled || quotaBusy || !auth.quota, 'aria-busy': quotaBusy || undefined, onClick: () => onQuota(plan) }, quotaBusy ? '正在刷新额度…' : quota?.state === 'error' ? '重试额度查询' : '刷新额度')),
+        h('button', { type: 'button', style: style.btn, disabled: disabled || quotaBusy || !auth.quota, 'aria-busy': quotaBusy || undefined, onClick: () => onQuota(plan) },
+          quotaBusy && !quota ? '正在查询额度…' : quota?.state === 'error' ? '重试额度查询' : '刷新额度')),
       account && !auth.quota && (!auth.oauth || auth.bound)
         ? h(Notice, { tone: 'warn', action: auth.oauth
           ? h('button', { type: 'button', style: style.btn, disabled, onClick: () => onGoLogin(account.id) }, '去账号区重新登录')
           : h('button', { type: 'button', style: style.btn, disabled, onClick: onScrollAccounts }, '去账号区编辑') },
         auth.oauth ? '该套餐的登录身份暂不可查询额度，请重新登录后重试。' : '该账号缺少 AK/SK 凭据引用，额度窗口无法查询。')
         : null,
-      quotaBusy ? h('p', { role: 'status', style: style.muted }, `正在查询${PLAN_TITLES[plan]}的额度…`) : null,
+      // 已有数据时轮询静默进行（按钮带 aria-busy），避免每轮都闪一次状态文字。
+      quotaBusy && !quota ? h('p', { role: 'status', style: style.muted }, `正在查询${PLAN_TITLES[plan]}的额度…`) : null,
       !account ? h('p', { style: style.muted }, '请先登录或添加账号，再为此套餐选择账号。')
         : !quota && !auth.quota ? h('p', { style: style.muted }, '完成此套餐的登录绑定或额度鉴权配置后，即可查询额度。')
         : h(QuotaWindows, { quota }),
-      quota?.updatedAt ? h('p', { style: style.muted }, `额度更新时间：${formatTime(quota.updatedAt)}`) : null),
-    h('section', { className: 'vcp-section', 'aria-label': `${PLAN_TITLES[plan]}模型目录` },
+      // 自动刷新失败不覆盖已有窗口，只在这里说明数据还是上一次的。
+      quota?.refreshError
+        ? h('div', { role: 'status', style: style.warn },
+          h('span', null, `额度更新失败：${describeError(quota.refreshError)}；当前显示 ${formatTime(quota.updatedAt)} 的数据，稍后自动重试。`),
+          // 登录/协议失效是唯一能直接修好的类别：给出到账号区重新登录的入口。
+          quota.errorKind === 'auth' && account
+            ? h('button', { type: 'button', style: style.btn, disabled, onClick: () => onGoLogin(account.id) }, '去重新登录')
+            : null)
+        : null,
+      quota?.updatedAt ? h('p', { style: style.muted }, `额度采集于 ${formatTime(quota.updatedAt)} · 后台会定期刷新`) : null),
+    h('section', { className: 'vcp-section vcp-plan-section', 'aria-label': `${PLAN_TITLES[plan]}模型目录` },
       h('div', { className: 'vcp-heading' },
         h('div', { className: 'vcp-heading-copy' },
           h('h4', { style: { margin: 0, fontSize: 13, fontWeight: 650 } }, '模型目录'),
@@ -1599,7 +1737,7 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
         : h('p', { style: style.muted }, catalog
           ? '该目录暂无模型明细（旧缓存可能没有模型列表，重新拉取模型后可用）。'
           : !account ? '选择账号后显示该套餐的模型目录。' : '模型目录：尚未拉取。')),
-    h('details', { className: 'vcp-details' },
+    h('details', { className: 'vcp-details vcp-plan-section' },
       h('summary', { style: style.summary }, '套餐高级信息与技术标识'),
       h('div', { className: 'vcp-details-body' },
         h('p', { style: style.muted }, PLAN_HINTS[plan]),
@@ -1660,6 +1798,7 @@ function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, bu
           account.credentialError ? h('p', { role: 'alert', style: style.error }, `凭据状态：${describeError(account.credentialError)}`) : null,
           h('div', { className: 'vcp-chip-row' }, PLANS.map((plan) => h('span', { key: plan, style: style.chip },
             `${plan === 'agent-plan' ? 'Agent' : '编程'}套餐：${snapshot?.active?.[plan] === account.id ? (providerEnabledOf(snapshot, plan) ? '当前使用' : '已选择 · 已停用') : '未选用'}${isOAuth(account) ? ` · ${account.oauthProfiles?.[plan] ? '已绑定' : '未绑定'}` : ''}`))),
+          h(LoginExpiryNote, { account }),
           h('div', { className: 'vcp-actions' }, PLANS.map(plan => {
             const selected = snapshot?.active?.[plan] === account.id;
             if (!planAuth(account, plan).inference || (selected && providerEnabledOf(snapshot, plan))) return null;
@@ -1742,6 +1881,7 @@ function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, bu
       login.message ? h('p', { style: style.muted }, login.message) : null,
       login.url && !loginUrl ? h(Notice, { tone: 'error', role: 'alert' }, '登录链接未通过安全校验，已隐藏；请重新发起登录。') : null,
       loginUrl ? h('a', { href: loginUrl, target: '_blank', rel: 'noopener noreferrer', style: { fontSize: 12, color: 'var(--dsw-alias-link, inherit)' } }, '打开官方登录链接') : null,
+      login.state === 'waiting' ? h('p', { style: style.muted }, '授权码 10 分钟内有效；登录完成后官方 SSO 登录态有效期 48 小时，有效期内由官方 CLI 自动续期。') : null,
       loginUrl && login.state === 'waiting'
         ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
           h('label', { style: style.field },
@@ -1836,6 +1976,8 @@ function VolcengineProviderSection({ client }) {
   const [loading, setLoading] = react.useState(true);
   const [busy, setBusy] = react.useState(null);
   const [notice, setNotice] = react.useState(null);
+  // 重开设置页时先用模块里留存的上次额度，首帧不再是「未获取」。
+  // 额度快照由 Host 中间层随 read / snapshots 下发，首屏不再是空的。
   const [quotas, setQuotas] = react.useState({});
   const [quotaBusy, setQuotaBusy] = react.useState({});
   const quotaPendingRef = react.useRef(new Map());
@@ -1843,18 +1985,45 @@ function VolcengineProviderSection({ client }) {
   const [confirmDelete, setConfirmDelete] = react.useState(null);
   const [loginConfirm, setLoginConfirm] = react.useState(null);
   const [login, setLogin] = react.useState({ jobId: null, state: 'idle', message: '', url: null, authMode: null });
+  const [settingsTab, setSettingsTab] = react.useState('agent-plan');
+  const settingsTabPrefix = react.useRef(`vcp-tabs-${Math.random().toString(36).slice(2, 9)}`).current;
+  const tabInitializedRef = react.useRef(false);
+  const pendingNavigationRef = react.useRef(null);
 
   const aliveRef = react.useRef(true);
   const busyRef = react.useRef(null);
   const handledLoginRef = react.useRef(null);
   const readSequenceRef = react.useRef(0);
   const quotaEpochRef = react.useRef(0);
-  const accountFingerprintRef = react.useRef(null);
+  const revisionRef = react.useRef(null);
+  const fingerprintRef = react.useRef(null);
 
   react.useEffect(() => {
     aliveRef.current = true;
     return () => { aliveRef.current = false; };
   }, []);
+
+  react.useEffect(() => {
+    if (tabInitializedRef.current || !snapshot) return;
+    tabInitializedRef.current = true;
+    if (!snapshot.accounts?.length) setSettingsTab('accounts');
+  }, [snapshot]);
+
+  react.useEffect(() => {
+    const pending = pendingNavigationRef.current;
+    if (!pending || pending.tab !== settingsTab) return undefined;
+    pendingNavigationRef.current = null;
+    const timer = setTimeout(() => {
+      try {
+        const target = document.getElementById(pending.target) ?? document.getElementById(`${settingsTabPrefix}-panel`);
+        if (!target) return;
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        target.setAttribute('tabindex', '-1');
+        target.focus({ preventScroll: true });
+      } catch { /* 非浏览器测试环境 */ }
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [settingsTab, settingsTabPrefix]);
 
   /** 把一次 read 返回的整份快照落到状态里。 */
   const applySnapshot = react.useCallback((value) => {
@@ -1866,18 +2035,21 @@ function VolcengineProviderSection({ client }) {
       profiles: account.oauthProfiles, apiKeyRefs: account.apiKeyRefs, accessKeyRef: account.accessKeyRef,
       secretKeyRef: account.secretKeyRef, hasApiKeys: account.hasApiKeys, hasQuotaAccess: account.hasQuotaAccess
     })) });
-    if (accountFingerprintRef.current !== fingerprint) {
-      accountFingerprintRef.current = fingerprint;
+    if (fingerprintRef.current !== fingerprint) {
+      fingerprintRef.current = fingerprint;
       quotaEpochRef.current += 1;
       setQuotaBusy({});
-      setQuotas({});
     }
+    // 额度快照由 Host 中间层下发：打开设置就有数据，不再依赖页面自己发查询。
+    setQuotas(value.quotas ?? {});
     setSnapshot(value);
+    revisionRef.current = value.revision ?? null;
     setEditor(previous => previous?.mode === 'edit' && !(value.accounts ?? []).some(account => account.id === previous.id) ? null : previous);
     setLoading(false);
     const incoming = value.login ? normalizeLogin(value.login) : null;
     if (incoming) setLogin(incoming);
   }, []);
+
 
   /** 重新读取全部状态。 */
   const refresh = react.useCallback(async () => {
@@ -1984,7 +2156,8 @@ function VolcengineProviderSection({ client }) {
     }
   });
 
-  const pullQuota = async (plan) => {
+  /** 手动刷新：Host 立即重采一次并返回结果；自动刷新只读中间层，不经过这里。 */
+  const refreshQuota = async (plan) => {
     const accountId = snapshot?.active?.[plan] ?? null;
     const epoch = quotaEpochRef.current;
     if (!accountId || quotaPendingRef.current.get(plan) === epoch) return;
@@ -1993,10 +2166,10 @@ function VolcengineProviderSection({ client }) {
     try {
       const value = await client.invoke({ op: 'quota', plan, accountId, force: true });
       if (!aliveRef.current || epoch !== quotaEpochRef.current) return;
-      setQuotas((previous) => ({ ...previous, [plan]: { ...value, accountId, plan } }));
+      setQuotas(previous => ({ ...previous, [`${accountId}:${plan}`]: { at: Date.now(), value } }));
     } catch (error) {
       if (!aliveRef.current || epoch !== quotaEpochRef.current) return;
-      setQuotas((previous) => ({ ...previous, [plan]: { accountId, plan, state: 'error', windows: [], error: describeError(error), updatedAt: new Date().toISOString() } }));
+      setNotice({ ok: false, text: `刷新额度失败：${describeError(error)}` });
     } finally {
       if (quotaPendingRef.current.get(plan) === epoch) {
         quotaPendingRef.current.delete(plan);
@@ -2004,6 +2177,62 @@ function VolcengineProviderSection({ client }) {
       }
     }
   };
+
+  // 页面只读中间层：Host 负责定时采集，这里按固定间隔拉一次内存快照。
+  const quotaTargets = JSON.stringify(PLANS.map(plan => [plan, snapshot?.active?.[plan] ?? null]));
+  react.useEffect(() => {
+    const active = JSON.parse(quotaTargets).filter(([, accountId]) => Boolean(accountId));
+    if (!active.length) return undefined;
+    let stopped = false;
+    let timer = null;
+    const schedule = () => {
+      if (stopped) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(poll, QUOTA_POLL_MS);
+      if (timer && typeof timer.unref === 'function') timer.unref();
+    };
+    const poll = async () => {
+      if (stopped) return;
+      // 页面隐藏时只跳过本轮读取，回前台由 visibilitychange 立即补读。
+      if (typeof document !== 'undefined' && document.hidden === true) { schedule(); return; }
+      let view = null;
+      try {
+        view = await client.invoke({ op: 'snapshots' });
+        if (stopped || !aliveRef.current) return;
+        if (view?.quotas) setQuotas(view.quotas);
+        // Host 采集器更新了模型目录或账号元数据：revision 变化时重读整份快照（含模型列表）。
+        if (view?.revision && revisionRef.current && view.revision !== revisionRef.current) void refresh();
+      } catch { /* 读中间层失败不打扰用户，下一轮再读 */ }
+      // 冷启动时中间层可能还是空的：补一次采集请求，Host 无快照时会等待并回填。
+      for (const [plan, accountId] of active) {
+        if (!aliveRef.current || stopped) return;
+        if (view?.quotas?.[`${accountId}:${plan}`]) continue;
+        try {
+          const value = await client.invoke({ op: 'quota', plan, accountId });
+          if (!aliveRef.current || stopped) return;
+          if (value) setQuotas(previous => ({ ...previous, [`${accountId}:${plan}`]: { at: Date.now(), value } }));
+        } catch { /* 采集失败等下一轮或 Host 退避后再试 */ }
+      }
+      schedule();
+    };
+    void poll();
+    schedule();
+    const onVisible = () => {
+      if (typeof document !== 'undefined' && document.hidden === true) return;
+      if (timer) clearTimeout(timer);
+      void poll();
+    };
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', onVisible);
+    }
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+        document.removeEventListener('visibilitychange', onVisible);
+      }
+    };
+  }, [quotaTargets, client, refresh]);
 
   // 套餐启停：只改启用状态，不动账号选择，也不动模型参数。
   const toggleProvider = (plan, enabled) => run(`provider:${plan}`, async () => {
@@ -2050,6 +2279,30 @@ function VolcengineProviderSection({ client }) {
       setNotice({ ok: true, text: `模型 ${modelId} 的参数与启用状态已恢复目录默认。` });
     } catch (error) {
       await reportSaveError(error, `恢复模型 ${modelId} 的默认参数失败`);
+    }
+  });
+
+  // 图片工具单开关：开启即确认按用量计费，一次写入确认位与开关位；关闭后服务端会顺带关闭工具。
+  const toggleMediaImage = (enabled) => run('media:image', async () => {
+    if (!snapshot?.revision) return;
+    try {
+      const value = await client.invoke({ op: 'setMedia', riskAcknowledged: enabled, imageTool: enabled, revision: snapshot.revision });
+      applySnapshot(value);
+      setNotice({ ok: true, text: enabled ? '图片工具已开启，按用量消耗 Agent 套餐 AFP 额度。' : '图片工具已关闭，已生成的附件保留。' });
+    } catch (error) {
+      await reportSaveError(error, '更新图片工具失败');
+    }
+  });
+
+  const selectMediaModel = (imageModel) => run('media:model', async () => {
+    if (!snapshot?.revision) return;
+    try {
+      const value = await client.invoke({ op: 'setMedia', imageModel, revision: snapshot.revision });
+      applySnapshot(value);
+      const label = IMAGE_MODEL_OPTIONS.find(option => option.id === imageModel)?.label ?? imageModel;
+      setNotice({ ok: true, text: `默认图片模型已切换为 ${label}。` });
+    } catch (error) {
+      await reportSaveError(error, '更新默认图片模型失败');
     }
   });
 
@@ -2107,11 +2360,14 @@ function VolcengineProviderSection({ client }) {
     setNotice(null);
   };
 
-  // 从套餐卡片一键回到账号区：滚动到账号面板并为指定账号展开登录确认。
+  const navigateSettings = (tab, target) => {
+    pendingNavigationRef.current = { tab, target };
+    setSettingsTab(tab);
+  };
+
+  // 从套餐卡片一键回到账号区：等目标面板显示后再滚动并聚焦。
   const scrollToAccounts = () => {
-    try { document.getElementById('vcp-account-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {
-      // 非浏览器预览环境没有 document：登录确认本身会强制展开账号区。
-    }
+    navigateSettings('accounts', 'vcp-account-panel');
   };
   const goAccountLogin = (accountId) => { scrollToAccounts(); requestLogin(accountId); };
 
@@ -2286,6 +2542,8 @@ function VolcengineProviderSection({ client }) {
   };
 
   const busyAccount = busy !== null;
+  // 额度快照按「账号:套餐」存于 Host 中间层，这里只按当前选中账号取值。
+  const quotaOf = (plan) => quotas[`${snapshot?.active?.[plan] ?? ''}:${plan}`]?.value;
   const loginActive = LOGIN_ACTIVE_STATES.includes(login.state);
   const planBusy = busy ?? (loginActive ? 'login-active' : null);
 
@@ -2293,6 +2551,13 @@ function VolcengineProviderSection({ client }) {
     : loginActive ? '登录进行中'
       : loading && !snapshot ? '正在读取设置'
         : snapshot ? `${snapshot.accounts?.length ?? 0} 个账号 · 2 个套餐` : '等待连接';
+  const onSettingsTabKey = (event) => {
+    const next = settingsTabAfter(event.key, settingsTab);
+    if (!next) return;
+    event.preventDefault();
+    setSettingsTab(next);
+    try { document.getElementById(`${settingsTabPrefix}-tab-${next}`)?.focus(); } catch { /* 非浏览器测试环境 */ }
+  };
 
   return h('div', { className: 'vcp-settings', style: style.root },
     h('header', { className: 'vcp-header vcp-hero' },
@@ -2324,21 +2589,28 @@ function VolcengineProviderSection({ client }) {
     !snapshot
       ? (loading ? h('p', { role: 'status', style: style.muted }, '正在读取方舟账号状态…') : null)
       : h('div', { className: 'vcp-content', 'data-empty': !(snapshot.accounts?.length) },
-        h('div', { className: 'vcp-plans vcp-plan-workspace' },
+        h('div', { className: 'vcp-tabs', role: 'tablist', 'aria-label': '火山方舟设置分区', onKeyDown: onSettingsTabKey },
+          SETTINGS_TABS.map(tab => h('button', {
+            key: tab.id, type: 'button', role: 'tab', id: `${settingsTabPrefix}-tab-${tab.id}`,
+            className: 'vcp-tab', 'aria-selected': settingsTab === tab.id, 'aria-controls': `${settingsTabPrefix}-panel`,
+            tabIndex: settingsTab === tab.id ? 0 : -1, onClick: () => setSettingsTab(tab.id)
+          }, tab.id === 'accounts' ? `${tab.label} (${snapshot.accounts?.length ?? 0})` : tab.label))),
+        h('div', { className: 'vcp-tabpanel', role: 'tabpanel', id: `${settingsTabPrefix}-panel`, 'aria-labelledby': `${settingsTabPrefix}-tab-${settingsTab}` },
+        PLANS.map(plan => h('div', { key: plan, className: 'vcp-tab-section', hidden: settingsTab !== plan },
         h(PlanCard, {
-          plan: 'agent-plan', snapshot, rawQuota: quotas['agent-plan'], busy: planBusy, quotaBusy: Boolean(quotaBusy['agent-plan']),
-          onSelect: selectAccount, onModels: pullModels, onQuota: pullQuota,
+          plan, snapshot, rawQuota: quotaOf(plan), busy: planBusy, quotaBusy: Boolean(quotaBusy[plan]),
+          onSelect: selectAccount, onModels: pullModels, onQuota: refreshQuota,
           onToggleProvider: toggleProvider, onToggleModel: toggleModel,
           onSaveModelSettings: saveModelSettings, onResetModelSettings: resetModelSettings,
           onGoLogin: goAccountLogin, onScrollAccounts: scrollToAccounts
-        }),
-        h(PlanCard, {
-          plan: 'coding-plan', snapshot, rawQuota: quotas['coding-plan'], busy: planBusy, quotaBusy: Boolean(quotaBusy['coding-plan']),
-          onSelect: selectAccount, onModels: pullModels, onQuota: pullQuota,
-          onToggleProvider: toggleProvider, onToggleModel: toggleModel,
-          onSaveModelSettings: saveModelSettings, onResetModelSettings: resetModelSettings,
-          onGoLogin: goAccountLogin, onScrollAccounts: scrollToAccounts
+        }))),
+        h('div', { className: 'vcp-tab-section', hidden: settingsTab !== 'media' },
+        h(MediaCard, {
+          snapshot, busy: planBusy,
+          onToggleImage: toggleMediaImage, onSelectModel: selectMediaModel,
+          onNavigate: tab => navigateSettings(tab, `${settingsTabPrefix}-panel`)
         })),
+        h('div', { className: 'vcp-tab-section', hidden: settingsTab !== 'accounts' },
         h(AccountPanel, {
           snapshot, editor, confirmDelete, loginConfirm, login, busy,
           onNew: openNew, onEdit: openEdit, onCancelEdit: () => setEditor(null),
@@ -2353,7 +2625,7 @@ function VolcengineProviderSection({ client }) {
           onCancelLoginConfirm: () => setLoginConfirm(null),
           onCancelLogin: () => { void cancelLogin(); },
           onSubmitLoginCode: (code) => { void submitLoginCode(code); }
-        })));
+        })))));
 }
 
 // ── 插件装配 ─────────────────────────────────────────────────────────────────
@@ -2457,6 +2729,8 @@ export function apply(ctx) {
   } catch (error) {
     console.error('[dsh-volcengine-provider] 设置页注册失败:', error);
   }
+
+  applyVolcMediaViews(ctx);
 
   // 4) 生命周期清理：定时器、远端挂载。
   ctx.effect(() => () => {

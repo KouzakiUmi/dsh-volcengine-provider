@@ -102,10 +102,12 @@ async function setup({
 	models = () => ({ plan: 'agent-plan', models: [{ model_id: 'agent-model', output_name: 'agent-model' }] }),
 	identity = { logged_in: true },
 	apiKey = () => 'FAKE-INFERENCE-KEY',
-	responder = defaultResponder
+	responder = defaultResponder,
+	root
 } = {}) {
-	const dir = await mkdtemp(join(tmpdir(), 'dsh-volc-mgr-'));
-	dirs.push(dir);
+	// root 复用同一目录：验证快照/状态在新实例间的恢复。
+	const dir = root ?? await mkdtemp(join(tmpdir(), 'dsh-volc-mgr-'));
+	if (!root) dirs.push(dir);
 	const statePath = join(dir, 'state.json');
 	const credentialStore = { values: { ...refs }, deletions: 0 };
 	const cliCalls = [];
@@ -363,7 +365,8 @@ test('force 额度刷新失败后不得回退到此前成功缓存', async () =>
 	broken = true;
 	assert.equal((await controller.quota('coding-plan', 'default', true)).state, 'error');
 	assert.equal((await controller.quota('coding-plan', 'default', false)).state, 'error');
-	assert.equal(fetchCalls.length, 3);
+	// 失败结果同样缓存 60 秒：轮询重试不会反复发起查询，也不会回退到旧的成功数据。
+	assert.equal(fetchCalls.length, 2);
 });
 
 test('quota 缓存按账号与订阅隔离', async () => {
@@ -380,6 +383,70 @@ test('quota 缓存按账号与订阅隔离', async () => {
 		fetchCalls.map(call => new URL(call.url).searchParams.get('Action')),
 		['GetCodingPlanUsage', 'GetAFPUsage', 'GetCodingPlanUsage']
 	);
+});
+
+test('额度查询遇到登录失效时给出可操作结论，并缓存失败避免反复 spawn', async () => {
+	const { controller, spawnCalls } = await setup();
+	const view = await controller.read();
+	await controller.invoke({ op: 'startLogin', accountId: 'default', revision: view.revision });
+	await completeLogin(controller, spawnCalls);
+	await waitFor(() => controller.store.current.oauth['default'], { label: 'OAuth 绑定' });
+
+	let runs = 0;
+	controller.cli = async () => ({
+		async run() {
+			runs += 1;
+			const error = new Error('ArkCli 操作失败');
+			error.arkKind = 'auth';
+			throw error;
+		}
+	});
+	const first = await controller.invoke({ op: 'quota', plan: 'agent-plan', accountId: 'default' });
+	assert.equal(first.state, 'no-key');
+	assert.equal(first.errorKind, 'auth');
+	assert.match(first.error, /重新网页登录/);
+	const second = await controller.invoke({ op: 'quota', plan: 'agent-plan', accountId: 'default' });
+	assert.equal(second.state, 'no-key');
+	assert.equal(runs, 1, '失败结果缓存 60 秒，轮询重试不再 spawn ArkCli');
+});
+
+test('推理凭据获取失败时负缓存，避免每条请求都 spawn ArkCli', async () => {
+	const { controller, spawnCalls } = await setup();
+	const view = await controller.read();
+	await controller.invoke({ op: 'startLogin', accountId: 'default', revision: view.revision });
+	await completeLogin(controller, spawnCalls);
+	await waitFor(() => controller.store.current.oauth['default'], { label: 'OAuth 绑定' });
+
+	let calls = 0;
+	controller.cli = async () => ({
+		async apiKey() {
+			calls += 1;
+			const error = new Error('ArkCli 操作失败');
+			error.arkKind = 'auth';
+			throw error;
+		}
+	});
+	await assert.rejects(controller.inferenceKey(controller.owner('default'), 'agent-plan'), /重新网页登录/);
+	await assert.rejects(controller.inferenceKey(controller.owner('default'), 'agent-plan'), /重新网页登录/);
+	assert.equal(calls, 1, '20 秒内复用同一失败结论');
+});
+
+test('同账号两个套餐的额度查询串行执行', async () => {
+	const { controller } = await setup();
+	let active = 0;
+	let peak = 0;
+	controller.fetchImpl = async (url, init) => {
+		active += 1;
+		peak = Math.max(peak, active);
+		await new Promise(resolve => setTimeout(resolve, 5));
+		active -= 1;
+		return defaultResponder(url, init);
+	};
+	await Promise.all([
+		controller.invoke({ op: 'quota', plan: 'agent-plan', accountId: 'default' }),
+		controller.invoke({ op: 'quota', plan: 'coding-plan', accountId: 'default' })
+	]);
+	assert.equal(peak, 1, '同一账号的额度查询不得并发');
 });
 
 test('quota 在业务失败时返回错误而不是把额度当作 0', async () => {
@@ -889,4 +956,131 @@ test('approvedLoginUrl 只放行官方授权地址', () => {
 	]) {
 		assert.equal(approvedLoginUrl(bad), undefined, `${bad} 不应被放行`);
 	}
+});
+
+// ── 中间层：Host 定期采集 / Client 只读 ───────────────────────────────────────
+
+test('snapshots 只读中间层，不触发上游查询', async () => {
+	const { controller, fetchCalls, cliCalls } = await setup();
+	await controller.invoke({ op: 'quota', plan: 'coding-plan', accountId: 'default' });
+	const before = { fetches: fetchCalls.length, cli: cliCalls.length };
+	const view = await controller.invoke({ op: 'snapshots' });
+	assert.equal(typeof view.revision, 'string');
+	assert.equal(view.quotas['default:coding-plan'].value.state, 'ok');
+	assert.equal(fetchCalls.length, before.fetches, '读中间层不得发起额度请求');
+	assert.equal(cliCalls.length, before.cli, '读中间层不得启动 CLI');
+});
+
+test('read 下发中间层额度快照，打开设置即可渲染', async () => {
+	const { controller } = await setup();
+	await controller.invoke({ op: 'quota', plan: 'agent-plan', accountId: 'default' });
+	const view = await controller.read();
+	assert.equal(view.quotas['default:agent-plan'].value.state, 'ok');
+	assert.ok(view.quotas['default:agent-plan'].at);
+});
+
+test('额度快照落盘后新实例直接恢复，不重新请求', async () => {
+	const first = await setup();
+	await first.controller.invoke({ op: 'quota', plan: 'agent-plan', accountId: 'default' });
+	await first.controller.quotaSnapshots.whenIdle();
+	first.controller.dispose();
+
+	const second = await setup({ root: first.dir });
+	await second.controller.quotaSnapshots.load();
+	const view = await second.controller.invoke({ op: 'snapshots' });
+	assert.equal(view.quotas['default:agent-plan'].value.state, 'ok');
+	assert.equal(second.fetchCalls.length, 0, '恢复快照不应发起请求');
+	assert.equal(second.controller.invoke({ op: 'snapshots' }) instanceof Promise, true);
+});
+
+test('后台采集：只处理启用套餐，TTL 内不重复请求，并顺带刷新模型目录', async () => {
+	const { controller, fetchCalls, cliCalls } = await setup();
+	// 采集模型目录需要账号有隔离 CLI profile。
+	controller.store.current.accounts[0].cliProfile = 'fixture-profile';
+	await controller.collectOnce();
+	const usage = () => fetchCalls.filter(call => new URL(call.url).searchParams.get('Action') === 'GetAFPUsage').length;
+	assert.equal(usage(), 1, '启用中的 Agent 套餐应采集一次额度');
+	assert.ok(cliCalls.some(call => call[0] === 'models'), '应顺带采集模型目录');
+
+	const fetches = fetchCalls.length;
+	const modelCalls = cliCalls.filter(call => call[0] === 'models').length;
+	await controller.collectOnce();
+	assert.equal(fetchCalls.length, fetches, 'TTL 内不得重复采集额度');
+	assert.equal(cliCalls.filter(call => call[0] === 'models').length, modelCalls, '目录未过期时不得重复拉取');
+
+	controller.store.current.enabled['coding-plan'] = false;
+	const fetchesAfterDisable = fetchCalls.length;
+	await controller.collectOnce();
+	assert.equal(fetchCalls.length, fetchesAfterDisable, '停用的套餐不再采集');
+});
+
+test('后台采集失败按次数退避，不在退避期内反复请求', async () => {
+	let broken = false;
+	const { controller, fetchCalls } = await setup({ responder: url => {
+		if (broken) throw new Error('network');
+		return defaultResponder(url);
+	} });
+	await controller.collectOnce();
+	assert.equal(fetchCalls.length > 0, true);
+	broken = true;
+	// 让快照过期，触发一次失败采集并进入退避。
+	controller.quotaSnapshots.delete('default:agent-plan');
+	await controller.collectOnce();
+	const afterFailure = fetchCalls.length;
+	controller.quotaSnapshots.delete('default:agent-plan');
+	await controller.collectOnce();
+	assert.equal(fetchCalls.length, afterFailure, '退避期内不再请求上游');
+	assert.ok(controller.quotaFailures.get('default:agent-plan'));
+});
+
+// ── OAuth 登录态到期元数据 ─────────────────────────────────────────────────────
+
+/** 构造只含 exp 的假 refresh_token JWT。 */
+function expiryJwt(expSeconds) {
+	return ['header', Buffer.from(JSON.stringify({ exp: expSeconds })).toString('base64url'), 'signature'].join('.');
+}
+
+async function bindOAuthWithToken(controller, dir, homeId, expSeconds) {
+	await controller.store.mutate(revision(controller.store.current), next => {
+		next.oauth.default = { profiles: { 'agent-plan': 'agent-profile' }, loggedAt: new Date().toISOString(), homeId };
+		return next;
+	});
+	if (expSeconds !== undefined) {
+		const identityDir = join(dir, 'accounts', 'default', 'sessions', homeId, '.arkcli', 'identities', 'volc-1');
+		await mkdir(identityDir, { recursive: true });
+		await writeFile(join(identityDir, 'token.json'), JSON.stringify({ refresh_token: expiryJwt(expSeconds) }));
+	}
+}
+
+test('read 下发 OAuth 登录态到期元数据；凭据文件缺失时为 null，凭据引用账号不带该字段', async () => {
+	const { controller, dir } = await setup();
+	await bindOAuthWithToken(controller, dir, '11111111-1111-4111-8111-111111111111');
+	let account = (await controller.read()).accounts.find(a => a.id === 'default');
+	assert.equal(account.oauthExpiresAt, null, '无凭据文件时到期未知');
+
+	const exp = Math.floor(Date.now() / 1000) + 48 * 3600;
+	await bindOAuthWithToken(controller, dir, '11111111-1111-4111-8111-111111111111', exp);
+	controller.clearCaches();
+	account = (await controller.read()).accounts.find(a => a.id === 'default');
+	assert.equal(account.oauthExpiresAt, new Date(exp * 1000).toISOString());
+});
+
+test('oauthExpiry 按绑定缓存；clearCaches 后重读磁盘，重新登录使旧缓存失效', async () => {
+	const { controller, dir } = await setup();
+	const exp = Math.floor(Date.now() / 1000) + 48 * 3600;
+	await bindOAuthWithToken(controller, dir, '22222222-2222-4222-8222-222222222222', exp);
+	const first = await controller.oauthExpiry(controller.owner('default'), controller.store.current.oauth.default);
+	assert.equal(first, new Date(exp * 1000).toISOString());
+
+	// 磁盘变化但缓存未失效：仍返回缓存值，不重复读盘。
+	const identityDir = join(dir, 'accounts', 'default', 'sessions', '22222222-2222-4222-8222-222222222222', '.arkcli', 'identities', 'volc-1');
+	await writeFile(join(identityDir, 'token.json'), JSON.stringify({ refresh_token: expiryJwt(exp + 3600) }));
+	assert.equal(await controller.oauthExpiry(controller.owner('default'), controller.store.current.oauth.default), first);
+
+	controller.clearCaches();
+	assert.equal(await controller.oauthExpiry(controller.owner('default'), controller.store.current.oauth.default), new Date((exp + 3600) * 1000).toISOString());
+
+	// 重新登录（新 homeId + loggedAt）后旧绑定缓存不再命中。
+	await bindOAuthWithToken(controller, dir, '33333333-3333-4333-8333-333333333333', exp + 7200);
+	assert.equal(await controller.oauthExpiry(controller.owner('default'), controller.store.current.oauth.default), new Date((exp + 7200) * 1000).toISOString());
 });

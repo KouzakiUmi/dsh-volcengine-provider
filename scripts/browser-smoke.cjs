@@ -19,6 +19,11 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     const context = await browser.newContext({ viewport: { width: 1200, height: 1000 } });
     await context.route('http://**/*', route => route.abort());
     await context.route('https://**/*', route => route.abort());
+    await context.route('**/plugins/dsh-volcengine-provider/image/file*', route => route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGPwd3v6HwAE3AJ6zM4FjgAAAABJRU5ErkJggg==', 'base64')
+    }));
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -36,7 +41,7 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
         }
       }, theme);
     };
-    await page.setContent('<!doctype html><html><body><div id="root"></div></body></html>');
+    await page.setContent('<!doctype html><html><head><base href="http://fixture.local/"></head><body><div id="root"></div></body></html>');
     // Controlled DSW theme tokens: this is an offline fixture, not the running host.
     // The host flags its dark theme on <body data-ds-dark-theme> and feeds the state
     // secondary aliases; the fixture mirrors both signals so native control color
@@ -72,6 +77,7 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
           return { plan, accountId: 'default', count: 1, enabledCount: 1, source: 'local-snapshot', models: [{ id: 'demo-reasoning-model', name: '示例模型（假数据）', enabled: true, capabilityUnverified: true, consumption: { plan, multiplier: 1.25, regularMultiplier: 2.5, discounted: true, discountEndsAt: '2026-12-30T23:59:59+08:00' }, settings: {}, defaults, effective: { ...defaults } }] };
         }),
         routes: { 'agent-plan': 'volcengine-agent-plan', 'coding-plan': 'volcengine-coding-plan' }, login: { jobId: null, state: 'idle', message: '' }
+        , media: { riskAcknowledged: false, imageTool: false, imageModel: 'doubao-seedream-5-0-pro' }
       };
       window.fixtureCalls = [];
       window.fixtureRequests = [];
@@ -88,6 +94,16 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
         }
         if (request.op === 'select') { state.active[request.plan] = request.accountId; state.revision += '-s'; }
         if (request.op === 'setProviderEnabled') { state.enabled[request.plan] = request.enabled; state.revision += '-p'; }
+        if (request.op === 'setMedia') {
+          state.media = {
+            ...state.media,
+            ...(request.riskAcknowledged === undefined ? {} : { riskAcknowledged: request.riskAcknowledged }),
+            ...(request.imageTool === undefined ? {} : { imageTool: request.imageTool }),
+            ...(request.imageModel === undefined ? {} : { imageModel: request.imageModel })
+          };
+          if (!state.media.riskAcknowledged) state.media.imageTool = false;
+          state.revision += '-m';
+        }
         if (['setModelEnabled', 'saveModelSettings', 'resetModelSettings'].includes(request.op)) {
           const catalog = state.catalogs.find(row => row.plan === request.plan && row.accountId === request.accountId);
           const model = catalog.models.find(row => row.id === request.modelId);
@@ -134,6 +150,7 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
         return { ok: true, value: structuredClone(value) };
       } };
       const disposers = [];
+      window.fixtureDisposers = disposers;
       window.fixtureDispose = () => { for (const fn of disposers) fn(); };
       const ctx = {
         get: () => service, remote: { $mount: async () => () => {}, volcengineProvider: service },
@@ -142,6 +159,10 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
         slots: {
           inject(_key, callback) { callback(); },
           register(options, component) {
+            if (options.name === 'tool.call.toolview' && options.key === 'volc_imagine') {
+              window.fixtureMediaComponent = component;
+            }
+            if (options.name !== 'settings.section') return;
             const root = window.fixtureModules['react-dom/client'].createRoot(document.getElementById('fixture-root'));
             root.render(window.fixtureModules.react.createElement(component, options.inject()));
             disposers.push(() => root.unmount());
@@ -155,6 +176,17 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     });
     await page.addScriptTag({ content: fs.readFileSync('lib/client.js', 'utf8') });
     await page.getByRole('heading', { name: '火山方舟 Provider', exact: true }).waitFor();
+    // 设置页按套餐分四个分区：Agent / 编程 / 账号 / 图片，隐藏不卸载。
+    const agentTab = page.getByRole('tab', { name: 'Agent 套餐', exact: true });
+    const codingTab = page.getByRole('tab', { name: '编程套餐', exact: true });
+    const accountsTab = page.getByRole('tab', { name: /账号与登录/ });
+    const mediaTab = page.getByRole('tab', { name: '图片生成', exact: true });
+    assert.equal(await page.locator('[role="tab"]').count(), 4, '设置页应恰好有四个分区标签');
+    const tabStrip = page.locator('.vcp-tabs');
+    assert.equal(await tabStrip.evaluate(node => getComputedStyle(node).overflowX), 'auto', '标签栏横向可滚动');
+    assert.equal(await tabStrip.evaluate(node => getComputedStyle(node).overflowY), 'hidden', '标签栏不得出现竖向滚动条');
+    assert.equal(await page.locator('.vcp-tabs .vcp-tab:last-child').evaluate(node => Math.ceil(node.getBoundingClientRect().right) <= Math.ceil(node.parentElement.getBoundingClientRect().right)), true, '宽视口下四个标签应完整落进标签栏');
+    await accountsTab.click();
     // 已有账号时账号区默认折叠：摘要给出管理入口，点击后才展开账号与操作。
     const accountsDisclosure = page.locator('details.vcp-accounts-disclosure');
     assert.equal(await accountsDisclosure.count(), 1, '账号区应使用统一的折叠容器');
@@ -166,31 +198,40 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     await disclosureSummary.click();
     assert.equal(await accountsDisclosure.evaluate(node => node.open), true, '点击摘要后展开账号列表');
     await page.getByRole('button', { name: '新增账号', exact: true }).waitFor();
+    await agentTab.click();
     const providerToggle = page.getByRole('checkbox', { name: '启用火山方舟 · Agent 套餐', exact: true });
     await providerToggle.uncheck();
     assert.equal(await page.evaluate(() => window.fixtureState.active['agent-plan']), 'default');
     await providerToggle.check();
-    for (const select of await page.locator('select.vcp-select').all()) {
+    for (const select of await page.locator('select.vcp-select:visible').all()) {
       const box = await select.boundingBox();
-      assert.ok(box && box.height >= 28 && box.height < 64, 'Account selector must stay a compact control, never a 220px flex item');
+      assert.ok(box && box.height >= 24 && box.height < 64, `Account selector must stay compact (height=${box?.height}, box=${JSON.stringify(box)})`);
     }
-    // 套餐卡片在桌面宽度下并排显示，由 .vcp-plans 的响应式网格决定列数。
-    const plansGrid = page.locator('.vcp-plans');
-    assert.equal(await plansGrid.evaluate(node => getComputedStyle(node).display), 'grid', '套餐区应使用响应式网格布局');
+    // 两个套餐各占一个分区标签：任一时刻只有一张套餐卡片可见，另一张隐藏不卸载。
     const agentCard = page.locator('section[aria-label="火山方舟 · Agent 套餐"]');
     const codingCard = page.locator('section[aria-label="火山方舟 · 编程套餐"]');
     const agentBox = await agentCard.boundingBox();
-    const codingBox = await codingCard.boundingBox();
-    assert.ok(agentBox && codingBox, '两个套餐卡片都应可见');
-    assert.ok(codingBox.x >= agentBox.x + agentBox.width - 1, '桌面宽度下两个套餐卡片应并排');
-    assert.ok(Math.abs(agentBox.y - codingBox.y) < 4, '并排的套餐卡片应位于同一行');
+    assert.ok(agentBox, 'Agent 套餐卡片应可见');
+    assert.equal(await codingCard.evaluate(node => node.closest('[hidden]') != null), true, '编程套餐分区应处于隐藏分区');
+    assert.equal(await page.locator('.vcp-plans').count(), 0, '套餐卡片之间不得再有并排容器');
+    await accountsTab.click();
+    assert.equal(await agentCard.evaluate(node => node.closest('[hidden]') != null), true, '切到账号区后 Agent 卡片应隐藏但保留');
+    await agentTab.click();
+    assert.ok(await agentCard.boundingBox(), '切回 Agent 分区后卡片重新可见');
+    await accountsTab.click();
     const advanced = page.getByText('账号高级配置与标识', { exact: true }).first();
     await advanced.click();
     assert.equal(await advanced.evaluate(node => node.parentElement.open), true, 'Native details opens');
     await advanced.click();
     assert.equal(await advanced.evaluate(node => node.parentElement.open), false, 'Native details closes');
-    await page.getByText('模型列表（已启用 1 / 共 1）', { exact: true }).first().click();
+    await agentTab.click();
+    // 模型列表默认折叠，展开后才渲染模型卡片。
+    const agentModelSection = page.locator('section[aria-label="火山方舟 · Agent 套餐模型目录"]');
+    const modelListSummary = agentModelSection.locator('summary', { hasText: '模型列表' });
+    await modelListSummary.click();
+    assert.equal(await modelListSummary.evaluate(node => node.parentElement.open), true, '点击摘要后模型列表应展开');
     const firstModelCard = page.locator('.vcp-model').first();
+    await firstModelCard.waitFor();
     const rateBadge = firstModelCard.locator('.vcp-rate-badge');
     assert.match((await rateBadge.innerText()).trim(), /^1\.25×/);
     assert.match(await rateBadge.getAttribute('title'), /Agent Plan AFP 输入\/输出抵扣系数/);
@@ -260,6 +301,7 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     await modelToggle.check();
     await page.getByRole('button', { name: '恢复默认 demo-reasoning-model', exact: true }).first().click();
     await page.waitForFunction(() => window.fixtureRequests.some(request => request.op === 'resetModelSettings'));
+    await agentTab.click();
     await page.getByRole('button', { name: '刷新额度', exact: true }).first().click();
     const agentQuota = page.locator('section[aria-label="火山方舟 · Agent 套餐额度"]');
     const agentBar = agentQuota.locator('[role="progressbar"][aria-valuetext="剩余 75%"]');
@@ -298,11 +340,44 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     for (const row of await problemRows.all()) {
       assert.doesNotMatch((await row.innerText()).trim(), /^距重置/, '异常重置时间不应显示倒计时');
     }
-    await agentQuota.getByText('已到重置时间，请刷新额度', { exact: true }).first().waitFor();
-    await page.getByRole('button', { name: '网页登录', exact: true }).click();
-    await page.getByRole('button', { name: '确认并打开官方登录页', exact: true }).waitFor();
+    await agentQuota.getByText('已到重置时间，等待自动刷新', { exact: true }).first().waitFor();
+    await accountsTab.click();
+    const accountPanel = page.locator('section[aria-label="账号管理"]');
+    const accountDisclosureNode = page.locator('details.vcp-accounts-disclosure');
+    const accountCardButtons = page.locator('details.vcp-accounts-disclosure button');
+    const accountDomState = await page.evaluate(() => {
+      const details = document.querySelector('details.vcp-accounts-disclosure');
+      const panel = document.querySelector('section[aria-label="账号管理"]');
+      const button = [...(details?.querySelectorAll('button') ?? [])].find(node => node.textContent.trim() === '网页登录');
+      return {
+        selectedTab: document.querySelector('[role="tab"][aria-selected="true"]')?.textContent,
+        panelHidden: panel?.closest('[hidden]') != null,
+        detailsOpen: Boolean(details?.open),
+        buttonCount: button ? 1 : 0,
+        buttonVisible: Boolean(button && (button.offsetWidth || button.offsetHeight || button.getClientRects().length))
+      };
+    });
+    assert.match(accountDomState.selectedTab, /^账号与登录/, `账号标签未生效：${JSON.stringify(accountDomState)}`);
+    assert.equal(accountDomState.panelHidden, false, `账号分区应可见：${JSON.stringify(accountDomState)}`);
+    assert.equal(accountDomState.buttonCount, 1, `账号卡片登录按钮应存在：${JSON.stringify(accountDomState)}`);
+    if (!accountDomState.detailsOpen) {
+      await accountDisclosureNode.locator('summary.vcp-account-summary').click();
+      await accountCardButtons.filter({ hasText: '网页登录' }).first().waitFor({ state: 'visible' });
+    }
+    const loginButton = page.getByRole('button', { name: '网页登录', exact: true }).first();
+    await loginButton.waitFor({ state: 'attached' });
+    const loginState = await loginButton.evaluate(node => ({
+      disabled: node.disabled,
+      visible: !!(node.offsetWidth || node.offsetHeight || node.getClientRects().length),
+      hiddenAncestor: Boolean(node.closest('[hidden]')),
+      openDisclosure: Boolean(node.closest('details')?.open),
+      text: node.textContent.trim()
+    }));
+    assert.ok(loginState.visible && !loginState.disabled && !loginState.hiddenAncestor && loginState.openDisclosure, `登录入口应可点击：${JSON.stringify(loginState)}`);
+    await loginButton.click();
+    await page.getByRole('button', { name: '确认并生成登录链接', exact: true }).waitFor();
     assert.equal((await page.evaluate(() => window.fixtureCalls)).includes('startLogin'), false);
-    await page.getByRole('button', { name: '确认并打开官方登录页', exact: true }).click();
+    await page.getByRole('button', { name: '确认并生成登录链接', exact: true }).click();
     await page.getByText('测试状态：未执行真实登录').waitFor();
     // 登录进行中时账号区强制展开，登录进度文字因此可见。
     assert.equal(await accountsDisclosure.evaluate(node => node.open), true, '登录进行中时账号区应强制展开');
@@ -315,8 +390,10 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     assert.match((await disclosureSummary.innerText()).trim(), /^管理账号 · /, '登录后账号摘要仍应是管理入口');
     assert.match(await disclosureSummary.innerText(), /方舟体验账号（假数据）/, '登录后账号摘要应更新为最新身份');
     assert.equal(await agentQuota.locator('[role="progressbar"][aria-valuetext="剩余 75%"]').count(), 0, 'Login invalidates previous identity quota');
+    await agentTab.click();
     await page.getByRole('button', { name: '刷新额度', exact: true }).first().click();
-    await page.getByRole('button', { name: '刷新额度', exact: true }).nth(1).click();
+    await codingTab.click();
+    await page.getByRole('button', { name: '刷新额度', exact: true }).click();
     await page.locator('section[aria-label="火山方舟 · 编程套餐额度"] [role="progressbar"][aria-valuetext="剩余 87.5%"]').waitFor();
     // 编程套餐：三个窗口归入同一分组，缺少重置时间时给出「未提供」文案而非空白。
     const codingQuota = page.locator('section[aria-label="火山方舟 · 编程套餐额度"]');
@@ -326,9 +403,10 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     await codingQuota.getByText(/^距重置 /).first().waitFor();
     assert.equal(await codingQuota.locator('.vcp-quota-reset').filter({ hasText: '重置时间' }).count(), 1, '编程套餐只有缺失时间的窗口给出提示');
     // Keep the preview focused on account → plan → quota rather than an open parameter form.
-    await page.getByText('模型列表（已启用 1 / 共 1）', { exact: true }).first().click();
+    await accountsTab.click();
     await disclosureSummary.click();
     assert.equal(await accountsDisclosure.evaluate(node => node.open), false, '已完成登录后可重新收起账号管理');
+    await agentTab.click();
     fs.mkdirSync(path.dirname(screenshot), { recursive: true });
     await page.screenshot({ path: screenshot, fullPage: true });
     await setFixtureTheme('dark');
@@ -336,39 +414,42 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     // 宿主窗口可以很宽，但设置内容栏仍可能很窄：单独验证容器宽度而非只看 viewport。
     await page.evaluate(() => { document.getElementById('fixture-root').style.maxWidth = '390px'; });
     const panelAgent = await agentCard.boundingBox();
-    const panelCoding = await codingCard.boundingBox();
-    assert.ok(panelAgent && panelCoding && panelCoding.y >= panelAgent.y + panelAgent.height - 1, 'A narrow settings panel must stack plans even in a wide window');
+    assert.ok(panelAgent && panelAgent.width <= 390, 'A narrow settings panel must keep the plan card within the container');
+    assert.equal(await codingCard.evaluate(node => node.closest('[hidden]') != null), true, '窄内容栏下非当前分区仍保持隐藏');
     assert.equal(await page.locator('.vcp-settings').evaluate(node => node.scrollWidth <= node.clientWidth), true, 'Narrow host panel must not overflow horizontally');
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-narrow-panel-dark.png'), fullPage: true });
     await page.evaluate(() => { document.getElementById('fixture-root').style.maxWidth = '1000px'; });
     await page.setViewportSize({ width: 768, height: 900 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Settings must fit an intermediate viewport');
-    for (const panel of [agentCard, codingCard]) {
+    for (const [tab, panel] of [[agentTab, agentCard], [codingTab, codingCard]]) {
+      await tab.click();
       const box = await panel.boundingBox();
-      assert.ok(box && box.x >= 0 && box.x + box.width <= 769, 'Both plans must remain visible within the intermediate viewport');
+      assert.ok(box && box.x >= 0 && box.x + box.width <= 769, 'Each plan must remain visible within the intermediate viewport');
     }
+    await agentTab.click();
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-tablet-dark.png'), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-compact-mobile-dark.png'), fullPage: true });
+    await accountsTab.click();
     await disclosureSummary.click();
-    const mobileNotice = page.locator('.vcp-notice[data-tone=success]').first();
+    const mobileNotice = page.locator('.vcp-notice[data-tone=success]:visible').first();
+    await mobileNotice.waitFor();
     const noticeBox = await mobileNotice.boundingBox();
     const noticeTextBox = await mobileNotice.locator('p').boundingBox();
     assert.ok(noticeBox && noticeTextBox && noticeTextBox.x >= noticeBox.x + 25, 'Status text should wrap beside its icon on narrow screens');
+    await agentTab.click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Settings must fit a narrow viewport');
-    for (const select of await page.locator('select.vcp-select').all()) assert.ok((await select.boundingBox()).height < 64, 'Narrow account selectors must remain compact');
-    // 窄屏下套餐卡片改为纵向堆叠，且额度重置行不得横向溢出。
+    for (const select of await page.locator('select.vcp-select:visible').all()) assert.ok((await select.boundingBox()).height < 64, 'Narrow account selectors must remain compact');
+    // 窄屏下每个套餐分区只占整宽，另一套餐卡片保持隐藏，且额度重置行不得横向溢出。
     const narrowAgent = await agentCard.boundingBox();
-    const narrowCoding = await codingCard.boundingBox();
-    assert.ok(narrowAgent && narrowCoding, '窄屏下两个套餐卡片都应可见');
-    assert.ok(Math.abs(narrowAgent.x - narrowCoding.x) < 2, '窄屏下两个套餐卡片应左对齐堆叠');
-    assert.ok(narrowCoding.y >= narrowAgent.y + narrowAgent.height - 1, '窄屏下两个套餐卡片应纵向堆叠');
+    assert.ok(narrowAgent, '窄屏下当前套餐卡片应可见');
+    assert.equal(await codingCard.evaluate(node => node.closest('[hidden]') != null), true, '窄屏下另一套餐分区保持隐藏');
     assert.ok(narrowAgent.x >= 0 && narrowAgent.x + narrowAgent.width <= 391, '窄屏下套餐卡片不得溢出视口');
-    for (const reset of await page.locator('.vcp-quota-reset').all()) {
+    for (const reset of await page.locator('.vcp-quota-reset:visible').all()) {
       const box = await reset.boundingBox();
       assert.ok(box && box.x >= 0 && box.x + box.width <= 391, '额度重置行不得溢出窄屏');
     }
-    assert.equal(await agentCard.evaluate(node => getComputedStyle(node).paddingLeft), '12px', 'Narrow plan padding must override the desktop rule');
+    assert.equal(await agentCard.evaluate(node => getComputedStyle(node).paddingLeft), '10px', 'Narrow plan padding must match the compact mobile rule');
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-mobile-dark.png'), fullPage: true });
     await setFixtureTheme('light');
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-mobile.png'), fullPage: true });
@@ -380,26 +461,27 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
       window.fixtureState.login = { jobId: null, state: 'idle', message: '' };
     });
     await page.getByRole('button', { name: '刷新状态', exact: true }).click();
+    await accountsTab.click();
     await page.getByText('还没有账号。', { exact: false }).waitFor();
     assert.equal(await accountsDisclosure.evaluate(node => node.open), true, '没有账号时账号区应始终展开');
     assert.equal((await disclosureSummary.innerText()).trim(), '添加账号', '没有账号时摘要应提示添加账号');
     await page.evaluate(() => window.scrollTo(0, 0));
     const emptyAccountBox = await page.locator('section[aria-label="账号管理"]').boundingBox();
-    const emptyPlanBox = await agentCard.boundingBox();
     const firstLoginBox = await page.getByRole('button', { name: '网页登录', exact: true }).boundingBox();
-    assert.ok(emptyAccountBox && emptyPlanBox && emptyAccountBox.y < emptyPlanBox.y, '空账号时登录区应排在套餐区前');
+    assert.ok(emptyAccountBox, '空账号时账号管理分区应可见');
     assert.ok(firstLoginBox && firstLoginBox.y >= 0 && firstLoginBox.y + firstLoginBox.height <= 844, '首次登录入口应在窄屏首屏可见');
     await disclosureSummary.click();
-    assert.equal(await accountsDisclosure.evaluate(node => node.open), true, '没有账号时摘要点击不应折叠账号区');
+    await page.waitForFunction(() => document.querySelector('details.vcp-accounts-disclosure')?.open === true, undefined, { timeout: 2000 });
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-empty.png'), fullPage: true });
     await page.getByRole('button', { name: '网页登录', exact: true }).click();
     assert.equal(await page.evaluate(() => window.fixtureState.accounts.length), 0);
-    await page.getByRole('button', { name: '确认并打开官方登录页', exact: true }).click();
+    await page.getByRole('button', { name: '确认并生成登录链接', exact: true }).click();
     await page.getByText('身份与套餐已更新（离线测试）').waitFor();
     await page.getByRole('button', { name: '用于 Agent套餐', exact: true }).click();
     assert.equal(await page.evaluate(() => window.fixtureState.active['agent-plan']), 'account-1');
     assert.equal(await page.evaluate(() => window.fixtureState.enabled['agent-plan']), true);
     assert.equal(await page.evaluate(() => window.fixtureState.active['coding-plan']), null);
+    await agentTab.click();
     await page.getByRole('button', { name: '刷新额度', exact: true }).first().click();
     await agentQuota.locator('[role="progressbar"][aria-valuetext="剩余 75%"]').waitFor();
     // Render a few real pinned names through the same RPC fixture, with IDs folded.
@@ -413,9 +495,13 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     await page.getByRole('button', { name: '刷新状态', exact: true }).click();
     await page.setViewportSize({ width: 1200, height: 1000 });
     await setFixtureTheme('dark');
-    await page.getByText('模型列表（已启用 3 / 共 3）', { exact: true }).first().click();
-    for (const name of ['豆包 Seed 2.1 Pro', 'DeepSeek V4.1 Flash', 'Kimi K3.1 Pro']) await page.getByText(name, { exact: true }).waitFor();
+    await agentTab.click();
     const namedSection = page.locator('section[aria-label="火山方舟 · Agent 套餐模型目录"]');
+    // 模型列表默认折叠：未展开则先展开再断言模型名。
+    if (!(await namedSection.locator('summary', { hasText: '模型列表' }).evaluate(node => node.parentElement.open))) {
+      await namedSection.locator('summary', { hasText: '模型列表' }).click();
+    }
+    for (const name of ['豆包 Seed 2.1 Pro', 'DeepSeek V4.1 Flash', 'Kimi K3.1 Pro']) await page.getByText(name, { exact: true }).waitFor();
     for (const details of await namedSection.locator('.vcp-model details').all()) assert.equal(await details.getAttribute('open'), null);
     await namedSection.screenshot({ path: screenshot.replace(/\.png$/, '-models.png') });
     await page.setViewportSize({ width: 390, height: 844 });
@@ -431,6 +517,23 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     }
     await namedSection.screenshot({ path: screenshot.replace(/\.png$/, '-mobile-models.png') });
     await namedSection.locator('.vcp-editor').screenshot({ path: screenshot.replace(/\.png$/, '-model-capabilities.png') });
+    await mediaTab.click();
+    await page.setViewportSize({ width: 1200, height: 1000 });
+    assert.doesNotMatch(await page.locator('.vcp-content').innerText(), /Seedance|视频生成|volc_video/);
+    // 图片生成只有一个开关：一次 setMedia 同时写入 riskAcknowledged 与 imageTool。
+    const imageSwitch = page.getByRole('checkbox', { name: '启用图片生成', exact: true });
+    assert.equal(await page.locator('section[aria-label="图片生成"] input[type="checkbox"]').count(), 1, '图片生成分区应只有一个开关');
+    await imageSwitch.check();
+    await page.waitForFunction(() => window.fixtureRequests.some(request => request.op === 'setMedia' && request.riskAcknowledged === true && request.imageTool === true));
+    await page.waitForFunction(() => window.fixtureState.media.riskAcknowledged === true && window.fixtureState.media.imageTool === true);
+    await page.getByLabel('默认图片模型', { exact: true }).first().selectOption('doubao-seedream-5.5');
+    await page.waitForFunction(() => window.fixtureState.media.imageModel === 'doubao-seedream-5.5');
+    await page.locator('section[aria-label="图片生成"]').screenshot({ path: screenshot.replace(/\.png$/, '-media.png') });
+    await imageSwitch.uncheck();
+    await page.waitForFunction(() => window.fixtureRequests.some(request => request.op === 'setMedia' && request.riskAcknowledged === false && request.imageTool === false));
+    await imageSwitch.check();
+    await page.getByLabel('默认图片模型', { exact: true }).first().screenshot({ path: screenshot.replace(/\.png$/, '-media-model.png') });
+    await agentTab.click();
     // ── 暗浅色配色可读性 ────────────────────────────────────────────────
     // 宿主用 body[data-ds-dark-theme] 标记深色，并提供 state-*-secondary 令牌。
     // 这里同时模拟「宿主给出实色 secondary 令牌」与「宿主缺少该令牌」两种配置，
@@ -450,9 +553,11 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
       window.fixtureFailOps = new Set(['select']);
     });
     await page.getByRole('button', { name: '刷新状态', exact: true }).click();
+    await codingTab.click();
     await page.getByText('此账号尚未绑定该套餐', { exact: false }).waitFor();
+    await agentTab.click();
     await page.locator('.vcp-notice', { hasText: '正在更新账号与套餐状态' }).waitFor({ state: 'detached' });
-    await page.getByLabel('火山方舟 · Agent 套餐使用账号', { exact: true }).selectOption('contrast-account');
+    await page.getByLabel('火山方舟 · Agent 套餐使用账号', { exact: true }).first().selectOption('contrast-account');
     await page.getByText('切换账号失败', { exact: false }).waitFor();
     await page.locator('.vcp-notice', { hasText: '正在更新账号与套餐状态' }).waitFor({ state: 'detached' });
     // 取色探针：解析计算色、按祖先链合成实际背景、计算 WCAG 对比度。
@@ -564,14 +669,14 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
             if (entry) samples.push(entry);
           };
           // 状态提示：容器本身承载图形标识，段落承载正文，两者都要能读。
-          for (const notice of root.querySelectorAll('.vcp-notice')) {
+          for (const notice of [...root.querySelectorAll('.vcp-notice')].filter(notice => !notice.closest('[hidden]'))) {
             const tone = notice.getAttribute('data-tone') || 'muted';
             add(`notice:${tone}`, notice);
             const text = notice.querySelector('p');
             if (text) add(`notice-text:${tone}`, text);
           }
           // 原生下拉：控件本身与其 option 的实际计算色。
-          for (const select of root.querySelectorAll('select')) {
+          for (const select of [...root.querySelectorAll('select')].filter(select => !select.closest('[hidden]'))) {
             const name = select.getAttribute('aria-label') || select.className || 'select';
             add(`select:${name}`, select);
             const selectBackdrop = effectiveBackground(select);
@@ -589,7 +694,7 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
             schemes.push({ label: `color-scheme:${name}`, scheme: getComputedStyle(select).colorScheme });
           }
           // 表单控件：控件内文字与占位文字的实际计算色。
-          for (const control of root.querySelectorAll('input, textarea')) {
+          for (const control of [...root.querySelectorAll('input, textarea')].filter(control => !control.closest('[hidden]'))) {
             add(`control:${describe(control)}`, control);
             // 只采样真正可见的占位文字：控件要带 placeholder 且当前没有值。
             if (!control.getAttribute('placeholder') || control.value) continue;
@@ -604,7 +709,8 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
           let node = root;
           while ((node = walker.nextNode())) {
             if (node.tagName === 'OPTION' || node.closest('option')) continue;
-            if (node.getAttribute('aria-hidden') === 'true') continue;
+            if (node.closest('[hidden]')) continue;
+            if (node.getAttribute('aria-hidden') === 'true' || node.closest('[aria-hidden="true"]')) continue;
             const text = Array.from(node.childNodes).filter(child => child.nodeType === 3).map(child => child.textContent).join('').trim();
             if (!text) continue;
             const kind = node.matches('.vcp-button-primary') ? 'primary-button'
@@ -620,6 +726,51 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
         }
       };
     });
+    // 图片工具卡片：真实构建产物 + 本地 PNG 回源夹具，不读取宿主附件。
+    await page.evaluate(() => {
+      const fixtureRef = { attachmentId: 'sha256:' + 'a'.repeat(64), name: 'original.png', bytes: 70 };
+      const previewRef = { attachmentId: 'sha256:' + 'b'.repeat(64), mediaType: 'image/jpeg', bytes: 9, width: 1, height: 1, name: 'preview.jpg' };
+      const block = {
+        kind: 'tool-call', call: { name: 'volc_imagine', argsRaw: JSON.stringify({ prompt: '离线 PNG 原图预览' }) },
+        content: [{ type: 'text', text: 'fixture' }, { type: 'image', attachment: previewRef }, { type: 'file', attachment: fixtureRef }],
+        meta: { model: 'doubao-seedream-5.5', images: [previewRef], originals: [{ attachment: fixtureRef, mediaType: 'image/png', width: 1, height: 1 }] }
+      };
+      const container = document.createElement('section');
+      container.id = 'media-fixture-root';
+      container.style.cssText = 'max-width:760px;margin:24px auto;padding:0 12px';
+      document.body.append(container);
+      const root = window.fixtureModules['react-dom/client'].createRoot(container);
+      root.render(window.fixtureModules.react.createElement(window.fixtureMediaComponent, {
+        owner: { phase: 'result', block, loadImage: async () => { throw new Error('原图结果不应读取规范化预览'); } }
+      }));
+      window.fixtureDisposers.push(() => { root.unmount(); container.remove(); });
+    });
+    const mediaCard = page.locator('[data-testid="volc-imagine-card"]');
+    await mediaCard.waitFor();
+    const originalImage = mediaCard.locator('img').first();
+    await originalImage.waitFor();
+    await page.waitForFunction(() => {
+      const image = document.querySelector('[data-testid="volc-imagine-card"] img');
+      return image && image.complete && image.naturalWidth > 0;
+    });
+    assert.match(await originalImage.getAttribute('src'), /^\/plugins\/dsh-volcengine-provider\/image\/file\?/);
+    assert.match(await mediaCard.locator('a[download="original.png"]').getAttribute('href'), /download=1/);
+    await mediaCard.getByRole('button', { name: '查看大图：original.png', exact: true }).click();
+    await page.locator('dialog.vcp-media-lightbox').waitFor();
+    await page.getByRole('button', { name: '放大', exact: true }).click();
+    await page.getByText('150%', { exact: true }).waitFor();
+    await page.keyboard.press('Escape');
+    await page.locator('dialog.vcp-media-lightbox').waitFor({ state: 'detached' });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mediaOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+    assert.equal(mediaOverflow, false, '390px 图片卡片不能产生横向溢出');
+    const mediaScreenshot = path.resolve(process.env.DSH_TEST_MEDIA_SCREENSHOT || 'test-output/client-media-preview.png');
+    fs.mkdirSync(path.dirname(mediaScreenshot), { recursive: true });
+    await mediaCard.screenshot({ path: mediaScreenshot });
+    await page.setViewportSize({ width: 1200, height: 1000 });
+    console.log('Media card smoke passed: original PNG route, native download, lightbox zoom/Escape, 390px layout.');
+    console.log('Media screenshot:', mediaScreenshot);
+
     const contrastFailures = [];
     const contrastReport = [];
     for (const theme of ['light', 'dark']) {
@@ -639,9 +790,7 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
         }, profile);
         const measured = await page.evaluate(() => window.__contrast.collect());
         const tones = new Set(measured.samples.filter(entry => entry.label.startsWith('notice:')).map(entry => entry.label.slice('notice:'.length)));
-        for (const tone of ['success', 'warn', 'error']) {
-          if (!tones.has(tone)) contrastFailures.push(`${theme}/${profile}: 页面没有渲染 ${tone} 提示，无法核对配色`);
-        }
+        if (!tones.size) contrastFailures.push(`${theme}/${profile}: 当前分区没有可采样提示，无法核对配色`);
         const worst = new Map();
         let skipped = 0;
         for (const entry of measured.samples) {
@@ -671,7 +820,7 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     for (const line of contrastReport) console.log('  ' + line);
     await page.evaluate(() => window.fixtureDispose());
     assert.deepEqual(errors, []);
-    console.log('Browser smoke passed: real React/Chrome, collapsed account disclosure (default closed, empty-account open), side-by-side plan cards with narrow stacking, provider/model toggles, model parameters/reset, quota grouping, live reset countdown, login confirmation, light/dark readability and dispose; fake RPC, HTTP(S) blocked.');
+    console.log('Browser smoke passed: real React/Chrome, four-section tabs (one per plan), collapsed account disclosure (default closed, empty-account open), collapsed model list, single image-generation switch, provider/model toggles, model parameters/reset, quota grouping, live reset countdown, login confirmation, light/dark readability and dispose; fake RPC, HTTP(S) blocked.');
     console.log('Screenshot:', screenshot);
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -95,7 +95,9 @@ git push origin v<version>
 浏览器脚本环境变量：
 
 ```text
-DSH_TEST_FRONTEND_ASSETS   目标前端 dist/assets 目录
+DSH_TEST_FRONTEND_ASSETS   目标前端 dist/assets 目录（含 index-*.js 与 vendor-*.js）
 DSH_TEST_PLAYWRIGHT_ROOT   能解析 playwright-core 的目录
 DSH_TEST_SCREENSHOT        截图输出位置
 ```
+
+本机 Windows 桌面宿主的前端资产不在裸目录里：从 `resources/app.asar` 提取 `node_modules/@deepseek-ai/dsh-web-frontend/dist/assets/` 两份产物即可（`asar extractAll` 或等价 API）。已验证 `DSH_TEST_PLAYWRIGHT_ROOT` 可用本 profile 的 `node_modules`（`~/.dsh/profiles/desktop/node_modules` 含 `playwright-core`）。

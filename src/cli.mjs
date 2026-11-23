@@ -33,13 +33,56 @@ export function cliEnvironment(home, ambient = process.env) {
 export function parseJsonOutput(text) {
   try { return JSON.parse(text.trim()); } catch { throw new Error('ArkCli 未返回有效 JSON；请核对 CLI 版本'); }
 }
+/**
+ * 解析 ArkCli 失败输出里的结构化错误（`{"ok":false,"error":{...}}`）。
+ * 只取分类所需字段；原始 message/hint 可能夹带凭据片段，不落盘、不回显。
+ *
+ * @param {unknown} output 子进程 stdout 或 stderr 文本
+ * @returns {{type: string, message: string, hint: string}|null} 结构化错误或 null
+ */
+export function parseCliFailure(output) {
+  if (typeof output !== 'string' || !output.trim()) return null;
+  try {
+    const data = JSON.parse(output.trim());
+    if (!data || data.ok !== false || !data.error) return null;
+    return {
+      type: typeof data.error.type === 'string' ? data.error.type : '',
+      message: typeof data.error.message === 'string' ? data.error.message : '',
+      hint: typeof data.error.hint === 'string' ? data.error.hint : ''
+    };
+  } catch { return null; }
+}
+/**
+ * 把 ArkCli 失败归类：`auth` 表示需要重新登录或重新确认官方协议；
+ * 其余只区分网络/超时与未知，不把原始输出带到界面。
+ *
+ * @param {{type?: string, message?: string, hint?: string}|null} failure 结构化错误
+ * @returns {'auth'|'network'|'unknown'} 失败类别
+ */
+export function classifyCliFailure(failure) {
+  const text = `${failure?.type ?? ''} ${failure?.message ?? ''} ${failure?.hint ?? ''}`;
+  if (!text.trim()) return 'unknown';
+  if (/SSO|STS|auth\s*login|重新登录|协议校验|签署|oidc|oauth/i.test(text)) return 'auth';
+  if (/timeout|timed\s*out|ETIMEDOUT|ECONN|EAI_AGAIN|ENOTFOUND|网络|连接失败/i.test(text)) return 'network';
+  return 'unknown';
+}
 export class ArkCli {
   constructor({ executable, home, exec = execFile, spawnImpl = spawn }) { Object.assign(this, { executable, home, exec, spawnImpl }); }
   async run(args, { signal, timeout = 30000, plain = false } = {}) {
     await mkdir(this.home, { recursive: true, mode: 0o700 });
     return new Promise((resolve, reject) => {
       this.exec(this.executable, [...args, '--format', 'json'], { env: cliEnvironment(this.home), cwd: this.home, windowsHide: true, timeout, maxBuffer: maxBytes, signal, encoding: 'utf8' }, (error, stdout) => {
-        if (error) { reject(new Error(signal?.aborted ? 'ArkCli 操作已取消' : 'ArkCli 操作失败；请检查登录、网络和 CLI 版本（原始输出已隐藏）')); return; }
+        if (error) {
+          if (signal?.aborted) { reject(new Error('ArkCli 操作已取消')); return; }
+          // CLI 的失败 JSON 通常在 stderr；execFile 的 error 同时带 stdout/stderr 原文。
+          const failure = parseCliFailure(error.stderr) ?? parseCliFailure(error.stdout) ?? parseCliFailure(stdout);
+          const wrapped = new Error('ArkCli 操作失败；请检查登录、网络和 CLI 版本（原始输出已隐藏）');
+          wrapped.arkFailure = failure;
+          const kind = classifyCliFailure(failure);
+          wrapped.arkKind = kind === 'unknown' && (error.killed || error.code === 'ETIMEDOUT' || error.code === 'ABORT_ERR') ? 'network' : kind;
+          reject(wrapped);
+          return;
+        }
         try { resolve(plain ? stdout.trim() : parseJsonOutput(stdout)); } catch (error) { reject(error); }
       });
     });

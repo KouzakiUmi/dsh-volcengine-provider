@@ -141,9 +141,13 @@ function createMiniReact() {
 
 /** 与 scripts/build.mjs 相同的文本变换：去 export、内联 remote.mjs、包进 ModuleLoader 工厂。 */
 function buildBundleSource() {
+  const mediaConfig = readSource('src/media-config.mjs').replace(/^export /gm, '');
   const remote = readSource('src/remote.mjs').replace(/^export /gm, '');
+  const mediaData = readSource('src/client-media-data.js').replace(/^export /gm, '');
+  const mediaLightbox = readSource('src/client-media-lightbox.js').replace(/^export /gm, '');
+  const mediaClient = readSource('src/client-media.js').replace(/^export /gm, '');
   const client = readSource('src/client.js').replace(/^export /gm, '');
-  return `window.__ModuleLoader__.load({id:'dsh-volcengine-provider',factory:(require)=>{\n'use strict';\n${remote}\n${client}\nreturn {name,inject,apply};\n}});\n`;
+  return `window.__ModuleLoader__.load({id:'dsh-volcengine-provider',factory:(require)=>{\n'use strict';\n${mediaConfig}\n${remote}\n${mediaData}\n${mediaLightbox}\n${mediaClient}\n${client}\nreturn {name,inject,apply};\n}});\n`;
 }
 
 function loadBundle(bundleSource, react) {
@@ -355,7 +359,7 @@ function createHarness(options = {}) {
     slots: {
       inject(name, fn) { fn(); },
       register(slotOptions, Component) {
-        registered = { options: slotOptions, Component, props: slotOptions.inject ? slotOptions.inject() : {} };
+        if (slotOptions.name === 'settings.section') registered = { options: slotOptions, Component, props: slotOptions.inject ? slotOptions.inject() : {} };
       }
     },
     remote: { $mount() { return Promise.resolve(() => {}); } },
@@ -401,6 +405,7 @@ function createHarness(options = {}) {
   };
   const joined = () => texts().join(' | ');
   const checkboxes = () => find(tree, (node) => node.type === 'input' && node.props.type === 'checkbox');
+  const planCheckboxes = () => checkboxes().filter((node) => /启用.*套餐/u.test(String(node.props['aria-label'] ?? '')));
   const clicks = async (node) => {
     assert.ok(node, '要点击的控件不存在');
     node.props.onClick({ preventDefault() {} });
@@ -456,7 +461,7 @@ function createHarness(options = {}) {
   };
 
   return {
-    backend, mini, flush, find, texts, joined, checkboxes, clicks, change, toggle, select, keys, slide, dispose, byLabel,
+    backend, mini, flush, find, texts, joined, checkboxes, planCheckboxes, clicks, change, toggle, select, keys, slide, dispose, byLabel,
     get tree() { return tree; }
   };
 }
@@ -847,7 +852,7 @@ test('旧目录没有 models 明细时安全降级，不报错也没有模型开
   const harness = createHarness({ backendOptions: { legacyCatalogs: true } });
   await harness.flush();
   assert.match(harness.joined(), /该目录暂无模型明细/);
-  assert.equal(harness.checkboxes().length, 2, '只有两个套餐启用复选框');
+  assert.equal(harness.planCheckboxes().length, 2, '只有两个套餐启用复选框');
   assert.ok(!harness.backend.calls.some((item) => item.op === 'setModelEnabled'));
   harness.dispose();
 });

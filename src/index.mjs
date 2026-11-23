@@ -15,6 +15,9 @@ import { arkRemote } from './remote.mjs';
 import { captureModelDefaults, getModelDefaults, applyModelDefaults, describeModelDefaults } from './model-defaults.mjs';
 import { createAdapterLease, leasedStream } from './adapter-lease.mjs';
 import { createArkAdapter } from './ark-adapter.mjs';
+import { mediaToolEnabled } from './media.mjs';
+import { registerVolcImagineTool } from './media-image.mjs';
+import { registerImageFileRoute } from './media-image-route.mjs';
 
 export const name = 'dsh-volcengine-provider';
 export const inject = ['llm'];
@@ -152,11 +155,41 @@ export function apply(ctx, config) {
   }
   ctx.inject(['typert'], scope => scope.effect(() => scope.typert.register({ package: arkRemote.package, face: 'host', schemas: [], model: { services: [], events: [], objects: [] }, invocations: arkRemote.descriptors })));
   ctx.plugin(ArkService);
-  ctx.on('credentials/reference-updated', () => controller.clearCaches());
-  controller.ready = controller.store.load().then(queueRoutingUpdate).catch(() => {
-    controller.routingError ??= '初始化失败：请检查账号元数据和模型缓存；原文件未覆盖。';
-    ctx.logger.error('火山方舟 Provider 初始化失败；请在设置页查看状态');
-  });
+  ctx.on('credentials/reference-updated', () => controller.clearCaches({ quotas: true }));
+  // ── 图片生成工具与原始文件回源：风险确认前置，原始字节不经图片规范化 ──
+  const mediaEnabled = key => () => {
+    if (controller.disposed) return false;
+    try { return mediaToolEnabled(controller.media(), key); }
+    catch { return false; }
+  };
+  const toolContext = {
+    enabled: mediaEnabled,
+    credentials: accountId => controller.mediaContext().credentials(accountId),
+    resolveAttachments: () => ctx.get('attachments')
+  };
+  ctx.inject(['tools'], toolCtx => toolCtx.effect(() => {
+    const disposeImagine = registerVolcImagineTool(toolCtx, {
+      enabled: mediaEnabled('imageTool'),
+      credentials: toolContext.credentials,
+      defaultModel: () => controller.media().imageModel,
+      resolveAttachments: toolContext.resolveAttachments
+    });
+    return disposeImagine;
+  }, '火山方舟图片工具'));
+  ctx.inject(['webServer'], webCtx => webCtx.effect(() => registerImageFileRoute(webCtx, {
+    resolveAttachments: toolContext.resolveAttachments
+  }), '火山方舟图片原文件路由'));
+  controller.ready = controller.store.load()
+    .then(async () => {
+      // 中间层先于采集：上次进程的额度快照在首屏就能读，采集失败也不影响设置页。
+      await controller.quotaSnapshots.load();
+      await queueRoutingUpdate();
+      controller.startCollector();
+    })
+    .catch(() => {
+      controller.routingError ??= '初始化失败：请检查账号元数据和模型缓存；原文件未覆盖。';
+      ctx.logger.error('火山方舟 Provider 初始化失败；请在设置页查看状态');
+    });
   ctx.on('dispose', async () => {
     controller.dispose();
     if (registration) registration();

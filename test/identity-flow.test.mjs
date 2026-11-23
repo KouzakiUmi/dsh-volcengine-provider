@@ -18,7 +18,7 @@ async function fixture(t) {
       models: async () => { calls.push(['models', home]); return { models: [] }; }
     }) });
   await controller.store.load();
-  t.after(async () => { controller.dispose(); assert.ok(root.startsWith(join(tmpdir(), 'ark-identity-'))); await rm(root, { recursive: true, force: true }); });
+  t.after(async () => { controller.dispose(); await controller.quotaSnapshots.whenIdle(); assert.ok(root.startsWith(join(tmpdir(), 'ark-identity-'))); await rm(root, { recursive: true, force: true }); });
   return { controller, root, calls, identities };
 }
 

@@ -1,7 +1,7 @@
 {
   "name": "dsh-volcengine-provider",
   "displayName": "火山方舟 Provider",
-  "version": "0.2.16",
+  "version": "0.2.17",
   "description": "火山方舟 Agent Plan 与 Coding Plan：OAuth 登录、账号、模型与额度管理。",
   "repository": {
     "type": "git",
@@ -58,7 +58,23 @@
     "@earendil-works/pi-ai": ">=1.1.0 <2.0.0",
     "@deepseek-ai/dsh-credentials": ">=0.2.1-rc.4 <0.3.0 || >=0.2.2-rc.1 <0.3.0",
     "@deepseek-ai/dsh-launch-environment": ">=0.2.1-rc.4 <0.3.0 || >=0.2.2-rc.1 <0.3.0",
-    "@deepseek-ai/dsh-typert-protocol": ">=0.2.1-rc.4 <0.3.0 || >=0.2.2-rc.1 <0.3.0"
+    "@deepseek-ai/dsh-typert-protocol": ">=0.2.1-rc.4 <0.3.0 || >=0.2.2-rc.1 <0.3.0",
+    "@deepseek-ai/dsh-tools": ">=0.2.1-rc.4 <0.3.0 || >=0.2.2-rc.1 <0.3.0",
+    "@deepseek-ai/dsh-attachment": ">=0.2.1-rc.4 <0.3.0 || >=0.2.2-rc.1 <0.3.0",
+    "@deepseek-ai/dsh-host-webserver": ">=0.2.1-rc.4 <0.3.0 || >=0.2.2-rc.1 <0.3.0"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": { "optional": true },
+    "@deepseek-ai/cordis": { "optional": true },
+    "@deepseek-ai/schemastery": { "optional": true },
+    "@deepseek-ai/dsh-attachment": { "optional": true },
+    "@deepseek-ai/dsh-credentials": { "optional": true },
+    "@deepseek-ai/dsh-host-webserver": { "optional": true },
+    "@deepseek-ai/dsh-launch-environment": { "optional": true },
+    "@deepseek-ai/dsh-llm": { "optional": true },
+    "@deepseek-ai/dsh-llm-pi-ai": { "optional": true },
+    "@deepseek-ai/dsh-tools": { "optional": true },
+    "@deepseek-ai/dsh-typert-protocol": { "optional": true }
   },
   "dsh": {
     "bundle": {
