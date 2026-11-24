@@ -15,6 +15,7 @@ import { arkRemote } from './remote.mjs';
 import { captureModelDefaults, getModelDefaults, applyModelDefaults, describeModelDefaults } from './model-defaults.mjs';
 import { createAdapterLease, leasedStream } from './adapter-lease.mjs';
 import { createArkAdapter } from './ark-adapter.mjs';
+import { createAttachmentIndex } from './attachment-index.mjs';
 import { mediaToolEnabled } from './media.mjs';
 import { registerVolcImagineTool } from './media-image.mjs';
 import { registerImageFileRoute } from './media-image-route.mjs';
@@ -34,6 +35,8 @@ export function apply(ctx, config) {
   } });
   let registration, currentGeneration;
   const generations = new Set();
+  // 会话图片附件索引：让图片工具在模型只给出 sha256（或 session-latest）时自动补全参数。
+  const attachmentIndex = createAttachmentIndex();
   const finalizers = new FinalizationRegistry(release => {
     void release().catch(() => ctx.logger.error('旧模型适配器清理失败'));
   });
@@ -46,6 +49,11 @@ export function apply(ctx, config) {
       ...applyModelDefaults(options, defaults),
       signal: options.signal ? AbortSignal.any([options.signal, controller.life.signal]) : controller.life.signal
     };
+  }
+  // 请求装配后、发往方舟前登记本次请求里的图片引用；索引失败不得影响模型请求。
+  function observeRequestImages(options) {
+    try { attachmentIndex.observeRequest({ sessionId: options?.sessionId, messages: options?.messages }); }
+    catch { ctx.logger.warn('火山方舟 Provider 无法登记会话图片附件；volc_imagine 将退回显式引用'); }
   }
   async function withGeneration(operation) {
     const held = generation();
@@ -77,6 +85,7 @@ export function apply(ctx, config) {
             if (consumed) throw new Error('已准备的模型请求只能使用一次');
             consumed = true;
             finalizers.unregister(token);
+            observeRequestImages(options);
             return leasedStream(() => prepared.stream(requestOptions(options, defaults)), held.lease, release, finalizers);
           }
         };
@@ -87,6 +96,7 @@ export function apply(ctx, config) {
     stream(options) {
       const held = generation();
       const defaults = getModelDefaults(held.defaults, options.provider, options.model);
+      observeRequestImages(options);
       return leasedStream(() => held.adapter.stream(requestOptions(options, defaults)), held.lease, undefined, finalizers);
     }
   }
@@ -111,7 +121,10 @@ export function apply(ctx, config) {
           return owner ? controller.inferenceKey(owner, plan, { binding: state.oauth[owner.id] }) : undefined;
         },
         resolveAttachments: () => ctx.get('attachments'),
-        resolveImageAccess: (attachments, ref) => resolveImageAttachmentAccess(attachments, hostPath => ctx.get('fs')?.processPathFromHostPath(hostPath), ref)
+        resolveImageAccess: (attachments, ref) => {
+          try { attachmentIndex.remember(ref); } catch { /* 索引是可选加速，不阻断请求图片解析 */ }
+          return resolveImageAttachmentAccess(attachments, hostPath => ctx.get('fs')?.processPathFromHostPath(hostPath), ref);
+        }
       });
       if (controller.disposed) { await nextAdapter.dispose(); return; }
       nextGeneration = { adapter: nextAdapter, defaults: nextDefaults };
@@ -165,14 +178,16 @@ export function apply(ctx, config) {
   const toolContext = {
     enabled: mediaEnabled,
     credentials: accountId => controller.mediaContext().credentials(accountId),
-    resolveAttachments: () => ctx.get('attachments')
+    resolveAttachments: () => ctx.get('attachments'),
+    attachmentIndex
   };
   ctx.inject(['tools'], toolCtx => toolCtx.effect(() => {
     const disposeImagine = registerVolcImagineTool(toolCtx, {
       enabled: mediaEnabled('imageTool'),
       credentials: toolContext.credentials,
       defaultModel: () => controller.media().imageModel,
-      resolveAttachments: toolContext.resolveAttachments
+      resolveAttachments: toolContext.resolveAttachments,
+      attachmentIndex: toolContext.attachmentIndex
     });
     return disposeImagine;
   }, '火山方舟图片工具'));
@@ -192,6 +207,7 @@ export function apply(ctx, config) {
     });
   ctx.on('dispose', async () => {
     controller.dispose();
+    attachmentIndex.clear();
     if (registration) registration();
     const results = await Promise.allSettled([...generations].map(held => held.lease.dispose()));
     if (results.some(result => result.status === 'rejected')) ctx.logger.error('模型适配器卸载失败');

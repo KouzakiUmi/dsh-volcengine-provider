@@ -2,6 +2,22 @@
 
 [返回主页](../README.md)
 
+## [0.2.19] — 2026-11-24
+
+### 会话图片引用自动补全
+
+- 修复会话图片无法作为参考图：模型能看到的只有 Core 注入的 `Image "name" (sha256:…)` handle，缺少 `mediaType` / 字节数 / 尺寸，旧解析器只认裸 ID 且要求完整 JSON 引用，导致带 sha256 也读不到附件。新增 `src/attachment-index.mjs`：每次模型请求装配后扫描 messages 里的图片块，按内容哈希记住完整 `ImageAttachmentRef`，并按会话记录"最近一张"，容量有界、卸载清空。
+- `volc_imagine` 的 `image` / `images` 现在接受 handle 原文、完整 sha256、8 位以上短摘要、`attachment={…}` 与新增的 `session-latest`（本会话最近一张，`session` / `latest` 同义）。工具自动补全格式、尺寸与字节，不再要求模型报告这些参数；短摘要歧义、索引未命中时给出可操作错误。
+- `session-latest` 严格限本会话：会话标识缺失或本会话无图时明确报错，不回退到"全局最近一张"，避免把别的会话的图当成用户刚给的那张（静默取错图）。
+- 工具结果文本为每张生成图给出可直接复制的完整 `attachment={…}` 引用，并标明原文件行是文件附件、不能作为 image 参考图，避免照抄后失败。
+
+### 新增 GLM 5.4（Agent Plan）
+
+- 按所选账号真实 Plan 清单固定 `output_name` `glm-5-4-261123`（上游 `model_id` `glm-5-4-261101`，Pi 文档请求 ID `glm-5.4` 记入别名），上下文 1048576、最大输出 131072、输入 text/image（上游另声明 video，当前传输不能表达）。三档 low/high/max 按智谱 GLM-5.2 及以上 `reasoning_effort` 声明和 5.3 系列档位推导，标为 `partial` 并在模型说明中注明 5.4 专页与火山深度思考表未单列；关闭入口未获声明，不提供关闭。
+- 消耗倍率按 AFP 抵扣规则固化为常规 4.5，新模型上线活动 3.6（2026-11-23 00:00:00 起，2026-12-07 23:59:59 止），活动结束自动恢复常规值。
+- **Coding Plan 未加入该模型**：真实清单与 Coding Plan Pi 文档都未返回 `glm-5.4`，该套餐当前只有 `glm-5.3`、`glm-5.3-flash`；官方 Plan 目录 `0.8.5`（与 0.8.4 同一 SHA-256）也未收录，只按已上线套餐固化。
+- 测试：本版新增会话图片索引、参数解析、工具端会话引用与 GLM 5.4 归属/档位/折扣用例；`node scripts/check.mjs`、`node scripts/build.mjs`、`node --test test/*.test.mjs` 与 Python 归档测试均通过。
+
 ## [0.2.17]
 
 - 新增图片生成：设置页经**单个「启用图片生成」开关**启用 `volc_imagine`，一次 `setMedia` 同时写入计费确认与工具启用，关闭即停用；支持 Seedream 5.0 Pro / 5.5 / 5.0 Flash 默认模型选择与单次调用覆盖；旧 `videoTool` 状态读取时丢弃。

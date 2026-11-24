@@ -152,26 +152,36 @@ export function mediaExtensionFor(mediaType) {
 }
 
 const ATTACHMENT_ID = /^sha256:[a-f0-9]{64}$/u;
-const ATTACHMENT_ID_ANY = /sha256:[a-f0-9]{64}/u;
+const ATTACHMENT_ANY = /sha256:[a-f0-9]{8,64}/gu;
+const ATTACHMENT_ID_LOOSE = /^sha256:[a-f0-9]{8,64}$/u;
+// `auto` 在方舟语境里是控制台路由名，不作为“本会话最近一张”的别名，避免概念混淆。
+const SESSION_LATEST = /^(?:session-latest|session|latest)$/iu;
 
-/** 模型可给出 attachmentId=… / attachment={…json…} / 裸 sha256 id 三种形式。 */
+function attachmentSpecOf(id) {
+  return ATTACHMENT_ID.test(id) ? { attachmentId: id } : { shortId: id };
+}
+
+/**
+ * 模型可给出 attachmentId=… / attachment={…json…} / 裸 sha256 id，或原样复制
+ * Core 注入的 handle 文本（`Image "name" (sha256:…)`）。短摘要按内容前缀引用，
+ * 由会话附件索引补全；同一文本里出现多个不同 ID 时报告歧义。
+ */
 export function parseAttachmentSpec(value) {
   const text = String(value).trim();
   const embedded = /attachment=(\{[^}]*\})/u.exec(text);
   if (embedded) {
     try {
       const parsed = JSON.parse(embedded[1]);
-      if (typeof parsed?.attachmentId === 'string' && ATTACHMENT_ID.test(parsed.attachmentId)) {
-        return { attachmentId: parsed.attachmentId, ref: parsed };
+      if (typeof parsed?.attachmentId === 'string' && ATTACHMENT_ID_LOOSE.test(parsed.attachmentId)) {
+        return { ...attachmentSpecOf(parsed.attachmentId), ref: parsed };
       }
     } catch { /* fall through to id matching */ }
   }
-  const labeled = /attachmentId\s*=\s*(sha256:[a-f0-9]{64})/u.exec(text);
-  if (labeled) return { attachmentId: labeled[1] };
-  const bare = ATTACHMENT_ID_ANY.exec(text);
-  if (bare && text.replace(ATTACHMENT_ID_ANY, '').replace(/attachmentId\s*=/u, '').trim().length === 0) {
-    return { attachmentId: bare[0] };
-  }
+  const labeled = /attachmentId\s*=\s*((?:sha256:[a-f0-9]{8,64}))/u.exec(text);
+  if (labeled) return attachmentSpecOf(labeled[1]);
+  const ids = [...new Set([...text.matchAll(ATTACHMENT_ANY)].map(match => match[0]))];
+  if (ids.length === 1) return attachmentSpecOf(ids[0]);
+  if (ids.length > 1) return { ambiguous: ids };
   return undefined;
 }
 
@@ -192,43 +202,72 @@ function decodeDataUri(trimmed, maxBytes) {
   return { bytes, mediaType: sniffed };
 }
 
-async function readAttachmentBytes(attachments, attachment, maxBytes, signal) {
-  if (!attachments) throw new Error('引用会话附件需要宿主附件服务，当前上下文不可用');
-  const id = attachment.attachmentId;
-  // 完整 ImageAttachmentRef 走 readImage（存储侧校验字节）；裸 id 先经 imageHostPath。
-  if (attachment.ref && typeof attachment.ref === 'object' && typeof attachments.readImage === 'function') {
-    const stored = await attachments.readImage(attachment.ref, signal);
-    const data = stored?.data;
-    if (!(data instanceof Uint8Array) || data.byteLength === 0) throw new Error(`附件 ${id} 无法读取`);
-    if (data.byteLength > maxBytes) throw new Error(`附件 ${id} 为 ${data.byteLength} 字节，超过 ${maxBytes} 上限`);
-    return { bytes: data, mediaType: sniffMediaType(data) ?? attachment.ref.mediaType ?? 'image/png' };
-  }
-  if (typeof attachments.imageHostPath === 'function' && attachment.ref) {
-    const hostPath = attachments.imageHostPath(attachment.ref);
-    if (hostPath) {
-      const { readFile } = await import('node:fs/promises');
-      const data = new Uint8Array(await readFile(hostPath));
-      if (data.byteLength > maxBytes) throw new Error(`附件 ${id} 为 ${data.byteLength} 字节，超过 ${maxBytes} 上限`);
-      const mediaType = sniffMediaType(data);
-      if (!mediaType) throw new Error(`附件 ${id} 不是可识别的图片格式`);
-      return { bytes: data, mediaType };
+/**
+ * 读取一个会话图片附件。优先交给调用方注入的 resolveAttachment（会话索引 +
+ * 附件服务），它能把仅含 sha256 的引用补全为完整 ImageAttachmentRef；没有注入或
+ * 未命中时退回宿主附件服务上的完整 JSON 引用。
+ */
+async function readAttachmentBytes(attachments, attachment, { maxBytes, signal, resolveAttachment } = {}) {
+  const label = attachment.attachmentId ?? attachment.shortId;
+  let bytes, mediaType, ref;
+  if (typeof resolveAttachment === 'function') {
+    const found = await resolveAttachment(attachment);
+    if (found?.bytes instanceof Uint8Array && found.bytes.byteLength > 0) {
+      bytes = found.bytes;
+      mediaType = sniffMediaType(found.bytes) ?? found.mediaType;
+      ref = found.ref;
     }
   }
-  throw new Error(`附件 ${id} 需要完整 attachment JSON 引用（含 mediaType/bytes/width/height）才能读取`);
+  if (!bytes) {
+    if (attachment.shortId) {
+      throw new Error(`附件短摘要 ${attachment.shortId} 无法定位；请给出完整 sha256（共 64 位十六进制）或改用 session-latest`);
+    }
+    if (!attachments) throw new Error('引用会话附件需要宿主附件服务，当前上下文不可用');
+    if (attachment.ref && typeof attachment.ref === 'object' && typeof attachments.readImage === 'function') {
+      try {
+        const stored = await attachments.readImage(attachment.ref, signal);
+        const data = stored?.data;
+        if (data instanceof Uint8Array && data.byteLength > 0) {
+          bytes = data;
+          mediaType = sniffMediaType(data) ?? attachment.ref.mediaType ?? 'image/png';
+        }
+      } catch (error) {
+        throw new Error(`附件 ${attachment.attachmentId} 读取失败：${error?.message ?? error}`);
+      }
+    }
+  }
+  if (!bytes) {
+    throw new Error(`附件 ${label} 无法读取：需要会话历史中的完整图片引用或可复制的 attachment={…}；也可以改用 session-latest、本地路径或 https URL`);
+  }
+  if (bytes.byteLength > maxBytes) throw new Error(`附件 ${label} 为 ${bytes.byteLength} 字节，超过 ${maxBytes} 上限`);
+  if (!mediaType) mediaType = sniffMediaType(bytes);
+  if (!mediaType) throw new Error(`附件 ${label} 不是可识别的图片格式`);
+  return { bytes, mediaType, ref };
 }
 
 /**
  * 把模型给出的图像来源（https URL / data URI / 会话附件 / 本地路径）解析为
  * 方舟可接受的 url 字段。本地与附件内容编码为 data URI；远程 URL 原样透传。
  * readFile 由调用方注入（默认 node fs；工具内会换成宿主 fs 服务）。
+ * resolveAttachment 把会话附件引用补全为字节（工具注入会话索引 + 附件服务）；
+ * latestAttachment 提供“本会话最近一张图”，供 session-latest 使用。
  */
 export async function resolveImageSources(specs, {
   cwd, maxBytes = MAX_SOURCE_IMAGE_BYTES, maxSources = MAX_SOURCE_IMAGES,
-  readFile, attachments, signal
+  readFile, attachments, signal, resolveAttachment, latestAttachment
 } = {}) {
   const list = (Array.isArray(specs) ? specs : []).filter(value => typeof value === 'string' && value.trim().length > 0);
   if (list.length > maxSources) throw new Error(`参考图过多：${list.length} 张（最多 ${maxSources} 张）`);
   const resolved = [];
+  const seen = new Set();
+  const pushAttachment = async attachment => {
+    if (attachment.attachmentId && seen.has(attachment.attachmentId)) return;
+    const { bytes, mediaType, ref } = await readAttachmentBytes(attachments, attachment, { maxBytes, signal, resolveAttachment });
+    const id = ref?.attachmentId ?? attachment.attachmentId ?? attachment.shortId;
+    if (seen.has(id)) return;
+    seen.add(id);
+    resolved.push({ url: `data:${mediaType};base64,${Buffer.from(bytes).toString('base64')}`, origin: 'attachment', mediaType, bytes: bytes.byteLength, attachmentId: id });
+  };
   for (const spec of list) {
     const trimmed = spec.trim();
     if (isHttpUrl(trimmed)) {
@@ -242,10 +281,18 @@ export async function resolveImageSources(specs, {
       resolved.push({ url: trimmed.replace(/^data:[^,]+;/iu, `data:${mediaType};`), origin: 'data-uri', mediaType });
       continue;
     }
+    if (SESSION_LATEST.test(trimmed)) {
+      const ref = typeof latestAttachment === 'function' ? await latestAttachment() : undefined;
+      if (!ref) throw new Error('本会话最近没有可用图片：请先上传图片，或改用本地路径 / https URL / 完整附件引用');
+      await pushAttachment({ attachmentId: ref.attachmentId, ref });
+      continue;
+    }
     const attachment = parseAttachmentSpec(trimmed);
+    if (attachment?.ambiguous) {
+      throw new Error(`参考图引用包含多个附件 ID（${attachment.ambiguous.join('、')}）；请只保留一个 attachmentId=… 或改用 session-latest`);
+    }
     if (attachment) {
-      const { bytes, mediaType } = await readAttachmentBytes(attachments, attachment, maxBytes, signal);
-      resolved.push({ url: `data:${mediaType};base64,${Buffer.from(bytes).toString('base64')}`, origin: 'attachment', mediaType, bytes: bytes.byteLength });
+      await pushAttachment(attachment);
       continue;
     }
     const target = isAbsolute(trimmed) ? trimmed : resolve(cwd ?? process.cwd(), trimmed);

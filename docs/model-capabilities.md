@@ -25,6 +25,7 @@
 | Kimi K2.8 Preview | 1048576 | 131072（上限 1048576） | text、image | 官方 Plan 目录 `131072`（Pi/概览的 1024k 输出为文案误抄上下文）；厂商 `max_completion_tokens` 上限 1M |
 | GLM 5.3 Flash | 1048576 | 131072 | text、image | 官方 Plan 目录 `131072`；智谱文档"128K" |
 | GLM 5.3 | 1048576 | 131072 | text | 官方 Plan 目录 `131072` |
+| GLM 5.4 | 1048576 | 131072 | text、image | 真实 Plan 清单注册值 `context_window`/`max_completion_tokens`（2026-11-24）；官方 Plan 目录 0.8.5 尚未收录，Pi 文案值为 1024000/128000。清单另有 `max_input_tokens` 131072，当前快照无承载字段，落差见[验证记录](validation.md) |
 | DeepSeek V4 Pro GA | 1048576 | 393216（思考时 131072） | text | 两套 Plan Pi，不从 V4.1 推导视觉能力；思考模式输出上限 128K |
 | DeepSeek V4 Flash GA | 1048576 | 393216（思考时 131072） | text | 两套 Plan Pi；思考模式输出上限 128K |
 | Kimi K3 | 1048576 | 131072（上限 1048576） | text、image | 厂商默认输出 131072，`max_completion_tokens` 上限 1M；Coding Pi 的 65536 为保守示例 |
@@ -55,6 +56,7 @@
 | Kimi K3、Kimi K2.8 Preview、Kimi K2.7 Code | video | 官方 Plan 目录 `input`；Coding 概览写 K2.7 Code“支持文本、图片与视频输入” |
 | Kimi K3.1 Pro | video | 方舟模型页写“支持文本、图片和视频输入”；该模型不在 0.8.4 版官方 Plan 目录中 |
 | GLM 5.3 Flash | video | 官方 Plan 目录 `input` |
+| GLM 5.4 | video | 真实 Plan 清单 `input_modalities`（`text`/`image`/`video`）；Agent Plan Pi 只写 `text`/`image` |
 | GLM 5.3、DeepSeek V4 Pro GA、DeepSeek V4 Flash GA | 无额外声明，目录 `input` 仅 text | 官方 Plan 目录 |
 
 当前传输无法表达这些模态：`@earendil-works/pi-ai@1.1.0`（并在本机 `1.5.0` 上以真实 Core/SDK 复核）的 `Model.input` 只允许 `text` 与 `image`，[Messages 接口](https://ark.volcengine.com/region:cn-beijing/docs/messages-api.md)没有音频、视频内容块，[DSH 接入文档](https://ark.volcengine.com/region:cn-beijing/docs/agent-plan-personal-deepseek-harness.md#configure-manually)也只让在模型上写 `input: [text, image]`。因此快照只声明 text/image 是传输边界下的子集，不代表模型不支持音频或视频；官方目录与模型页的 audio/video 声明单独记录，不据此改动快照声明。
@@ -73,7 +75,7 @@ Pi 接入示例是面向配置文件的"文案值"，与模型注册的真实整
 
 ## 消耗倍率
 
-核验日期：2026-10-30。设置页的倍率来自[套餐内 AFP 抵扣规则](https://ark.volcengine.com/region:cn-beijing/docs/agent-plan-personal-afp-credits-billing-rules)与[Agent/Coding Plan 指定模型抵扣系数限时折扣活动](https://ark.volcengine.com/region:cn-beijing/docs/coding-plan-personal-model-discount)。文本模型的输入与输出系数相同；AFP 公式为 `(输入 token × 输入系数 + 输出 token × 输出系数) / 10000`。本地快照只保存常规值和带起止时间的折扣，读取设置页时判断活动是否有效，不把限时值永久固化为常规值。
+核验日期：2026-10-30（GLM 5.4 于 2026-11-24 按同一两份官方页面补录）。设置页的倍率来自[套餐内 AFP 抵扣规则](https://ark.volcengine.com/region:cn-beijing/docs/agent-plan-personal-afp-credits-billing-rules)与[Agent/Coding Plan 指定模型抵扣系数限时折扣活动](https://ark.volcengine.com/region:cn-beijing/docs/coding-plan-personal-model-discount)。文本模型的输入与输出系数相同；AFP 公式为 `(输入 token × 输入系数 + 输出 token × 输出系数) / 10000`。本地快照只保存常规值和带起止时间的折扣，读取设置页时判断活动是否有效，不把限时值永久固化为常规值。
 
 | 模型 | 常规倍率 | 限时倍率与结束时间（UTC+8） |
 |---|---:|---|
@@ -84,6 +86,7 @@ Pi 接入示例是面向配置文件的"文案值"，与模型注册的真实整
 | Doubao Seed Evolving、2.1 Pro、MiniMax M3 | 2.5 | — |
 | Kimi K3.1 Pro | 7 | 3.5，至 2026-11-09 23:59:59 |
 | Kimi K2.7 Code、GLM 5.3 | 4.5 | — |
+| GLM 5.4 | 4.5 | 3.6，至 2026-12-07 23:59:59（新模型上线 8 折，2026-11-23 起） |
 | Kimi K2.8 Preview | 8 | 4.8，至 2026-12-14 23:59:59 |
 | Kimi K3 | 10 | 5 折活动已于 2026-10-25 结束，当前展示常规值 |
 | DeepSeek V4 Pro | 5.5 | — |
@@ -115,6 +118,7 @@ Plan 使用 `anthropic-messages`，原生档位字段为 `output_config.effort`�
 | Kimi K2.7 Code | 思考已确认（Coding 概览；Agent 侧未确认），可调独立档未列 | 服务端默认 | 不提供，关闭未单列 | server-default |
 | GLM 5.3 | low/high/max；常驻思考 | 服务端默认；原厂为 max，火山未单列 | 不提供 | enabled + effort |
 | GLM 5.3 Flash | low/high/max；常驻思考 | max，依据 Platform 260828；Plan backend260901 未另列 | 不提供 | enabled + effort |
+| GLM 5.4 | low/high/max（按 GLM-5.2 及以上 reasoning_effort 声明与 5.3 系列档位推导；5.4 专页与火山深度表未单列） | 服务端默认 | 不提供；关闭入口未获声明 | enabled + effort |
 | MiniMax M3 | low/medium/high（官方目录 off→minimal；本地不开放 off） | medium，官方 Plan 目录 | 不提供；官方 off→minimal 不单独证明完全关闭 | enabled + effort |
 | Auto / ark-code-latest | 动态目标，无固定统一档位 | 服务端默认 | 不提供统一保证 | server-default |
 

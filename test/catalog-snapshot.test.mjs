@@ -186,6 +186,52 @@ test('snapshot aliases are unique and partial capability notes do not erase docu
   }
 });
 
+test('GLM 5.4 pins the plan that lists it and stays absent from the plan that does not', () => {
+  // 真实 ArkCli 清单（2026-11-24）：agent-plan 返回 output_name glm-5-4-261123，coding-plan 未返回该模型。
+  const agent = snapshot['agent-plan'].models.find(model => model.id === 'glm-5-4-261123');
+  assert.ok(agent);
+  assert.equal(agent.name, 'GLM 5.4');
+  assert.deepEqual(agent.aliases, ['glm-5.4', 'glm-5-4-261101']);
+  assert.equal(agent.contextWindow, 1048576);
+  assert.equal(agent.maxTokens, 131072);
+  assert.deepEqual(agent.input, ['text', 'image']);
+  assert.deepEqual(agent.reasoningEfforts, {low: 'low', high: 'high', max: 'max'});
+  assert.equal(agent.canDisableThinking, false);
+  assert.equal(agent.capabilityStatus, 'partial');
+  assert.match(agent.capabilityNote, /推导/);
+  assert.equal(snapshot['coding-plan'].models.some(model => model.id === 'glm-5-4-261123'), false);
+
+  // 上游 output_name 尚未固化时，靠 model_id 别名兜底命中同一条配置（catalog 的第二查找分支）。
+  const state = initialState();
+  const byModelId = normalizeCatalog('agent-plan', {plan: 'agent-plan', models: [{model_id: 'glm-5-4-261101', output_name: 'glm-5-4-270101'}]});
+  assert.equal(byModelId.models[0].id, 'glm-5-4-270101');
+  assert.equal(byModelId.models[0].maxTokens, 131072);
+  assert.equal(byModelId.models[0].contextWindow, 1048576);
+  assert.deepEqual(byModelId.models[0].input, ['text', 'image']);
+  // 对照：同族但未声明的名字不得继承 5.4 的能力。
+  const unknown = normalizeCatalog('agent-plan', {plan: 'agent-plan', models: [{model_id: 'glm-5-4-991231', output_name: 'glm-5-4-991231'}]});
+  assert.equal(unknown.models[0].maxTokens, 8192);
+  assert.equal(unknown.models[0].capabilityUnverified, true);
+  const row = getModelRows(state, 'default', 'agent-plan').find(model => model.id === 'glm-5-4-261123');
+  assert.equal(row.effective.contextWindow, 1048576);
+  assert.equal(row.consumption.regularMultiplier, 4.5);
+});
+
+test('GLM 5.4 launch discount resolves inside its documented window only', () => {
+  const inside = Date.parse('2026-11-24T12:00:00+08:00');
+  const before = Date.parse('2026-11-22T23:59:59+08:00');
+  const after = Date.parse('2026-12-08T00:00:00+08:00');
+  assert.deepEqual(resolveConsumption('agent-plan', 'glm-5-4-261123', inside), {
+    plan: 'agent-plan', multiplier: 3.6, regularMultiplier: 4.5, discounted: true, discountEndsAt: '2026-12-07T23:59:59+08:00'
+  });
+  for (const at of [before, after]) {
+    assert.equal(resolveConsumption('agent-plan', 'glm-5-4-261123', at).multiplier, 4.5);
+    assert.equal(resolveConsumption('agent-plan', 'glm-5-4-261123', at).discounted, false);
+  }
+  // 别名与上游 model_id 都能解析到同一条倍率。
+  assert.equal(resolveConsumption('agent-plan', 'glm-5-4-261101', inside).multiplier, 3.6);
+});
+
 test('consumption badges resolve aliases and active discounts without entering Core configuration', () => {
   const now = Date.parse('2026-10-30T12:00:00+08:00');
   for (const plan of ['agent-plan', 'coding-plan']) {

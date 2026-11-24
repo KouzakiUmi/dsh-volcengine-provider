@@ -111,6 +111,18 @@ test('parseAttachmentSpec 接受裸 id、attachmentId= 与 attachment=JSON 三�
 	assert.equal(parseAttachmentSpec('sha256:' + 'x'.repeat(64)), undefined);
 });
 
+test('parseAttachmentSpec 识别 Core 注入的图片 handle、短摘要与多 ID 歧义', () => {
+	const id = 'sha256:' + 'a'.repeat(64);
+	const handle = `Image "shot.png" (${id}); request preview 1024x768px. It may be resized or re-encoded; source dimensions, format, and byte size may differ.`;
+	assert.equal(parseAttachmentSpec(handle)?.attachmentId, id);
+	const normalized = `Image "x.png" (${id}); request preview 10x10px. Normalized copy (read-only; may be resized or re-encoded): "/objects/aa/x.png" (10x10px, image/png).`;
+	assert.equal(parseAttachmentSpec(normalized)?.attachmentId, id);
+	const short = parseAttachmentSpec(`[image omitted because this model accepts text only; attachment ${'sha256:' + 'a'.repeat(8)}]`);
+	assert.equal(short?.shortId, 'sha256:' + 'a'.repeat(8));
+	const two = parseAttachmentSpec(`${id} 和 sha256:${'b'.repeat(64)}`);
+	assert.deepEqual(two?.ambiguous, [id, `sha256:${'b'.repeat(64)}`]);
+});
+
 test('isHttpUrl 只接受 http/https 前缀', () => {
 	assert.equal(isHttpUrl('https://ark.volces.com/x.png'), true);
 	assert.equal(isHttpUrl(' http://x.y/z '), true);
@@ -166,6 +178,57 @@ test('resolveImageSources 把本地图片编码为 data URI，拒绝非图片', 
 test('resolveImageSources 限制参考图数量', async () => {
 	const specs = Array.from({ length: 11 }, (_, index) => `https://tos.volces.com/${index}.png`);
 	await assert.rejects(resolveImageSources(specs, { maxSources: 10 }), /参考图过多/);
+});
+
+test('resolveImageSources 用会话索引补全仅含 sha256 或短摘要的引用', async () => {
+	const id = 'sha256:' + 'a'.repeat(64);
+	const ref = { attachmentId: id, mediaType: 'image/png', bytes: PNG.byteLength, width: 2, height: 2 };
+	const resolveAttachment = async spec => (spec.attachmentId === id || spec.shortId
+		? { ref, bytes: PNG, mediaType: 'image/png' }
+		: undefined);
+	const [handle] = await resolveImageSources([`Image "a.png" (${id}); request preview 2x2px.`], { resolveAttachment });
+	assert.equal(handle.origin, 'attachment');
+	assert.equal(handle.attachmentId, id);
+	assert.match(handle.url, /^data:image\/png;base64,/u);
+	const [short] = await resolveImageSources([`sha256:${'a'.repeat(8)}`], { resolveAttachment });
+	assert.equal(short.attachmentId, id);
+});
+
+test('resolveImageSources 的 session-latest 取会话最近图片，缺失时明确报错', async () => {
+	const id = 'sha256:' + 'b'.repeat(64);
+	const ref = { attachmentId: id, mediaType: 'image/png', bytes: PNG.byteLength, width: 2, height: 2 };
+	const [resolved] = await resolveImageSources(['session-latest'], {
+		latestAttachment: async () => ref,
+		resolveAttachment: async () => ({ ref, bytes: PNG, mediaType: 'image/png' })
+	});
+	assert.equal(resolved.attachmentId, id);
+	await assert.rejects(resolveImageSources(['session-latest'], {}), /最近没有可用图片/);
+	await assert.rejects(resolveImageSources(['latest'], {}), /最近没有可用图片/);
+});
+
+test('resolveImageSources 去重同一附件并报告多 ID 歧义', async () => {
+	const id = 'sha256:' + 'a'.repeat(64);
+	const ref = { attachmentId: id, mediaType: 'image/png', bytes: PNG.byteLength, width: 2, height: 2 };
+	const out = await resolveImageSources([id, `attachmentId=${id}`], {
+		resolveAttachment: async () => ({ ref, bytes: PNG, mediaType: 'image/png' })
+	});
+	assert.equal(out.length, 1);
+	await assert.rejects(
+		resolveImageSources([`${id} ${'sha256:' + 'b'.repeat(64)}`], {}),
+		/包含多个附件 ID/
+	);
+});
+
+test('resolveImageSources 在索引未命中时给出可操作错误', async () => {
+	const id = 'sha256:' + 'a'.repeat(64);
+	await assert.rejects(
+		resolveImageSources([id], { resolveAttachment: async () => undefined }),
+		/无法读取|附件服务/
+	);
+	await assert.rejects(
+		resolveImageSources([`sha256:${'a'.repeat(8)}`], { resolveAttachment: async () => undefined }),
+		/短摘要 .* 无法定位/
+	);
 });
 
 // ── isTrustedRequest（视频文件路由） ───────────────────────────────────────

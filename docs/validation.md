@@ -1,5 +1,30 @@
 # 验证记录
 
+## 0.2.19 新增 GLM 5.4（Agent Plan）
+
+- 真实账号清单（ArkCli 1.0.64，插件隔离身份 `agent-plan_cn-beijing_personal` / tier medium，2026-11-24）返回 `model_id` `glm-5-4-261101`、`output_name` `glm-5-4-261123`、`context_window` 1048576、`max_input_tokens`/`max_completion_tokens` 131072、`input_modalities` `text`/`image`/`video`、`enabled_thinking: true`。同账号 `coding-plan_cn-beijing_personal`（tier pro）清单只有 `glm-5-3-flash`、`glm-5.3`，未返回 GLM 5.4。
+- 一手来源核对：[Agent Plan Pi 接入](https://ark.volcengine.com/region:cn-beijing/docs/agent-plan-personal-pi.md)已列 `glm-5.4`（`input` `text`/`image`，上下文 1024000 与输出 128000 为文案值，不采用）；[Coding Plan Pi 接入](https://ark.volcengine.com/region:cn-beijing/docs/coding-plan-personal-ai-pi.md)与 Coding 模型名列表未列该模型，`glm-latest` 仍指向 `glm-5.3`；[套餐概览](https://ark.volcengine.com/region:cn-beijing/docs/agent-plan-personal-plan-overview.md)支持模型表尚未更新；[智谱 GLM-5.4](https://docs.bigmodel.cn/cn/guide/models/glm-5.4.md)声明 1M 上下文、128K 输出、输入含视频/图像/文本/文件；官方 Plan 目录 `dsh-volcengine-plugin@0.8.5` 的 `plan-models.json` 与 0.8.4 同一 SHA-256（`9d921b7a…`），未收录该模型，故容量取真实清单注册值。
+- 倍率来源：[AFP 抵扣规则](https://ark.volcengine.com/region:cn-beijing/docs/agent-plan-personal-afp-credits-billing-rules)列 `glm-5.4` 为 3.6 限时、原 4.5；[限时折扣活动](https://ark.volcengine.com/region:cn-beijing/docs/agent-plan-personal-model-discount)给出窗口 2026-11-23 00:00:00 至 2026-12-07 23:59:59（8 折）。
+- 思考档位未获专属声明：火山[深度思考](https://ark.volcengine.com/region:cn-beijing/docs/deep-thinking.md)表未列 `glm-5-4-*`，智谱[深度思考](https://docs.bigmodel.cn/cn/guide/capabilities/thinking.md)只声明 `reasoning_effort` 从 GLM-5.2 起支持、5.3 系列仅 low/high/max。快照因此把三档标为推导并记为 `partial`，默认档位继承服务端，不提供关闭入口。
+- 容量字段落差留档：真实清单 `max_input_tokens` 也是 131072，与 `context_window` 1048576 相差 8 倍；快照只有 `contextWindow`/`maxTokens` 承载字段（与既有 GLM 5.3、Kimi 条目同一约定），因此 Core 按 1M 上下文装配时可能发出服务端会拒绝的长输入。该行为是既有约定，不是本次新引入；若实测确认 `max_input_tokens` 是硬上限，需要新增承载字段并在装配层收敛。
+- 已执行：`node scripts/check.mjs`（59 源文件）、`node scripts/build.mjs`（23 文件）、`node --test test/*.test.mjs` **459 项通过**、`python -m unittest discover -s test -p 'test_*.py'` 10 项通过。
+- 未覆盖：未对 `glm-5-4-261123` 发起真实推理或 Messages 请求，档位、服务端默认与 `max_input_tokens` 是否硬性拒绝都未实测；未验证 Coding Plan 其他 tier 是否已上架该模型。
+
+## 0.2.19 会话图片引用自动补全（与 GLM 5.4 同版发布）
+
+- 根因（静态核对本机桌面宿主 Core `0.2.2-rc.5` 源码，`app.asar` 内 `@deepseek-ai/dsh-llm-pi-ai/src/context.ts`）：pi-ai 适配器为每个图片块插入 `requestImageHandleText` 文本，形如 `Image "name" (sha256:…) ; request preview WxHpx.`，只含内容 ID；`@deepseek-ai/dsh-attachment` 的 `readImage` 要求完整 `ImageAttachmentRef`（`mediaType` / `bytes` / `width` / `height`）并逐项校验。旧 `parseAttachmentSpec` 只接受裸 ID、`attachmentId=`、`attachment={}`，且裸 ID 无完整引用时无法读取附件，因此"模型看得到 sha256 也用不了图"。
+- 改动：新增 `src/attachment-index.mjs`（请求装配后扫描 messages 图片块、内容寻址去重、按会话记录最近一张、全局 512 / 每会话 64 / 最多 32 会话上限、卸载清空）；`src/media.mjs` 支持 handle 原文与短摘要、`session-latest`、注入式附件解析与去重；`src/media-image.mjs` 补全会话引用参数、输出可复制的完整 `attachment={…}`；`src/index.mjs` 在 `ManagedAdapter.stream` / 已准备请求的 `stream` 前登记图片，并在 `resolveImageAccess` 兜底登记。
+- 发布前独立交叉核验（只读代理 `raccoon/sn-deepseek-v4-1-flash-1017`，快照 HEAD `e514e9c` + 工作区改动）提出 9 项，已按影响修复：
+  - **阻断级**：`latest()` 在会话标识缺失时回退"全局最近一张"，可能把别的会话的图当成用户刚给的那张；附件服务只校验内容哈希，不会发现选错 ID，属静默取错内容。现改为严格限本会话，缺会话标识或本会话无图时明确报错。
+  - 结果文本的"原样传回 `attachment=`"说明同时覆盖了"Original 文件附件"行，模型照抄必然失败且错误文案与事实不符。现标明原文件行是文件附件、不能作为 `image` 参考图，说明只针对"会话图片"行。
+  - 附件对象被清理/损坏时直接抛英文存储错误。现转成区分"已清理"与"校验失败"的中文提示。
+  - `session`/`latest` 之外的 `auto` 别名会占用同名本地文件、且与方舟控制台路由名混淆，已移除该别名。
+  - 索引会话表原本无上限、全局淘汰后残留悬空 id，现加会话数上限并在淘汰时同步剔除。
+  - 错误文案原称"本会话可见历史"但 `resolve` 实为内容寻址全局查找，已改为"本次会话图片索引"以与实现一致（完整 sha256 是精确引用，允许跨会话）。
+- 已执行：`node scripts/check.mjs`（59 源文件语法与导入闭包）、`node scripts/build.mjs`（23 文件）、`node --test test/*.test.mjs` **459 项通过**（含新增会话隔离、文件附件拒绝、存储错误提示、会话上限用例）。
+- 未覆盖：未在运行中的 DSH 宿主里重启验证（本机 profile 安装的是 npm 发布的 0.2.17，工作区改动需重新构建并安装后生效）；未调用真实方舟生图 / 图生图接口，未验证真实上传图片的端到端编辑。
+- 宿主降级预期：peer 范围仍含 `0.2.1-rc.4`。若该版本不在 `GenerateOptions` 传 `sessionId`，索引只进全局表，`session-latest` 会明确报错（功能不可用，但不会取错图），完整 sha256 与本地路径不受影响；本机只在 `0.2.2-rc.5` 上核过 `sessionId` 传递链路。
+
 ## [未发布] 设置页按套餐分区与图片生成单开关
 
 - 设置页四分区改为「Agent 套餐 / 编程套餐 / 账号与登录 / 图片生成」，每套餐一张卡片完整承载启用、账号、额度窗口、模型目录与技术细节；模型列表与高级信息默认折叠。`.vcp-tabs` 固定 `overflow-y:hidden` 并横向可滚，消除标签条多余滚动条。

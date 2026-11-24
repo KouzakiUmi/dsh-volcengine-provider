@@ -106,6 +106,25 @@ test('K2.7 thinking disclosure remains scoped to the documented plan', () => {
   assert.equal(coding.messagesThinkingMode, 'server-default');
 });
 
+test('GLM 5.4 keeps its derived three-level map scoped to the plan that lists it', () => {
+  const state = initialState();
+  const agent = getModelRows(state, 'default', 'agent-plan').find(row => row.id === 'glm-5-4-261123');
+  assert.ok(agent);
+  assert.deepEqual(Object.keys(agent.defaults.reasoningEfforts), ['low', 'high', 'max']);
+  assert.equal(Object.hasOwn(agent.defaults.reasoningEfforts, 'off'), false);
+  // 档位由家族声明推导，默认档位继承服务端而不是自造一个。
+  assert.equal(agent.defaults.defaultReasoning, null);
+  assert.equal(agent.effective.defaultReasoning, null);
+  assert.equal(agent.messagesThinkingMode, 'enabled');
+  assert.equal(agent.canDisableThinking, false);
+  assert.equal(agent.capabilityStatus, 'partial');
+  assert.match(agent.capabilityNote, /未单列/);
+  assert.equal(agent.effective.forceAdaptiveThinking, true);
+  assert.equal(getModelDefaults(captureModelDefaults(state), ROUTES['agent-plan'], 'glm-5-4-261123').reasoningEffort, undefined);
+  // 该套餐未列出时不得凭空出现同名路由。
+  assert.equal(getModelRows(state, 'default', 'coding-plan').some(row => row.id === 'glm-5-4-261123'), false);
+});
+
 test('legacy off overrides remain saved but cannot disable a documented always-thinking model', () => {
   const state=initialState(),key='default:agent-plan';
   state.modelSettings[key]={'kimi-k3-1-pro-261024':{reasoningEfforts:{off:null,low:'low'},defaultReasoning:'off'}};

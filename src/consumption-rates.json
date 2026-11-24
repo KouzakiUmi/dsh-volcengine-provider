@@ -62,6 +62,15 @@
       "ids": ["glm-5.3"],
       "multiplier": 4.5
     },
+    "glm-5.4": {
+      "ids": ["glm-5-4-261123", "glm-5.4", "glm-5-4-261101"],
+      "multiplier": 4.5,
+      "discount": {
+        "multiplier": 3.6,
+        "startsAt": "2026-11-23T00:00:00+08:00",
+        "endsAt": "2026-12-07T23:59:59+08:00"
+      }
+    },
     "deepseek-v4-pro": {
       "ids": ["deepseek-v4-pro-ga-260813", "deepseek-v4-pro"],
       "multiplier": 5.5
