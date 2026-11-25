@@ -106,23 +106,23 @@ test('K2.7 thinking disclosure remains scoped to the documented plan', () => {
   assert.equal(coding.messagesThinkingMode, 'server-default');
 });
 
-test('GLM 5.4 keeps its derived three-level map scoped to the plan that lists it', () => {
+test('GLM 5.4 keeps its derived three-level map on both plans', () => {
   const state = initialState();
-  const agent = getModelRows(state, 'default', 'agent-plan').find(row => row.id === 'glm-5-4-261123');
-  assert.ok(agent);
-  assert.deepEqual(Object.keys(agent.defaults.reasoningEfforts), ['low', 'high', 'max']);
-  assert.equal(Object.hasOwn(agent.defaults.reasoningEfforts, 'off'), false);
-  // 档位由家族声明推导，默认档位继承服务端而不是自造一个。
-  assert.equal(agent.defaults.defaultReasoning, null);
-  assert.equal(agent.effective.defaultReasoning, null);
-  assert.equal(agent.messagesThinkingMode, 'enabled');
-  assert.equal(agent.canDisableThinking, false);
-  assert.equal(agent.capabilityStatus, 'partial');
-  assert.match(agent.capabilityNote, /未单列/);
-  assert.equal(agent.effective.forceAdaptiveThinking, true);
-  assert.equal(getModelDefaults(captureModelDefaults(state), ROUTES['agent-plan'], 'glm-5-4-261123').reasoningEffort, undefined);
-  // 该套餐未列出时不得凭空出现同名路由。
-  assert.equal(getModelRows(state, 'default', 'coding-plan').some(row => row.id === 'glm-5-4-261123'), false);
+  for (const plan of ['agent-plan', 'coding-plan']) {
+    const row = getModelRows(state, 'default', plan).find(item => item.id === 'glm-5-4-261123');
+    assert.ok(row, plan);
+    assert.deepEqual(Object.keys(row.defaults.reasoningEfforts), ['low', 'high', 'max'], plan);
+    assert.equal(Object.hasOwn(row.defaults.reasoningEfforts, 'off'), false, plan);
+    // 档位由家族声明推导，默认档位继承服务端而不是自造一个。
+    assert.equal(row.defaults.defaultReasoning, null, plan);
+    assert.equal(row.effective.defaultReasoning, null, plan);
+    assert.equal(row.messagesThinkingMode, 'enabled', plan);
+    assert.equal(row.canDisableThinking, false, plan);
+    assert.equal(row.capabilityStatus, 'partial', plan);
+    assert.match(row.capabilityNote, /未单列/, plan);
+    assert.equal(row.effective.forceAdaptiveThinking, true, plan);
+    assert.equal(getModelDefaults(captureModelDefaults(state), ROUTES[plan], 'glm-5-4-261123').reasoningEffort, undefined, plan);
+  }
 });
 
 test('legacy off overrides remain saved but cannot disable a documented always-thinking model', () => {

@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { buildClientBundleSyncFromDisk } from '../scripts/client-bundle.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const readSource = (relative) => readFileSync(join(ROOT, relative), 'utf8');
@@ -140,15 +141,9 @@ function createMiniReact() {
 
 // ── 构建产物装载 ──────────────────────────────────────────────────────────────
 
-/** 与 scripts/build.mjs 相同的文本变换：去 export、内联 remote.mjs、包进 ModuleLoader 工厂。 */
+/** 拼接顺序由 scripts/client-bundle.mjs 统一维护，与真实构建产物保持一致。 */
 function buildBundleSource() {
-  const mediaConfig = readSource('src/media-config.mjs').replace(/^export /gm, '');
-  const remote = readSource('src/remote.mjs').replace(/^export /gm, '');
-  const mediaData = readSource('src/client-media-data.js').replace(/^export /gm, '');
-  const mediaLightbox = readSource('src/client-media-lightbox.js').replace(/^export /gm, '');
-  const mediaClient = readSource('src/client-media.js').replace(/^export /gm, '');
-  const client = readSource('src/client.js').replace(/^export /gm, '');
-  return `window.__ModuleLoader__.load({id:'dsh-volcengine-provider',factory:(require)=>{\n'use strict';\n${mediaConfig}\n${remote}\n${mediaData}\n${mediaLightbox}\n${mediaClient}\n${client}\nreturn {name,inject,apply};\n}});\n`;
+  return buildClientBundleSyncFromDisk(ROOT);
 }
 
 /** 按宿主的单参数 factory(require) 契约取回插件导出。 */
@@ -416,6 +411,7 @@ function createHarness(options = {}) {
   const inputs = () => find(tree, (node) => node.type === 'input');
   // 复选框也是 input：表单用例只关心文本框，按类型过滤避免被开关挤位。
   const textInputs = () => inputs().filter((node) => node.props.type !== 'checkbox');
+  const accountSelect = (plan) => find(tree, node => node.type === 'select' && node.props?.['aria-label'] === (plan === 'coding-plan' ? '火山方舟 · 编程套餐使用账号' : '火山方舟 · Agent 套餐使用账号'))[0];
   const selects = () => find(tree, (node) => node.type === 'select');
   const quotaBars = () => find(tree, (node) => node.props?.role === 'progressbar');
   const anchors = () => find(tree, (node) => node.type === 'a');
@@ -427,7 +423,7 @@ function createHarness(options = {}) {
 
   return {
     backend, ctx, exported, mini, flush, render, find, buttons, buttonByText, click, texts, joined,
-    inputs, textInputs, selects, quotaBars, anchors, dispose,
+    inputs, textInputs, selects, accountSelect, quotaBars, anchors, dispose,
     get tree() { return tree; },
     get mountedRemote() { return mountedRemote; },
     get unmounted() { return unmounted; },
@@ -544,7 +540,7 @@ test('网页登录：确认前不发起、确认后发起、轮询进度、成�
   assert.match(harness.joined(), /登录期间暂不能修改账号与套餐/);
   assert.equal(harness.buttonByText('编辑').props.disabled, true);
   assert.equal(harness.buttonByText('删除').props.disabled, true);
-  assert.equal(harness.selects()[0].props.disabled, true);
+  assert.equal(harness.accountSelect().props.disabled, true);
   assert.equal(harness.buttonByText('取消登录').props.disabled, false, '取消入口必须保持可用');
 
   harness.backend.login = { jobId: 'job-1', accountId: 'default', state: 'waiting', message: '请在 ArkCli 打开的官方网页完成授权' };
@@ -565,8 +561,8 @@ test('网页登录：确认前不发起、确认后发起、轮询进度、成�
   await harness.flush();
   assert.match(harness.joined(), /登录成功，凭据已保存。/);
   assert.equal(harness.backend.calls.filter((call) => call.op === 'read').length, readsBefore + 1, '登录成功后应刷新一次 read');
-  assert.equal(harness.selects()[0].props.value, 'default');
-  assert.match(String(harness.selects()[0].props.children[1][0].props.children), /刚登录的官方账号/);
+  assert.equal(harness.accountSelect().props.value, 'default');
+  assert.match(String(harness.accountSelect().props.children[1][0].props.children), /刚登录的官方账号/);
   assert.equal(harness.quotaBars().some(bar => bar.props['aria-valuetext'] === '剩余 87.5%'), false, '同账号重新登录必须清理旧身份的额度');
   assert.match(harness.joined(), /后台正在采集额度/, '新身份下等待 Host 采集，不再展示旧身份数据');
   await harness.flush();
@@ -682,11 +678,17 @@ test('远端服务迟到时，兜底轮询仍能拿到服务（有上限、不�
   harness.dispose();
 });
 
-test('构建脚本漂移守卫：测试用的文本变换必须与 scripts/build.mjs 一致', () => {
+test('构建脚本漂移守卫：bundle 拼接只有 client-bundle.mjs 一处定义', () => {
   const build = readSource('scripts/build.mjs');
-  assert.match(build, /replace\(\/\^export \/gm, ''\)/, '构建的去 export 变换变了，测试需同步');
-  assert.match(build, /return \{name,inject,apply\};/, '构建的导出形状变了，测试需同步');
-  assert.match(build, /src\/remote\.mjs[\s\S]*src\/client\.js/, '构建的内联顺序变了，测试需同步');
+  const shared = readSource('scripts/client-bundle.mjs');
+  // build 不得再自己拼接：新增共享模块只改一处，否则测试与产物会再次漂移。
+  assert.match(build, /buildClientBundleFromDisk/, '构建必须复用 scripts/client-bundle.mjs');
+  assert.doesNotMatch(build, /__ModuleLoader__/, '构建不应再自行拼 bundle');
+  assert.match(shared, /replace\(\/\^export \/gm, ''\)/, '去 export 变换变了，测试需同步');
+  assert.match(shared, /return \{name,inject,apply\};/, '导出形状变了，测试需同步');
+  assert.match(shared, /src\/remote\.mjs[\s\S]*src\/client\.js/, '内联顺序变了，测试需同步');
+  // 测试装载的源码与构建产物逐字同源。
+  assert.equal(buildBundleSource(), buildClientBundleSyncFromDisk(ROOT));
 });
 
 test('官方身份优先、本地备注独立，OAuth 按套餐展示绑定与额度访问能力', async () => {
@@ -701,7 +703,7 @@ test('官方身份优先、本地备注独立，OAuth 按套餐展示绑定与�
   const harness = createHarness({ backend });
   await harness.flush();
   const text = harness.joined();
-  assert.equal(harness.selects()[0].props.value, 'default');
+  assert.equal(harness.accountSelect().props.value, 'default');
   assert.match(text, /本地备注：默认账号/);
   assert.match(text, /官方账号 ID：account-456/);
   assert.match(text, /官方用户 ID：user-123/);
@@ -711,8 +713,8 @@ test('官方身份优先、本地备注独立，OAuth 按套餐展示绑定与�
   assert.match(text, /额度鉴权：OAuth 已就绪/);
   assert.match(text, /套餐绑定：未绑定/);
   assert.doesNotMatch(text, /AK 引用：|SK 引用：|推理引用：|缺少 AK\/SK|模型调用会失败|没有可用的额度鉴权/);
-  assert.equal(String(harness.selects()[0].props.children[1][0].props.children), '官方小明（default）');
-  assert.match(String(harness.selects()[0].props.children[1][0].props.title), /本地备注：默认账号/);
+  assert.equal(String(harness.accountSelect().props.children[1][0].props.children), '官方小明（default）');
+  assert.match(String(harness.accountSelect().props.children[1][0].props.title), /本地备注：默认账号/);
   assert.match(text, /凭据状态：凭据服务不可用 token=\[REDACTED\]/);
   assert.doesNotMatch(text, /hidden-secret/);
   await harness.click('编辑');
@@ -808,7 +810,7 @@ test('额度请求展示具体忙态，失败后可直接重试', async () => {
   await harness.click('刷新额度');
   assert.equal(harness.buttonByText('刷新额度').props.disabled, true, '采集进行中按钮应禁用');
   assert.equal(harness.buttonByText('编辑').props.disabled, false, '只读额度请求不能锁住账号管理');
-  assert.equal(harness.selects()[0].props.disabled, false, '额度请求期间仍可切换账号');
+  assert.equal(harness.accountSelect().props.disabled, false, '额度请求期间仍可切换账号');
   resolver({ ok: false, error: '暂时不可用' });
   await harness.flush();
   // 刷新失败不清掉上次窗口：中间层仍显示旧数据。
@@ -882,7 +884,7 @@ test('额度请求期间切换账号，迟到响应不会覆盖新账号', async
   h.find(agentSection, node => node.type === 'button' && node.props.children === '刷新额度')[0].props.onClick();
   await h.flush();
   assert.ok(pending.has('default:agent-plan'), '手动刷新已经发出');
-  h.selects()[0].props.onChange({ target: { value: 'second' } }); await h.flush();
+  h.accountSelect().props.onChange({ target: { value: 'second' } }); await h.flush();
   assert.match(h.joined(), /后台正在采集额度/, '新账号还没有中间层快照');
   pending.get('default:agent-plan')({ ok: true, value: { plan: 'agent-plan', accountId: 'default', state: 'ok', windows: [{ kind: '5h', percent: 99 }] } }); await h.flush();
   assert.ok(!h.quotaBars().some(bar => bar.props['aria-valuetext'] === '剩余 1%'), '迟到的旧账号结果不得覆盖新账号');
@@ -1025,12 +1027,13 @@ test('未绑定套餐和缺少隔离 Profile 不提供必失败的目录或额�
   assert.match(h.joined(), /可使用本地模型快照/);
 });
 
-test('布局回归：统一页头、账号与双套餐分区并存，技术细节默认折叠', async t => {
+test('布局回归：统一页头、账号与两个套餐面板并存，技术细节默认折叠', async t => {
   const h = createHarness(); t.after(() => h.dispose()); await h.flush();
   assert.equal(h.tree.props.className, 'vcp-settings');
   assert.match(h.joined(), /火山方舟 Provider/);
   assert.match(h.joined(), /1 个账号 · 2 个套餐/);
-  for (const label of ['账号管理', '火山方舟 · Agent 套餐', '火山方舟 · 编程套餐']) {
+  // 套餐启用与账号选择的容器在「账号与登录」分区，标识为「<套餐>接入」。
+  for (const label of ['账号管理', '火山方舟 · Agent 套餐接入', '火山方舟 · 编程套餐接入']) {
     assert.equal(h.find(h.tree, node => node.type === 'section' && node.props['aria-label'] === label).length, 1, label);
   }
   assert.equal(h.selects().filter(node => /使用账号$/.test(node.props['aria-label'] ?? '')).length, 2, '两个套餐的账号选择必须同时可用');
@@ -1039,18 +1042,19 @@ test('布局回归：统一页头、账号与双套餐分区并存，技术细�
   assert.equal(accountSelectFields.length, 2);
   assert.ok(accountSelectFields.every(field => field.props.style.minWidth === 0), '账号字段须允许窄屏收缩');
   const cards = h.find(h.tree, node => String(node.props.className ?? '').split(' ').includes('vcp-card'));
-  assert.ok(cards.length >= 3);
+  // 套餐接入面板已改为套在 PlanPanel 描边容器内，不再自带卡片外框；剩图片生成与账号两个卡片。
+  assert.ok(cards.length >= 2, `应有独立卡片容器，实际 ${cards.length}`);
   assert.ok(cards.every(card => card.props.style?.padding === undefined), '卡片 padding 必须交给可响应断点的 scoped CSS');
   assert.match(h.buttonByText('登录其他账号').props.style.background, /#2563eb/, '主按钮实色回退必须保证白字对比度');
   assert.ok(h.buttons().every(button => String(button.props.className).includes('vcp-button')), '按钮应共享统一主次与焦点样式');
-  const details = h.find(h.tree, node => node.type === 'details');
+  // 模型列表与高级信息仍然默认折叠；套餐面板本身默认展开（用于承载内容）。
+  const details = h.find(h.tree, node => node.type === 'details' && !String(node.props.className ?? '').includes('vcp-plan-panel'));
   assert.ok(details.length >= 3);
   assert.ok(details.every(node => node.props.open !== true), '高级信息和模型列表默认不应强制展开');
-  const tabSections = h.find(h.tree, node => node.props?.className === 'vcp-tab-section');
-  const planSections = tabSections.filter(section => h.find(section, node =>
-    String(node.props.className ?? '').split(' ').includes('vcp-plan') && /Agent 套餐|编程套餐/.test(String(node.props['aria-label'] ?? ''))).length > 0);
-  assert.equal(planSections.length, 2, '两个套餐各占一个独立分区');
-  assert.equal(h.find(h.tree, node => /(^| )vcp-(plans|plan-workspace)( |$)/.test(String(node.props.className ?? ''))).length, 0, '套餐卡片之间不得再有并排容器');
+  // 每个功能分区内按套餐分面板：额度、模型、账号各两个。
+  const planPanels = h.find(h.tree, node => String(node.props.className ?? '').split(' ').includes('vcp-plan-panel'));
+  assert.equal(planPanels.length, 6, '额度/模型/账号三个分区各两个套餐面板');
+  assert.equal(h.find(h.tree, node => /(^| )vcp-(plans|plan-workspace)( |$)/.test(String(node.props.className ?? ''))).length, 0, '套餐面板之间不得再有并排容器');
   assert.match(h.joined(), /账号高级配置与标识/);
   assert.equal(h.find(h.tree, node => node.props['aria-label'] === '火山方舟 · Agent 套餐额度').length, 1);
   assert.equal(h.find(h.tree, node => node.props['aria-label'] === '火山方舟 · 编程套餐额度').length, 1);
@@ -1158,14 +1162,14 @@ test('两套餐各自共享倒计时时钟，刷新目标时仅回收对应套�
     button.props.onClick();
     await harness.flush();
   };
-  await refreshPlan('火山方舟 · Agent 套餐');
+  await refreshPlan('火山方舟 · Agent 套餐额度');
   const agentTimer = [...intervals.keys()][0];
   assert.equal(intervals.size, 1, '同套餐的多个窗口只创建一个时钟');
-  await refreshPlan('火山方舟 · 编程套餐');
+  await refreshPlan('火山方舟 · 编程套餐额度');
   assert.equal(intervals.size, 2, '两个套餐独立维护时钟');
   const codingTimer = [...intervals.keys()].find(id => id !== agentTimer);
   agentReset = clock + 180_000;
-  await refreshPlan('火山方舟 · Agent 套餐');
+  await refreshPlan('火山方舟 · Agent 套餐额度');
   assert.equal(intervals.size, 2);
   assert.equal(intervals.has(agentTimer), false, '重置目标变化时回收旧时钟');
   assert.equal(intervals.has(codingTimer), true, '另一套餐的时钟不受影响');
@@ -1533,7 +1537,7 @@ test('图片设置单开关启用：选择默认模型后通过 setMedia 持久�
   harness.dispose();
 });
 
-test('设置分区只隐藏不卸载，每套餐一个分区且切换后编辑状态保留', async () => {
+test('设置分区按功能分组，只隐藏不卸载且切换后编辑状态保留', async () => {
   const backend = new FakeBackend();
   const defaults = { contextWindow: 32768, maxTokens: 8192, imageInput: true, toolsEnabled: true, reasoningEfforts: { low: 'low', high: 'high' }, defaultReasoning: 'low', forceAdaptiveThinking: true };
   backend.catalogs = [{ plan: 'agent-plan', accountId: 'default', count: 1, enabledCount: 1, source: 'remote', models: [{ id: 'demo-model', name: '示例模型', enabled: true, defaults, effective: { ...defaults }, settings: {} }] }];
@@ -1542,47 +1546,87 @@ test('设置分区只隐藏不卸载，每套餐一个分区且切换后编辑�
   const tabs = () => harness.find(harness.tree, node => node.props?.role === 'tab');
   const selected = () => tabs().filter(node => node.props['aria-selected'] === true).map(node => String(node.props.children));
   const sections = () => harness.find(harness.tree, node => node.props?.className === 'vcp-tab-section');
-  assert.deepEqual(selected(), ['Agent 套餐']);
+  const hiddenFlags = () => sections().map(node => Boolean(node.props.hidden));
+  assert.deepEqual(selected(), ['额度']);
   assert.equal(tabs().length, 4);
   const controls = tabs().map(node => node.props['aria-controls']);
   assert.equal(new Set(controls).size, 1, '所有标签应指向同一个持久 tabpanel');
   assert.equal(harness.find(harness.tree, node => node.props?.role === 'tabpanel')[0].props.id, controls[0]);
-  // 分区顺序：agent-plan、coding-plan、media、accounts。
-  assert.deepEqual(sections().map(node => Boolean(node.props.hidden)), [false, true, true, true]);
-  const agentSection = () => sections()[0];
-  const codingSection = () => sections()[1];
-  assert.equal(harness.find(agentSection(), node => node.props?.['aria-label'] === '火山方舟 · Agent 套餐额度').length, 1);
-  assert.equal(harness.find(agentSection(), node => node.props?.['aria-label'] === '火山方舟 · Agent 套餐模型目录').length, 1, '额度与模型目录同属一个套餐分区');
-  assert.equal(harness.find(codingSection(), node => node.props?.['aria-label'] === '火山方舟 · 编程套餐模型目录').length, 1);
+  // 分区按功能分组：额度、模型、图片生成、账号与登录。
+  assert.deepEqual(hiddenFlags(), [false, true, true, true]);
 
-  const summary = () => harness.find(agentSection(), node => node.type === 'summary' && /模型列表/.test(String(node.props.children)))[0];
-  assert.ok(summary());
-  summary().props.onClick({ preventDefault() {} });
+  // 按分区内的内容定位，而不是靠渲染索引：分区顺序调整时断言仍然有效。
+  const sectionWith = (label) => sections().find(node => harness.find(node, child => child.props?.['aria-label'] === label).length > 0);
+  // 额度分区承载两个套餐的额度面板。
+  const quotaSection = sectionWith('火山方舟 · Agent 套餐额度');
+  assert.ok(quotaSection, '未找到 Agent 套餐额度所在分区');
+  assert.equal(harness.find(quotaSection, node => node.props?.['aria-label'] === '火山方舟 · Agent 套餐额度').length, 1);
+  assert.equal(harness.find(quotaSection, node => node.props?.['aria-label'] === '火山方舟 · 编程套餐额度').length, 1);
+  // 模型分区承载两个套餐的模型目录。
+  const modelsSection = sectionWith('火山方舟 · Agent 套餐模型目录');
+  assert.ok(modelsSection, '未找到 Agent 套餐模型目录所在分区');
+  assert.equal(harness.find(modelsSection, node => node.props?.['aria-label'] === '火山方舟 · Agent 套餐模型目录').length, 1);
+  assert.equal(harness.find(modelsSection, node => node.props?.['aria-label'] === '火山方舟 · 编程套餐模型目录').length, 1);
+  // 套餐启用与账号选择只在账号与登录分区出现一次，不在额度/模型分区重复。
+  const accountsSection = sectionWith('火山方舟 · Agent 套餐接入');
+  assert.ok(accountsSection, '未找到套餐接入所在分区');
+  assert.equal(harness.find(accountsSection, node => node.props?.['aria-label'] === '火山方舟 · Agent 套餐接入').length, 1);
+  assert.equal(harness.find(quotaSection, node => node.type === 'select').length, 0, '额度分区不得再放账号选择');
+  assert.equal(harness.find(modelsSection, node => node.type === 'select').length, 0, '模型分区不得再放账号选择');
+  // 套餐启用开关与账号选择各自只出现一次：散落多处会让用户不知道哪个才是生效的。
+  // 两个套餐各一个启用开关：按前缀统计，任一套餐的开关重复都会被抓到。
+  const enableSwitches = harness.find(harness.tree, node => node.type === 'input'
+    && /^启用火山方舟 · /u.test(String(node.props['aria-label'] ?? '')));
+  const accountSelects = harness.selects().filter(node => /使用账号$/u.test(node.props['aria-label'] ?? ''));
+  assert.equal(enableSwitches.length, 2, '两个套餐各一个启用开关，不得散落多处');
+  assert.equal(accountSelects.length, 2, '两个套餐各有一个账号选择，不多不少');
+  // 只匹配「启用<套餐名>」的开关；模型行上的「启用模型 X」属于模型开关，不算。
+  const isPlanSwitch = (node) => node.type === 'input' && /^启用火山方舟 · /u.test(String(node.props['aria-label'] ?? ''));
+  assert.equal(harness.find(quotaSection, isPlanSwitch).length, 0, '额度分区不得出现套餐启用开关');
+  assert.equal(harness.find(modelsSection, isPlanSwitch).length, 0, '模型分区不得出现套餐启用开关');
+
+  // 在模型分区展开列表并打开参数编辑器。
+  const summary = harness.find(modelsSection, node => node.type === 'summary' && /模型列表/.test(String(node.props.children)))[0];
+  assert.ok(summary);
+  summary.props.onClick({ preventDefault() {} });
   await harness.flush();
   await harness.click('参数');
   assert.ok(harness.buttonByText('收起参数'));
-  await harness.click('编程套餐');
-  assert.deepEqual(selected(), ['编程套餐']);
-  assert.deepEqual(sections().map(node => Boolean(node.props.hidden)), [true, false, true, true]);
-  assert.equal(harness.find(codingSection(), node => node.props?.['aria-label'] === '火山方舟 · 编程套餐额度').length, 1);
-  await harness.click('Agent 套餐');
+  // 切到额度再回模型，编辑器状态必须保留（分区只隐藏不卸载）。
+  await harness.click('额度');
+  assert.deepEqual(selected(), ['额度']);
+  assert.deepEqual(hiddenFlags(), [false, true, true, true]);
+  await harness.click('模型');
+  assert.deepEqual(hiddenFlags(), [true, false, true, true]);
   assert.ok(harness.buttonByText('收起参数'), '标签切换不得卸载模型编辑器');
   await harness.click('账号与登录');
-  assert.deepEqual(sections().map(node => Boolean(node.props.hidden)), [true, true, true, false]);
+  assert.deepEqual(hiddenFlags(), [true, true, true, false]);
 
+  // 键盘导航在四个功能分区之间循环。
   const key = value => harness.find(harness.tree, node => node.props?.role === 'tablist')[0].props.onKeyDown({ key: value, preventDefault() {} });
-  key('ArrowRight');
-  await harness.flush();
-  assert.deepEqual(selected(), ['图片生成']);
-  key('ArrowRight');
-  await harness.flush();
-  assert.deepEqual(selected(), ['Agent 套餐']);
-  key('End');
-  await harness.flush();
-  assert.deepEqual(selected(), ['图片生成']);
+  // 从账号与登录回到第一个分区，再逐格前进，验证顺序与循环。
   key('Home');
   await harness.flush();
-  assert.deepEqual(selected(), ['Agent 套餐']);
+  assert.deepEqual(selected(), ['额度']);
+  key('ArrowRight');
+  await harness.flush();
+  assert.deepEqual(selected(), ['模型']);
+  key('ArrowRight');
+  await harness.flush();
+  assert.deepEqual(selected(), ['图片生成']);
+  key('ArrowRight');
+  await harness.flush();
+  assert.match(selected()[0], /^账号与登录/);
+  key('ArrowRight');
+  await harness.flush();
+  assert.deepEqual(selected(), ['额度'], '最后一个分区之后循环回第一个');
+  key('End');
+  await harness.flush();
+  // End 跳到最后一个分区：账号与登录（带账号计数后缀）。
+  assert.match(selected()[0], /^账号与登录/);
+  key('Home');
+  await harness.flush();
+  assert.deepEqual(selected(), ['额度']);
   harness.dispose();
 });
 
@@ -1597,4 +1641,22 @@ test('空账号自动进入账号与登录分区', async () => {
   const sections = harness.find(harness.tree, node => node.props?.className === 'vcp-tab-section');
   assert.deepEqual(sections.map(node => Boolean(node.props.hidden)), [true, true, true, false]);
   harness.dispose();
+});
+
+test('图片生成缺套餐时跳到账号与登录，不会切到已废弃的分区', async () => {
+  const backend = new FakeBackend();
+  // 图片工具已启用，但 Agent 套餐停用：MediaCard 应给出跳转入口。
+  backend.media = { riskAcknowledged: true, imageTool: true, imageModel: 'doubao-seedream-5-0-pro' };
+  backend.enabled = { 'agent-plan': false, 'coding-plan': true };
+  const h = createHarness({ backend });
+  await h.flush();
+  await h.click('图片生成');
+  assert.ok(h.buttonByText('前往账号与登录'), '缺少跳转入口');
+  await h.click('前往账号与登录');
+  const selected = h.find(h.tree, node => node.props?.role === 'tab' && node.props['aria-selected'] === true);
+  assert.match(String(selected[0]?.props.children), /^账号与登录/, '应切到账号与登录分区');
+  // 关键回归：任何分区 id 失效都会让四个分区同时 hidden、整页空白。
+  const sections = h.find(h.tree, node => node.props?.className === 'vcp-tab-section');
+  assert.ok(sections.some(node => !node.props.hidden), '至少有一个分区保持可见');
+  h.dispose();
 });

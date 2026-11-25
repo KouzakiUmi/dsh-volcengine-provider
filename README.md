@@ -33,7 +33,7 @@ dsh plugin --profile web add dsh-volcengine-provider
 
 ## 功能介绍
 
-设置页分为「Agent 套餐」「编程套餐」「账号与登录」「图片生成」四个分区，每个套餐独占一页：启用开关、账号选择、额度窗口和模型目录都在同一页内。切换分区只隐藏不卸载：模型参数草稿、账号表单和登录进度都会保留；空账号时自动进入账号与登录。
+设置页按功能分为「额度」「模型」「图片生成」「账号与登录」四个分区，每个分区内按套餐分可折叠面板（摘要直接给出剩余额度、已启用模型数或套餐状态），同一功能下两个套餐可直接对比。套餐启用开关与账号选择集中在「账号与登录」；模型列表里已启用的排在前面。切换分区只隐藏不卸载：模型参数草稿、账号表单和登录进度都会保留；空账号时自动进入账号与登录。
 
 <img src="docs/client-settings-preview.png" width="1000" alt="火山方舟 Provider 的套餐额度与账号管理">
 
@@ -58,7 +58,7 @@ Agent Plan 与 Coding Plan 各有独立的启用开关、账号选择、模型�
 
 从官方套餐目录同步可用模型清单，按账号和套餐分别保存。能力参数依据官方 Plan Pi 文档和官方目录固化，显式匹配别名与版本，旧缓存默认值随快照更新，手动覆盖保留；来源与冲突见[能力参数](docs/model-capabilities.md)。每个模型可独立启停，目录刷新不清空设置；Auto/未知模型保守标记。
 
-设置页和模型选择器使用友好名称，原始调用 ID 可在模型技术详情中查看。模型卡片在名称旁展示消耗倍率与限时折扣，并汇总视觉、思考、上下文和输出能力；倍率来源与 Coding Plan 的参考语义见[能力参数](docs/model-capabilities.md#消耗倍率)。查看[模型卡片预览](docs/client-settings-preview-models.png)与[模型与思考配置预览](docs/client-model-thinking-preview.png)。
+设置页和模型选择器使用友好名称，原始调用 ID 可在模型技术详情中查看。会话模型选择器在模型名旁显示消耗倍率徽标（常规 `x4.50`，活动期为高亮色并附剩余天数），设置页模型卡片展示同一倍率并汇总视觉、思考、上下文和输出能力；倍率来源与 Coding Plan 的参考语义见[能力参数](docs/model-capabilities.md#消耗倍率)。查看[模型卡片预览](docs/client-settings-preview-models.png)与[模型与思考配置预览](docs/client-model-thinking-preview.png)。
 
 ### 调整模型参数
 

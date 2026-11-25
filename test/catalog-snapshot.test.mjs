@@ -186,20 +186,27 @@ test('snapshot aliases are unique and partial capability notes do not erase docu
   }
 });
 
-test('GLM 5.4 pins the plan that lists it and stays absent from the plan that does not', () => {
-  // 真实 ArkCli 清单（2026-11-24）：agent-plan 返回 output_name glm-5-4-261123，coding-plan 未返回该模型。
+test('GLM 5.4 is pinned on both plans from their own live listings', () => {
+  // 真实 ArkCli 清单（2026-11-26）：两套套餐都返回 output_name glm-5-4-261123；
+  // agent-plan 的上游 model_id 是 glm-5-4-261101，coding-plan 与 output_name 相同。
   const agent = snapshot['agent-plan'].models.find(model => model.id === 'glm-5-4-261123');
+  const coding = snapshot['coding-plan'].models.find(model => model.id === 'glm-5-4-261123');
   assert.ok(agent);
-  assert.equal(agent.name, 'GLM 5.4');
-  assert.deepEqual(agent.aliases, ['glm-5.4', 'glm-5-4-261101']);
-  assert.equal(agent.contextWindow, 1048576);
-  assert.equal(agent.maxTokens, 131072);
-  assert.deepEqual(agent.input, ['text', 'image']);
-  assert.deepEqual(agent.reasoningEfforts, {low: 'low', high: 'high', max: 'max'});
-  assert.equal(agent.canDisableThinking, false);
-  assert.equal(agent.capabilityStatus, 'partial');
-  assert.match(agent.capabilityNote, /推导/);
-  assert.equal(snapshot['coding-plan'].models.some(model => model.id === 'glm-5-4-261123'), false);
+  assert.ok(coding);
+  for (const entry of [agent, coding]) {
+    assert.equal(entry.name, 'GLM 5.4');
+    assert.equal(entry.contextWindow, 1048576);
+    assert.equal(entry.maxTokens, 131072);
+    assert.deepEqual(entry.input, ['text', 'image']);
+    assert.deepEqual(entry.reasoningEfforts, {low: 'low', high: 'high', max: 'max'});
+    assert.equal(entry.canDisableThinking, false);
+    assert.equal(entry.capabilityStatus, 'partial');
+    assert.match(entry.capabilityNote, /推导/);
+    assert.ok(entry.aliases.includes('glm-5.4'));
+  }
+  // 上游 model_id 只存在于 agent-plan，别名必须按套餐各自声明。
+  assert.ok(agent.aliases.includes('glm-5-4-261101'));
+  assert.equal(coding.aliases.includes('glm-5-4-261101'), false);
 
   // 上游 output_name 尚未固化时，靠 model_id 别名兜底命中同一条配置（catalog 的第二查找分支）。
   const state = initialState();

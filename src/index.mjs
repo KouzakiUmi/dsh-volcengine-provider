@@ -10,8 +10,9 @@ import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messag
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import { ArkController } from './manager.mjs';
 import { ROUTES, PLANS } from './state.mjs';
-import { profilesFor, getModelRows } from './catalog.mjs';
+import { profilesFor, getModelRows, resolveConsumption } from './catalog.mjs';
 import { arkRemote } from './remote.mjs';
+import { rateBadge } from './rate-badge.mjs';
 import { captureModelDefaults, getModelDefaults, applyModelDefaults, describeModelDefaults } from './model-defaults.mjs';
 import { createAdapterLease, leasedStream } from './adapter-lease.mjs';
 import { createArkAdapter } from './ark-adapter.mjs';
@@ -121,6 +122,11 @@ export function apply(ctx, config) {
           return owner ? controller.inferenceKey(owner, plan, { binding: state.oauth[owner.id] }) : undefined;
         },
         resolveAttachments: () => ctx.get('attachments'),
+        // 模型选择器徽标：只读当前生效倍率，活动结束自动回常规价。
+        rateBadgeOf: (provider, modelId) => {
+          const plan = PLANS.find(value => ROUTES[value] === provider);
+          return plan ? rateBadge(resolveConsumption(plan, modelId)) : undefined;
+        },
         resolveImageAccess: (attachments, ref) => {
           try { attachmentIndex.remember(ref); } catch { /* 索引是可选加速，不阻断请求图片解析 */ }
           return resolveImageAttachmentAccess(attachments, hostPath => ctx.get('fs')?.processPathFromHostPath(hostPath), ref);

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createArkAdapter } from '../src/ark-adapter.mjs';
+import { createArkAdapter, withRateBadges } from '../src/ark-adapter.mjs';
 
 const ROUTE = 'volcengine-agent-plan';
 const OTHER = 'volcengine-coding-plan';
@@ -19,7 +19,8 @@ function fixture() {
     providerRetryPolicy(route) { return this.profile(route).retryPolicy; }
     imageRequestPricing() { return undefined; }
     imageRequestTarget(route, id, image) { return { width: image.width, height: image.height, maxBytes: this.profile(route).requestImageMaxBytes }; }
-    async listModels(route) { await this.config.resolveApiKey(route); return this.profile(route).piProvider.getModels().map(({ id, name }) => ({ provider: route, id, name })); }
+    // 透传 badge：真实 PiAiAdapter 会丢掉它，这里模拟"底层将来透传"以覆盖不覆盖判断。
+    async listModels(route) { await this.config.resolveApiKey(route); return this.profile(route).piProvider.getModels().map(({ id, name, badge }) => ({ provider: route, id, name, ...(badge === undefined ? {} : { badge }) })); }
     async resolveModel(route, id) {
       const model = this.model(route, id);
       return { provider: route, id, name: model.name, inputModalities: model.input, context: { contextWindow: model.contextWindow }, defaultMaxTokens: this.profile(route).configuredMaxTokens.get(id) };
@@ -124,6 +125,63 @@ test('materialized models preserve exact IDs, null-pin maps and strip metadata',
   assert.deepEqual(await profile.piProvider.auth.apiKey.resolve(), { auth: {}, source: 'request' });
   assert.equal(await state.delegates[0].config.auth.authContext.env('ANY_KEY'), undefined);
   assert.equal(await state.delegates[0].config.auth.authContext.fileExists('/credentials'), false);
+});
+
+test('listModels attaches Core selector badges from the injected rate source', async () => {
+  const { create, config } = fixture();
+  const seen = [];
+  config.rateBadgeOf = (provider, modelId) => {
+    seen.push([provider, modelId]);
+    if (modelId === 'enabled-version') return { label: 'x3.60', tone: 'info' };
+    if (modelId === 'adaptive-version') return { label: 'x4.50', tone: 'neutral' };
+    if (modelId === 'budget-version') throw new Error('rate source failure');
+    return undefined;
+  };
+  const models = await create().listModels(ROUTE);
+  const byId = new Map(models.map(model => [model.id, model]));
+  // LocalizedText 要求 en 必填；倍率中英文同形。
+  assert.deepEqual(byId.get('enabled-version').badge, { text: { en: 'x3.60', zh: 'x3.60' }, tone: 'info' });
+  assert.deepEqual(byId.get('adaptive-version').badge, { text: { en: 'x4.50', zh: 'x4.50' }, tone: 'neutral' });
+  // 未知倍率、以及倍率源抛错的模型都不挂字段：不谎报免费，也不让整个目录失败。
+  assert.equal(byId.get('budget-version').badge, undefined);
+  assert.equal(byId.get('unknown-version').badge, undefined);
+  assert.equal(models.length, 5);
+  assert.deepEqual(seen.map(([provider]) => provider), Array(5).fill(ROUTE));
+});
+
+test('withRateBadges never overwrites an advertised badge and keeps rows immutable', () => {
+  const own = { text: { en: 'own', zh: 'own' }, tone: 'warning' };
+  const rows = [
+    { id: 'own', name: 'Own', badge: structuredClone(own) },
+    { id: 'bare', name: 'Bare' },
+    { id: 'throwing', name: 'Throwing' },
+    { id: 'blank', name: 'Blank' },
+  ];
+  const before = structuredClone(rows);
+  const out = withRateBadges(rows, id => {
+    if (id === 'own') return { label: 'x9.99', tone: 'info' };
+    if (id === 'throwing') throw new Error('rate source failure');
+    if (id === 'blank') return {};
+    return { label: 'x4.50', tone: 'neutral' };
+  });
+  // 底层自己透传的徽标才是权威，注入只补空缺。
+  assert.deepEqual(out[0].badge, own);
+  assert.deepEqual(out[1].badge, { text: { en: 'x4.50', zh: 'x4.50' }, tone: 'neutral' });
+  assert.equal(out[2].badge, undefined);
+  assert.equal(out[3].badge, undefined);
+  // 不改写输入行。
+  assert.deepEqual(rows, before);
+  // 非目录输入原样返回。
+  assert.equal(withRateBadges(undefined, () => undefined), undefined);
+  assert.deepEqual(withRateBadges(rows, undefined), rows);
+});
+
+test('exact-route resolution omits the selector badge per the Core contract', async () => {
+  const { create, config } = fixture();
+  config.rateBadgeOf = () => ({ label: 'x3.60', tone: 'info' });
+  const adapter = create();
+  const info = await adapter.resolveModel(ROUTE, 'enabled-version');
+  assert.equal(info.badge, undefined);
 });
 
 test('credential redaction preserves cancellation and timeout categories', async () => {

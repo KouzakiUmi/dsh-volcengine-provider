@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { getModelRows } from '../src/catalog.mjs';
 import { initialState } from '../src/state.mjs';
+import { buildClientBundleSyncFromDisk } from '../scripts/client-bundle.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const readSource = (relative) => readFileSync(join(ROOT, relative), 'utf8');
@@ -139,15 +140,9 @@ function createMiniReact() {
 
 // ── 构建产物装载 ──────────────────────────────────────────────────────────────
 
-/** 与 scripts/build.mjs 相同的文本变换：去 export、内联 remote.mjs、包进 ModuleLoader 工厂。 */
+/** 拼接顺序由 scripts/client-bundle.mjs 统一维护，与真实构建产物保持一致。 */
 function buildBundleSource() {
-  const mediaConfig = readSource('src/media-config.mjs').replace(/^export /gm, '');
-  const remote = readSource('src/remote.mjs').replace(/^export /gm, '');
-  const mediaData = readSource('src/client-media-data.js').replace(/^export /gm, '');
-  const mediaLightbox = readSource('src/client-media-lightbox.js').replace(/^export /gm, '');
-  const mediaClient = readSource('src/client-media.js').replace(/^export /gm, '');
-  const client = readSource('src/client.js').replace(/^export /gm, '');
-  return `window.__ModuleLoader__.load({id:'dsh-volcengine-provider',factory:(require)=>{\n'use strict';\n${mediaConfig}\n${remote}\n${mediaData}\n${mediaLightbox}\n${mediaClient}\n${client}\nreturn {name,inject,apply};\n}});\n`;
+  return buildClientBundleSyncFromDisk(ROOT);
 }
 
 function loadBundle(bundleSource, react) {
@@ -486,7 +481,8 @@ test('套餐启用开关：发 setProviderEnabled，关闭后仍保留账号选�
 
   // 关闭套餐不得清掉账号选择。
   assert.equal(harness.backend.active['agent-plan'], 'default');
-  assert.equal(harness.select()[0].props.value, 'default');
+  // 账号选择现在只出现在「账号与登录」标签，按 aria-label 定位而不是取第一个 select。
+  assert.equal(harness.byLabel('select', '火山方舟 · Agent 套餐使用账号').props.value, 'default');
   // The redesigned layout separates the state badge from the routing hint.
   assert.match(harness.joined(), /套餐已停用/);
   assert.match(harness.joined(), /路由已停用/);
@@ -515,7 +511,8 @@ test('模型卡片在名称旁展示倍率与能力标签，动态路由不伪�
   const rows = h.find(h.tree, node => node.props.className === 'vcp-model');
   const first = rows[0];
   const badge = h.find(first, node => node.props.className === 'vcp-rate-badge')[0];
-  assert.equal(badge.props.children[0], '2.5×');
+  // 与选择器徽标共用同一份倍率文案契约：两位小数带 x 前缀。
+  assert.equal(badge.props.children[0], 'x2.50');
   assert.match(badge.props.title, /Agent Plan AFP 输入\/输出抵扣系数/);
   const tags = h.find(first, node => node.props.className === 'vcp-model-tag').map(node => node.props.children);
   assert.deepEqual(tags, ['视觉', '可调思考', '上下文 1M', '输出 250K']);

@@ -15,6 +15,27 @@ const PROFILE_OPTIONS = [
 ];
 const positive = value => Number.isSafeInteger(value) && value > 0;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+/**
+ * 给目录行补模型选择器徽标。
+ * Core 的 `LlmModelInfo.badge` 只在目录发现（listModels）随选择器渲染，而 PiAiAdapter
+ * 的 listModels 只回 provider/id/name/inputModalities，所以徽标必须在适配器外面补。
+ * 已有 `badge` 的行不覆盖（底层将来透传时那个值才权威）；`badgeOf` 抛错或返回空
+ * 时该行保持原样：未知倍率不挂字段，既不谎报免费，也不让整个目录失败。
+ */
+export function withRateBadges(models, badgeOf) {
+  if (!Array.isArray(models) || typeof badgeOf !== 'function') return models;
+  return models.map(model => {
+    if (!model || typeof model.id !== 'string' || model.badge !== undefined) return model;
+    let badge;
+    try { badge = badgeOf(model.id); }
+    catch { return model; }
+    if (!badge?.label || typeof badge.tone !== 'string') return model;
+    // LocalizedText 要求 en 必填；倍率与“免费”中英文同形。
+    return { ...model, badge: { text: { en: badge.label, zh: badge.label }, tone: badge.tone } };
+  });
+}
+
 function abortOnReturn(iterator, cancellation) {
   const finish = iterator.return.bind(iterator);
   const reject = iterator.throw.bind(iterator);
@@ -234,8 +255,11 @@ export function createArkAdapter(deps, config) {
     imageRequestTarget(provider, model, image) { ensureLive(); own(provider, model); return metadata.imageRequestTarget(provider, model, image); }
     async listModels(provider) {
       ensureLive(); own(provider);
-      try { return await metadata.listModels(provider); }
+      let models;
+      try { models = await metadata.listModels(provider); }
       catch (error) { if (error?.code === 'MISSING_CREDENTIAL') return []; throw safeError(error); }
+      if (typeof config.rateBadgeOf !== 'function') return models;
+      return withRateBadges(models, modelId => config.rateBadgeOf(provider, modelId));
     }
     resolveModel(provider, model, signal) { ensureLive(); own(provider, model); return metadata.resolveModel(provider, model, signal); }
     async prepareCall(provider, model, signal) {

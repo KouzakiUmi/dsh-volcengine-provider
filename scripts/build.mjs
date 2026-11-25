@@ -1,19 +1,15 @@
 import { mkdir, readFile, writeFile, copyFile, readdir, rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { buildClientBundleFromDisk } from './client-bundle.mjs';
 const root = new URL('../', import.meta.url);
 const target = new URL('lib/', root);
 // lib/ 是纯生成产物：先整体清空，避免已删除模块的残留文件被一起打包或加载。
 await rm(target, { recursive: true, force: true });
 await mkdir(target, { recursive: true });
-// src 下的运行时模块（.mjs）与快照（.json）全部复制；client.js 与 remote.mjs 合并进下方 bundle。
+// src 下的运行时模块（.mjs）与快照（.json）全部复制；client.js 与共享模块合并进下方 bundle。
 const modules = (await readdir(new URL('src/', root))).filter(name => /\.(?:mjs|json)$/.test(name));
 for (const name of modules) await copyFile(new URL(`src/${name}`, root), new URL(name, target));
-const remote = (await readFile(new URL('src/remote.mjs', root), 'utf8')).replace(/^export /gm, '');
-const mediaConfig = (await readFile(new URL('src/media-config.mjs', root), 'utf8')).replace(/^export /gm, '');
-const mediaData = (await readFile(new URL('src/client-media-data.js', root), 'utf8')).replace(/^export /gm, '');
-const mediaLightbox = (await readFile(new URL('src/client-media-lightbox.js', root), 'utf8')).replace(/^export /gm, '');
-const mediaClient = (await readFile(new URL('src/client-media.js', root), 'utf8')).replace(/^export /gm, '');
-const client = (await readFile(new URL('src/client.js', root), 'utf8')).replace(/^export /gm, '');
-const bundle = `window.__ModuleLoader__.load({id:'dsh-volcengine-provider',factory:(require)=>{\n'use strict';\n${mediaConfig}\n${remote}\n${mediaData}\n${mediaLightbox}\n${mediaClient}\n${client}\nreturn {name,inject,apply};\n}});\n`;
+// 拼接顺序由 scripts/client-bundle.mjs 统一维护，客户端测试复用同一份定义。
+const bundle = await buildClientBundleFromDisk(fileURLToPath(root));
 await writeFile(new URL('client.js', target), bundle);
 console.log(`Built ${modules.length + 1} files in ${fileURLToPath(target)}`);

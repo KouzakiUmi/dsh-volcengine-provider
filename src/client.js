@@ -46,10 +46,11 @@ const PLAN_HINTS = {
 };
 
 const SETTINGS_TABS = [
-  { id: 'agent-plan', label: 'Agent 套餐' },
-  { id: 'coding-plan', label: '编程套餐' },
-  { id: 'accounts', label: '账号与登录' },
-  { id: 'media', label: '图片生成' }
+  { id: 'quota', label: '额度' },
+  { id: 'models', label: '模型' },
+  { id: 'media', label: '图片生成' },
+  // 账号与登录放最后：分区渲染顺序与标签顺序保持一致，读屏与脚本都不依赖隐式次序。
+  { id: 'accounts', label: '账号与登录' }
 ];
 
 function settingsTabAfter(key, current) {
@@ -358,6 +359,14 @@ body[data-ds-dark-theme] .vcp-settings{color-scheme:dark}
 .vcp-tab:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.07));color:var(--dsw-alias-label-primary,inherit)}
 .vcp-tab[aria-selected=true]{border-bottom-color:var(--dsw-alias-brand-primary,Highlight);color:var(--dsw-alias-label-primary,inherit);font-weight:650}
 .vcp-tabpanel,.vcp-tab-section{display:flex;flex-direction:column;gap:10px;min-width:0}
+.vcp-plan-panel{border:1px solid var(--dsw-alias-separator-primary,color-mix(in srgb,currentColor 16%,transparent));border-radius:10px;background:color-mix(in srgb,currentColor 2%,transparent);min-width:0}
+.vcp-plan-panel>summary{cursor:pointer;padding:8px 10px;font-size:12.5px;font-weight:700;display:flex;align-items:center;justify-content:space-between;gap:8px;list-style:none}
+.vcp-plan-panel>summary::-webkit-details-marker{display:none}
+.vcp-plan-panel>summary::after{content:"▾";font-size:10px;opacity:.7;transition:transform .12s ease}
+.vcp-plan-panel[open]>summary::after{transform:rotate(180deg)}
+.vcp-plan-panel-meta{font-size:11px;font-weight:600;color:var(--dsw-alias-label-secondary,GrayText);font-variant-numeric:tabular-nums;text-align:right}
+.vcp-plan-panel-body{display:flex;flex-direction:column;gap:10px;padding:0 10px 10px;min-width:0}
+.vcp-plan-access{display:flex;flex-direction:column;gap:10px;min-width:0}
 .vcp-tab-section[hidden],.vcp-plan-section[hidden]{display:none!important}
 `;
 
@@ -401,24 +410,22 @@ function ModelTag({ tone = 'muted', title, children }) {
   return h('span', { className: 'vcp-model-tag', 'data-tone': tone, title }, children);
 }
 
-function formatRate(value) {
-  return Number.isFinite(value) ? String(Math.round(value * 100) / 100) : '';
-}
-
 function ConsumptionBadge({ plan, consumption }) {
-  const rate = formatRate(consumption?.multiplier);
-  if (!rate) return null;
+  // 倍率文案与选择器徽标共用同一份契约（rate-badge.mjs），避免两个渲染面各写一套规则。
+  const badge = rateBadge(consumption);
+  if (!badge) return null;
+  const note = rateBadgeNote(consumption);
   const regular = formatRate(consumption.regularMultiplier);
-  const discount = consumption.discounted
-    ? `限时折扣至 ${formatTime(consumption.discountEndsAt)}，常规倍率 ${regular}×。`
+  const active = consumption.discounted
+    ? `限时活动价，至 ${formatTime(consumption.discountEndsAt)} 结束，之后恢复常规倍率 ${regular ?? '—'}。`
     : '当前按常规倍率展示。';
   const title = plan === 'agent-plan'
-    ? `Agent Plan AFP 输入/输出抵扣系数均为 ${rate}。${discount}`
-    : `以官方 Agent Plan AFP 系数作相对消耗参考 ${rate}×；Coding Plan 不以此换算固定调用次数或 AFP 绝对量。${discount}`;
+    ? `Agent Plan AFP 输入/输出抵扣系数均为 ${badge.label}。${active}`
+    : `以官方 Agent Plan AFP 系数作相对消耗参考 ${badge.label}；Coding Plan 不以此换算固定调用次数或 AFP 绝对量。${active}`;
   return h('span', {
     className: 'vcp-rate-badge', 'data-discount': consumption.discounted ? 'true' : 'false',
-    title, 'aria-label': `消耗倍率 ${rate} 倍${consumption.discounted ? '，限时折扣' : ''}`
-  }, `${rate}×`, consumption.discounted ? h('small', null, '限时') : null);
+    title, 'aria-label': `消耗倍率 ${badge.label}${consumption.discounted ? '，限时活动' : ''}`
+  }, badge.label, note ? h('small', null, note) : null);
 }
 
 // ── 纯函数小工具 ─────────────────────────────────────────────────────────────
@@ -1537,13 +1544,23 @@ function MediaCard({ snapshot, busy, onToggleImage, onSelectModel, onNavigate })
           onChange: event => onSelectModel(event.target.value)
         }, IMAGE_MODEL_OPTIONS.map(option => h('option', { key: option.id, value: option.id }, option.label))))),
     enabled && (!providerOn || !account)
-      ? h(Notice, { tone: 'warn', role: 'alert', action: h('button', { type: 'button', style: style.btn, onClick: () => onNavigate('agent-plan') }, '前往 Agent 套餐') }, !providerOn
+      // 套餐启用与账号选择都在「账号与登录」分区；跳到那个标签而不是已废弃的套餐标签。
+      ? h(Notice, { tone: 'warn', role: 'alert', action: h('button', { type: 'button', style: style.btn, onClick: () => onNavigate('accounts') }, '前往账号与登录') }, !providerOn
           ? 'Agent 套餐当前已停用：媒体工具需要启用 Agent 套餐并选择账号后才能调用。'
-          : 'Agent 套餐尚未选择账号：请先在 Agent 套餐页选择账号，图片工具才能调用。')
+          : 'Agent 套餐尚未选择账号：请先在「账号与登录」里选择账号，图片工具才能调用。')
       : null);
 }
 
-function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModels, onQuota, onToggleProvider, onToggleModel, onSaveModelSettings, onResetModelSettings, onGoLogin, onScrollAccounts }) {
+/**
+ * 套餐级只读上下文：额度、模型、接入三个面板共用同一份推导。
+ * 分散计算容易让「可用/不可用」在不同标签里给出不同结论，因此集中在这里。
+ *
+ * @param {string} plan 套餐 ID
+ * @param {object} snapshot 设置快照
+ * @param {object} rawQuota 该套餐的额度快照
+ * @returns {object} 面板共用字段
+ */
+function planContext(plan, snapshot, rawQuota) {
   const accounts = Array.isArray(snapshot?.accounts) ? snapshot.accounts : [];
   const activeId = snapshot?.active?.[plan] ?? null;
   const account = accounts.find((item) => item?.id === activeId) ?? null;
@@ -1553,7 +1570,6 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
   const appliedAccount = snapshot?.appliedAccounts?.[plan];
   // 额度是按账号查的：账号换了就不要再展示上一个账号的窗口。
   const quota = rawQuota && rawQuota.accountId === activeId ? rawQuota : null;
-  const disabled = busy !== null;
   const auth = planAuth(account, plan);
   const canPullModels = Boolean(account && (auth.oauth ? auth.bound : account.cliProfile));
   // 旧快照没有 enabled 字段时按启用处理。
@@ -1563,7 +1579,95 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
   const enabledCount = Number.isFinite(catalog?.enabledCount)
     ? catalog.enabledCount
     : models.filter((item) => item?.enabled !== false).length;
+  // 已启用的模型排在前面，同组内保持目录原有顺序（列表太长时先看到正在用的）。
+  const orderedModels = models.every((item) => item?.enabled !== false)
+    ? models
+    : [...models].sort((a, b) => Number(b?.enabled !== false) - Number(a?.enabled !== false));
+  const planState = providerEnabled
+    ? (!account ? '待选择账号' : !auth.inference ? '待完成鉴权' : '套餐已启用')
+    : '套餐已停用';
+  const planTone = providerEnabled && account && auth.inference ? 'success' : providerEnabled ? 'warn' : 'muted';
+  return {
+    accounts, activeId, account, catalog, route, appliedAccount, quota, auth,
+    canPullModels, providerEnabled, models, enabledCount, orderedModels, planState, planTone,
+    routingError: snapshot?.routingError
+  };
+}
 
+/**
+ * 额度面板摘要：优先显示最长周期的可用窗口剩余量，取不到时回落到套餐状态。
+ * 折叠状态下也能看出这个套餐还剩多少可用额度。
+ *
+ * @param {object} context planContext 结果
+ * @returns {string} 摘要文案
+ */
+function quotaSummary(context) {
+  const windows = Array.isArray(context?.quota?.windows) ? context.quota.windows : [];
+  for (const kind of ['month', 'week', '5h', 'day']) {
+    const item = windows.find((window) => window?.kind === kind);
+    const percent = finiteQuotaNumber(item?.percent);
+    if (percent === null) continue;
+    const remaining = Math.max(0, Math.min(100, 100 - percent));
+    return `${WINDOW_KIND_LABELS[kind] ?? kind} 剩余 ${formatPercent(remaining)}%`;
+  }
+  // 折叠摘要不得与展开后的内容矛盾：失败态直接说失败，无窗口时也不必声称「已采集」。
+  if (context?.quota?.state === 'error') return '额度查询失败';
+  if (context?.quota?.state === 'no-key') return '额度鉴权未就绪';
+  return context?.quota ? '额度已采集' : context?.planState ?? '';
+}
+
+/**
+ * 单个套餐在某个标签内的可折叠面板。
+ * 默认展开；收起只是隐藏 DOM，不卸载内容（模型草稿与滚动位置都保留）。
+ *
+ * @param {object} props 组件属性
+ * @returns {object} 元素树
+ */
+function PlanPanel({ plan, summary, children }) {
+  return h('details', { className: 'vcp-plan-panel', open: true, 'data-plan': plan },
+    h('summary', { className: 'vcp-plan-panel-summary' },
+      h('span', { className: 'vcp-plan-panel-title' }, plan === 'agent-plan' ? 'Agent 套餐' : '编程套餐'),
+      summary ? h('span', { className: 'vcp-plan-panel-meta' }, summary) : null),
+    h('div', { className: 'vcp-plan-panel-body' }, children));
+}
+
+/** 额度面板：只承载额度窗口与刷新入口；套餐开关与账号选择在「账号与登录」标签。 */
+function PlanQuotaPanel({ plan, context, busy, quotaBusy, onQuota, onGoLogin, onScrollAccounts }) {
+  const { account, quota, auth } = context;
+  // 全局 busy（含登录进行中）必须锁住刷新与跳转入口：登录期间不允许再起第二个登录任务。
+  const disabled = busy !== null;
+  return h('section', { className: 'vcp-quota-section', 'aria-busy': Boolean(quotaBusy), 'aria-label': `${PLAN_TITLES[plan]}额度` },
+    h('div', { className: 'vcp-heading' },
+      h('h4', { style: { margin: 0, fontSize: 13, fontWeight: 650 } }, '套餐额度'),
+      h('button', { type: 'button', style: style.btn, disabled: disabled || quotaBusy || !auth.quota, 'aria-busy': quotaBusy || undefined, onClick: () => onQuota(plan) },
+        quotaBusy && !quota ? '正在查询额度…' : quota?.state === 'error' ? '重试额度查询' : '刷新额度')),
+    account && !auth.quota && (!auth.oauth || auth.bound)
+      ? h(Notice, { tone: 'warn', action: auth.oauth
+        ? h('button', { type: 'button', style: style.btn, disabled, onClick: () => onGoLogin(account.id) }, '去账号区重新登录')
+        : h('button', { type: 'button', style: style.btn, disabled, onClick: onScrollAccounts }, '去账号区编辑') },
+      auth.oauth ? '该套餐的登录身份暂不可查询额度，请重新登录后重试。' : '该账号缺少 AK/SK 凭据引用，额度窗口无法查询。')
+      : null,
+    // 已有数据时轮询静默进行（按钮带 aria-busy），避免每轮都闪一次状态文字。
+    quotaBusy && !quota ? h('p', { role: 'status', style: style.muted }, `正在查询${PLAN_TITLES[plan]}的额度…`) : null,
+    !account ? h('p', { style: style.muted }, '请先在「账号与登录」里为此套餐选择账号。')
+      : !quota && !auth.quota ? h('p', { style: style.muted }, '完成此套餐的登录绑定或额度鉴权配置后，即可查询额度。')
+      : h(QuotaWindows, { quota }),
+    // 自动刷新失败不覆盖已有窗口，只在这里说明数据还是上一次的。
+    quota?.refreshError
+      ? h('div', { role: 'status', style: style.warn },
+        h('span', null, `额度更新失败：${describeError(quota.refreshError)}；当前显示 ${formatTime(quota.updatedAt)} 的数据，稍后自动重试。`),
+        // 登录/协议失效是唯一能直接修好的类别：给出到账号区重新登录的入口。
+        quota.errorKind === 'auth' && account
+          ? h('button', { type: 'button', style: style.btn, disabled, onClick: () => onGoLogin(account.id) }, '去重新登录')
+          : null)
+      : null,
+    quota?.updatedAt ? h('p', { style: style.muted }, `额度采集于 ${formatTime(quota.updatedAt)} · 后台会定期刷新`) : null);
+}
+
+/** 模型面板：模型目录、拉取入口、逐模型开关与参数编辑。 */
+function PlanModelsPanel({ plan, context, busy, onModels, onToggleModel, onSaveModelSettings, onResetModelSettings }) {
+  const { activeId, account, catalog, auth, models, enabledCount, orderedModels, canPullModels, routingError } = context;
+  const disabled = busy !== null;
   // 参数编辑状态：同一时刻只展开一个模型，避免把卡片撑得过长。
   const [storedEditor, setEditor] = react.useState(null);
   const [modelsOpen, setModelsOpen] = react.useState(false);
@@ -1596,17 +1700,17 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
     setDraftError(null);
     setDraftFieldErrors(null);
   };
-
   const closeEditor = () => {
     setEditor(null);
     setDraftError(null);
     setDraftFieldErrors(null);
   };
-
+  // 每个控件只发自己那个字段的 patch，必须合并进现有草稿；整体替换会把之前的修改冲掉。
   const changeDraft = (patch) => {
     setEditor((previous) => {
       if (!previous) return previous;
       const draft = { ...previous.draft, ...patch };
+      // 切到自定义映射时，失效的默认档位回落到继承，避免保存一个服务端不认识的档位。
       if (patch.effortsMode !== undefined && !['inherit', 'none'].includes(draft.defaultReasoning)
         && !draftTiers(draft, editedModel).includes(draft.defaultReasoning)) draft.defaultReasoning = 'inherit';
       return { ...previous, draft };
@@ -1614,7 +1718,6 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
     setDraftError(null);
     setDraftFieldErrors(null);
   };
-
   // 校验不通过时不发 RPC：只在界面上说明原因。
   const saveEditor = (model) => {
     if (!editor || !activeId) return;
@@ -1628,18 +1731,56 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
     setDraftFieldErrors(null);
     onSaveModelSettings(plan, activeId, model.id, parsed.settings);
   };
-
   const resetModel = (model) => {
     if (!activeId) return;
     onResetModelSettings(plan, activeId, model.id);
   };
 
-  const planState = providerEnabled
-    ? (!account ? '待选择账号' : !auth.inference ? '待完成鉴权' : '套餐已启用')
-    : '套餐已停用';
-  const planTone = providerEnabled && account && auth.inference ? 'success' : providerEnabled ? 'warn' : 'muted';
+  return h('section', { className: 'vcp-section', 'aria-label': `${PLAN_TITLES[plan]}模型目录` },
+    h('div', { className: 'vcp-heading' },
+      h('div', { className: 'vcp-heading-copy' },
+        h('h4', { style: { margin: 0, fontSize: 13, fontWeight: 650 } }, '模型目录'),
+        !models.length ? h('p', { style: style.muted }, '拉取官方目录，或查看可用的本地快照。') : null),
+      h('button', { type: 'button', style: style.btn, disabled: disabled || !canPullModels, 'aria-busy': busy === `models:${plan}` || undefined, onClick: () => onModels(plan) }, busy === `models:${plan}` ? '正在拉取模型…' : '拉取模型')),
+    account && !auth.oauth && !canPullModels
+      ? h('p', { style: style.muted }, '当前可使用本地模型快照；远端目录需要官方网页登录或该账号隔离目录内的 CLI Profile，配置前无法拉取。') : null,
+    catalog?.error ? h('p', { role: 'alert', style: style.error }, describeError(catalog.error)) : null,
+    models.some(model => model?.settingsWarning) ? h(Notice, { tone: 'warn', role: 'alert' }, '部分模型设置需要确认，展开模型列表可查看原因并调整。') : null,
+    models.length
+      ? h('details', { className: 'vcp-details', open: modelsOpen },
+        h('summary', {
+          style: style.summary,
+          onClick: (event) => {
+            // 自己接管开合，避免浏览器原生开合与受控状态打架。
+            if (event?.preventDefault) event.preventDefault();
+            setModelsOpen((previous) => !previous);
+          }
+        }, `模型列表（已启用 ${enabledCount} / 共 ${models.length}）`),
+        h('div', { className: 'vcp-model-list' },
+          orderedModels.map((model, index) => h(ModelRow, {
+            key: model?.id ?? `model-${index}`,
+            plan, model, disabled, routingError: routingError, editor, draftError, fieldErrors: draftFieldErrors,
+            onToggle: (item, enabled) => onToggleModel(plan, activeId, item.id, enabled),
+            onOpenEditor: openEditor,
+            onCloseEditor: closeEditor,
+            onChangeDraft: changeDraft,
+            onSave: saveEditor,
+            onReset: resetModel
+          }))))
+      : h('p', { style: style.muted }, catalog
+        ? '该目录暂无模型明细（旧缓存可能没有模型列表，重新拉取模型后可用）。'
+        : !account ? '选择账号后显示该套餐的模型目录。' : '模型目录：尚未拉取。'));
+}
 
-  return h('section', { className: 'vcp-plan vcp-card', 'data-section': plan === 'agent-plan' ? '02' : '03', 'aria-label': PLAN_TITLES[plan] },
+/**
+ * 套餐接入面板（「账号与登录」标签内）：启用开关、账号选择、鉴权状态与技术标识。
+ * 额度和模型列表各自有标签，这里只保留「这个套餐接没接上」需要的东西。
+ */
+function PlanAccessPanel({ plan, context, busy, onSelect, onToggleProvider, onGoLogin, onScrollAccounts }) {
+  const { accounts, activeId, account, catalog, route, appliedAccount, auth, providerEnabled, planState, planTone, routingError } = context;
+  const disabled = busy !== null;
+  // 这里已经套在 PlanPanel 的描边容器内，不再自带卡片外框（否则双重描边、圆角不一致）。
+  return h('section', { className: 'vcp-plan-access', 'aria-label': `${PLAN_TITLES[plan]}接入` },
     h(SectionHeading, {
       eyebrow: plan === 'agent-plan' ? 'AGENT PLAN' : 'CODING PLAN',
       title: plan === 'agent-plan' ? 'Agent 套餐' : '编程套餐',
@@ -1653,8 +1794,8 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
           }),
           h('span', null, '启用')))
     }),
-    snapshot?.routingError ? h('p', { style: style.muted }, `所选账号：${account ? accountName(account) : '未选择'}`) : null,
-    snapshot?.routingError ? h(Notice, { tone: 'warn', role: 'alert' }, appliedAccount === undefined
+    routingError ? h('p', { style: style.muted }, `所选账号：${account ? accountName(account) : '未选择'}`) : null,
+    routingError ? h(Notice, { tone: 'warn', role: 'alert' }, appliedAccount === undefined
       ? '实际生效账号暂不可确认，请排除路由错误后重试。'
       : appliedAccount ? `实际生效账号：${accountName(appliedAccount)}（${appliedAccount.id}），路由更新尚未完成。` : '该套餐当前没有已生效的模型路由。') : null,
     h('div', { className: 'vcp-plan-setup' },
@@ -1677,67 +1818,7 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
     account && !auth.oauth && !auth.inference
       ? h(Notice, { tone: 'warn', action: h('button', { type: 'button', style: style.btn, disabled, onClick: onScrollAccounts }, '去账号区编辑') }, '该账号尚未配置此套餐的推理凭据，请在账号高级配置中填写引用名，或使用网页登录。')
       : null,
-    h('section', { className: 'vcp-quota-section vcp-plan-section', 'aria-busy': Boolean(quotaBusy), 'aria-label': `${PLAN_TITLES[plan]}额度` },
-      h('div', { className: 'vcp-heading' },
-        h('h4', { style: { margin: 0, fontSize: 13, fontWeight: 650 } }, '套餐额度'),
-        h('button', { type: 'button', style: style.btn, disabled: disabled || quotaBusy || !auth.quota, 'aria-busy': quotaBusy || undefined, onClick: () => onQuota(plan) },
-          quotaBusy && !quota ? '正在查询额度…' : quota?.state === 'error' ? '重试额度查询' : '刷新额度')),
-      account && !auth.quota && (!auth.oauth || auth.bound)
-        ? h(Notice, { tone: 'warn', action: auth.oauth
-          ? h('button', { type: 'button', style: style.btn, disabled, onClick: () => onGoLogin(account.id) }, '去账号区重新登录')
-          : h('button', { type: 'button', style: style.btn, disabled, onClick: onScrollAccounts }, '去账号区编辑') },
-        auth.oauth ? '该套餐的登录身份暂不可查询额度，请重新登录后重试。' : '该账号缺少 AK/SK 凭据引用，额度窗口无法查询。')
-        : null,
-      // 已有数据时轮询静默进行（按钮带 aria-busy），避免每轮都闪一次状态文字。
-      quotaBusy && !quota ? h('p', { role: 'status', style: style.muted }, `正在查询${PLAN_TITLES[plan]}的额度…`) : null,
-      !account ? h('p', { style: style.muted }, '请先登录或添加账号，再为此套餐选择账号。')
-        : !quota && !auth.quota ? h('p', { style: style.muted }, '完成此套餐的登录绑定或额度鉴权配置后，即可查询额度。')
-        : h(QuotaWindows, { quota }),
-      // 自动刷新失败不覆盖已有窗口，只在这里说明数据还是上一次的。
-      quota?.refreshError
-        ? h('div', { role: 'status', style: style.warn },
-          h('span', null, `额度更新失败：${describeError(quota.refreshError)}；当前显示 ${formatTime(quota.updatedAt)} 的数据，稍后自动重试。`),
-          // 登录/协议失效是唯一能直接修好的类别：给出到账号区重新登录的入口。
-          quota.errorKind === 'auth' && account
-            ? h('button', { type: 'button', style: style.btn, disabled, onClick: () => onGoLogin(account.id) }, '去重新登录')
-            : null)
-        : null,
-      quota?.updatedAt ? h('p', { style: style.muted }, `额度采集于 ${formatTime(quota.updatedAt)} · 后台会定期刷新`) : null),
-    h('section', { className: 'vcp-section vcp-plan-section', 'aria-label': `${PLAN_TITLES[plan]}模型目录` },
-      h('div', { className: 'vcp-heading' },
-        h('div', { className: 'vcp-heading-copy' },
-          h('h4', { style: { margin: 0, fontSize: 13, fontWeight: 650 } }, '模型目录'),
-          !models.length ? h('p', { style: style.muted }, '拉取官方目录，或查看可用的本地快照。') : null),
-        h('button', { type: 'button', style: style.btn, disabled: disabled || !canPullModels, 'aria-busy': busy === `models:${plan}` || undefined, onClick: () => onModels(plan) }, busy === `models:${plan}` ? '正在拉取模型…' : '拉取模型')),
-      account && !auth.oauth && !canPullModels
-        ? h('p', { style: style.muted }, '当前可使用本地模型快照；远端目录需要官方网页登录或该账号隔离目录内的 CLI Profile，配置前无法拉取。') : null,
-      catalog?.error ? h('p', { role: 'alert', style: style.error }, describeError(catalog.error)) : null,
-      models.some(model => model?.settingsWarning) ? h(Notice, { tone: 'warn', role: 'alert' }, '部分模型设置需要确认，展开模型列表可查看原因并调整。') : null,
-      models.length
-        ? h('details', { className: 'vcp-details', open: modelsOpen },
-          h('summary', {
-            style: style.summary,
-            onClick: (event) => {
-              // 自己接管开合，避免浏览器原生开合与受控状态打架。
-              if (event?.preventDefault) event.preventDefault();
-              setModelsOpen((previous) => !previous);
-            }
-          }, `模型列表（已启用 ${enabledCount} / 共 ${models.length}）`),
-          h('div', { className: 'vcp-model-list' },
-            models.map((model, index) => h(ModelRow, {
-              key: model?.id ?? `model-${index}`,
-              plan, model, disabled, routingError: snapshot?.routingError, editor, draftError, fieldErrors: draftFieldErrors,
-              onToggle: (item, enabled) => onToggleModel(plan, activeId, item.id, enabled),
-              onOpenEditor: openEditor,
-              onCloseEditor: closeEditor,
-              onChangeDraft: changeDraft,
-              onSave: saveEditor,
-              onReset: resetModel
-            }))))
-        : h('p', { style: style.muted }, catalog
-          ? '该目录暂无模型明细（旧缓存可能没有模型列表，重新拉取模型后可用）。'
-          : !account ? '选择账号后显示该套餐的模型目录。' : '模型目录：尚未拉取。')),
-    h('details', { className: 'vcp-details vcp-plan-section' },
+    h('details', { className: 'vcp-details' },
       h('summary', { style: style.summary }, '套餐高级信息与技术标识'),
       h('div', { className: 'vcp-details-body' },
         h('p', { style: style.muted }, PLAN_HINTS[plan]),
@@ -1745,8 +1826,7 @@ function PlanCard({ plan, snapshot, rawQuota, busy, quotaBusy, onSelect, onModel
         account ? h('p', { style: style.muted }, `本地账号 ID：${account.id}${auth.oauth && auth.bound ? ` · 套餐 Profile：${account.oauthProfiles[plan]}` : ''}`) : null,
         route ? h('p', { style: style.muted }, `模型路由：${route}`) : null,
         catalog ? h('p', { style: style.muted }, `模型目录：${catalog.count} 个模型（来源 ${CATALOG_SOURCE_LABELS[catalog.source] ?? catalog.source}${catalog.updatedAt ? `，更新于 ${formatTime(catalog.updatedAt)}` : ''}）。`) : null,
-        h('p', { style: style.muted }, '能力参数采用插件固化快照；拉取只更新可用模型清单，手动覆盖优先。')))
-  );
+        h('p', { style: style.muted }, '能力参数采用插件固化快照；拉取只更新可用模型清单，手动覆盖优先。'))));
 }
 
 /**
@@ -1985,7 +2065,8 @@ function VolcengineProviderSection({ client }) {
   const [confirmDelete, setConfirmDelete] = react.useState(null);
   const [loginConfirm, setLoginConfirm] = react.useState(null);
   const [login, setLogin] = react.useState({ jobId: null, state: 'idle', message: '', url: null, authMode: null });
-  const [settingsTab, setSettingsTab] = react.useState('agent-plan');
+  // 默认落在额度分区：它是打开设置时最先要看的结论，模型与账号按需切换。
+  const [settingsTab, setSettingsTab] = react.useState('quota');
   const settingsTabPrefix = react.useRef(`vcp-tabs-${Math.random().toString(36).slice(2, 9)}`).current;
   const tabInitializedRef = react.useRef(false);
   const pendingNavigationRef = react.useRef(null);
@@ -2361,8 +2442,11 @@ function VolcengineProviderSection({ client }) {
   };
 
   const navigateSettings = (tab, target) => {
-    pendingNavigationRef.current = { tab, target };
-    setSettingsTab(tab);
+    // 只接受已注册的分区 id。传错 id 会让四个分区同时 hidden、整页空白，
+    // 所以这里回落到账号与登录（所有跳转入口都指向需要用户操作的地方）。
+    const next = SETTINGS_TABS.some((item) => item.id === tab) ? tab : 'accounts';
+    pendingNavigationRef.current = { tab: next, target };
+    setSettingsTab(next);
   };
 
   // 从套餐卡片一键回到账号区：等目标面板显示后再滚动并聚焦。
@@ -2596,14 +2680,26 @@ function VolcengineProviderSection({ client }) {
             tabIndex: settingsTab === tab.id ? 0 : -1, onClick: () => setSettingsTab(tab.id)
           }, tab.id === 'accounts' ? `${tab.label} (${snapshot.accounts?.length ?? 0})` : tab.label))),
         h('div', { className: 'vcp-tabpanel', role: 'tabpanel', id: `${settingsTabPrefix}-panel`, 'aria-labelledby': `${settingsTabPrefix}-tab-${settingsTab}` },
-        PLANS.map(plan => h('div', { key: plan, className: 'vcp-tab-section', hidden: settingsTab !== plan },
-        h(PlanCard, {
-          plan, snapshot, rawQuota: quotaOf(plan), busy: planBusy, quotaBusy: Boolean(quotaBusy[plan]),
-          onSelect: selectAccount, onModels: pullModels, onQuota: refreshQuota,
-          onToggleProvider: toggleProvider, onToggleModel: toggleModel,
-          onSaveModelSettings: saveModelSettings, onResetModelSettings: resetModelSettings,
-          onGoLogin: goAccountLogin, onScrollAccounts: scrollToAccounts
-        }))),
+        // 每个标签内按套餐分面板：额度与模型各自独立，账号与登录承载套餐接入。
+        h('div', { className: 'vcp-tab-section', hidden: settingsTab !== 'quota' },
+        PLANS.map(plan => {
+          const context = planContext(plan, snapshot, quotaOf(plan));
+          return h(PlanPanel, { key: plan, plan, summary: quotaSummary(context) },
+            h(PlanQuotaPanel, {
+              plan, context, busy: planBusy, quotaBusy: Boolean(quotaBusy[plan]),
+              onQuota: refreshQuota, onGoLogin: goAccountLogin, onScrollAccounts: scrollToAccounts
+            }));
+        })),
+        h('div', { className: 'vcp-tab-section', hidden: settingsTab !== 'models' },
+        PLANS.map(plan => {
+          const context = planContext(plan, snapshot, quotaOf(plan));
+          return h(PlanPanel, { key: plan, plan, summary: `已启用 ${context.enabledCount} / 共 ${context.models.length}` },
+            h(PlanModelsPanel, {
+              plan, context, busy: planBusy,
+              onModels: pullModels, onToggleModel: toggleModel,
+              onSaveModelSettings: saveModelSettings, onResetModelSettings: resetModelSettings
+            }));
+        })),
         h('div', { className: 'vcp-tab-section', hidden: settingsTab !== 'media' },
         h(MediaCard, {
           snapshot, busy: planBusy,
@@ -2625,6 +2721,16 @@ function VolcengineProviderSection({ client }) {
           onCancelLoginConfirm: () => setLoginConfirm(null),
           onCancelLogin: () => { void cancelLogin(); },
           onSubmitLoginCode: (code) => { void submitLoginCode(code); }
+        }),
+        // 套餐启用与账号选择属于接入配置，跟账号放在一起，避免在额度/模型标签里重复。
+        PLANS.map(plan => {
+          const context = planContext(plan, snapshot, quotaOf(plan));
+          return h(PlanPanel, { key: plan, plan, summary: context.planState },
+            h(PlanAccessPanel, {
+              plan, context, busy: planBusy,
+              onSelect: selectAccount, onToggleProvider: toggleProvider,
+              onGoLogin: goAccountLogin, onScrollAccounts: scrollToAccounts
+            }));
         })))));
 }
 

@@ -765,6 +765,33 @@
         "positioning": "智谱最新旗舰，复杂软件工程与 Agent 能力突出，1M 上下文，可生产级代码交付。"
       },
       {
+        "id": "glm-5-4-261123",
+        "name": "GLM 5.4",
+        "defaultReasoning": null,
+        "messagesThinkingMode": "enabled",
+        "canDisableThinking": false,
+        "capabilityStatus": "partial",
+        "capabilityNote": "上下文、输出与多模态取所选账号 Plan 清单的注册值；三档按智谱 GLM-5.2 及以上 reasoning_effort 声明与 GLM 5.3 系列档位推导，GLM-5.4 专页与火山深度思考表未单列；未获关闭入口声明，不提供关闭。",
+        "maxTokens": 131072,
+        "input": [
+          "text",
+          "image"
+        ],
+        "reasoningEfforts": {
+          "low": "low",
+          "high": "high",
+          "max": "max"
+        },
+        "aliases": [
+          "glm-5.4"
+        ],
+        "contextWindow": 1048576,
+        "compat": {
+          "forceAdaptiveThinking": true
+        },
+        "positioning": "智谱首款 Loop Transformer 旗舰，新增视觉理解与更强的泛 Coding 能力，1M 上下文。"
+      },
+      {
         "reasoningEfforts": {
           "off": null,
           "low": "low",

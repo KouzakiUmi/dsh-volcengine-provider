@@ -1,5 +1,30 @@
 # 验证记录
 
+## 0.2.21 设置页按功能分区与倍率徽标
+
+- 标签重构：顶层从「按套餐分」改为「按功能分」（额度 / 模型 / 图片生成 / 账号与登录），每个分区内按套餐渲染可折叠面板；套餐启用与账号选择只在账号与登录分区出现一次。实测窄屏默认高度从重构前的 1112px（单套餐 + 隐藏另一套餐）变为 1281px（两个套餐额度同时可见），即在同一视口里多展示了一个套餐，且去掉了额度分区里的套餐开关与账号选择块。
+- 长度取证：`scripts/browser-smoke.cjs` 新增 `DSH_TEST_MEASURE=1` 受控测量（不参与断言），在 390px 窄屏输出展开/收起两种状态的区块高度。重构前记录：默认 1112px，其中额度窗口 656px（59%）；展开模型列表 2193px，模型目录一项 1150px（演示仅 1 个模型，真实 16 个模型时更长）。
+- 排序：模型列表内已启用模型排在前面，同组保持目录原序；已启用判定沿用「旧快照缺 `enabled` 视为启用」。
+- 倍率徽标：`resolveConsumption` → `rateBadge` → `withRateBadges` 注入 `LlmModelInfo.badge`。用两套真实清单实跑：GLM 5.4 在两套餐均为 `x3.60` tone `info`、剩余 12 天；`glm-5.3` 为 `x4.50` neutral；`ark-code-latest` 无徽标。
+- 编程套餐 GLM 5.4：真实 ArkCli 清单（2026-11-26）两套餐都返回 `glm-5-4-261123`；`agent-plan` 上游 `model_id` 为 `glm-5-4-261101`，`coding-plan` 与 `output_name` 相同。两者 `context_window` 1048576、`max_completion_tokens` 131072、`input_modalities` text/image/video、`enabled_thinking: true` 一致。
+- 重构缺陷修复：交叉核对发现模型参数草稿被整体替换而非按字段合并，导致同一次编辑里除最后一个字段外的修改全部丢失；已恢复合并语义并补 `effortsMode` 联动逻辑，单测重新覆盖。
+- 发布前独立交叉核验（只读代理，快照 HEAD `21ca75f` + 工作区改动）提出 2 阻断 / 3 建议 / 5 提示，已全部处理：
+  - **阻断**：图片生成分区的「前往 Agent 套餐」把已废弃的 `agent-plan` 传给导航；四个分区判定条件都不匹配该 id，点击后整页空白且键盘导航失效。现改为跳「账号与登录」，并在 `navigateSettings` 增加分区白名单回落，新增用例点击该按钮验证目标分区与「至少一个分区可见」。
+  - **阻断**：折叠面板箭头用 JS 八进制转义写成 `\25BE`，实际渲染成控制字符 U+0015 加字面 `BE`。现直接使用 Unicode `▾`。
+  - 建议：`PlanQuotaPanel` 未从 context 取 `disabled`（登录进行中仍可再起登录任务），改为按传入 busy 计算；账号与登录分区双重描边（`vcp-card` 内联样式压过剥离规则），去掉内联卡片样式；changelog 引用了从未发布的 0.2.20，改为 0.2.21。
+  - 提示：分区渲染顺序与标签顺序不一致 → 标签改为「额度 / 模型 / 图片生成 / 账号与登录」与 DOM 一致；折叠摘要在额度失败态曾误报「已采集」，改为区分失败/鉴权未就绪；模型参数草稿的字段名笔误（`draftsMode` → `effortsMode`）。
+  - 测试补充：套餐启用开关与账号选择的唯一性断言、按内容而非渲染索引定位分区、键盘导航补「最后一个分区之后循环回第一个」、图片生成跳转回归。
+- 已执行：`node scripts/check.mjs`（62 源文件）、`node scripts/build.mjs`（24 文件）、`node --test test/*.test.mjs` **469 项通过**；离线 Chrome 验证（假 RPC、HTTP(S) 阻断）：四分区导航与键盘循环、同分区内两个套餐面板同时可见、切走后隐藏不卸载、模型编辑器跨标签保留、390px 窄屏两个额度面板均不溢出、深浅色 × 2 种令牌配置共 4 组 WCAG AA 全过（最低 4.59:1）；截图 `test-output/tabs-021*.png`。
+- 未覆盖：未在运行中的 DSH 宿主里重启核对（需安装新版本后生效）；未调用真实方舟推理或额度接口。
+
+### 编程套餐 GLM 5.4 与模型选择器倍率徽标
+
+- 真实账号清单（ArkCli 1.0.64 → 运行中自动升级到 1.0.65，插件隔离身份，2026-11-26）两个套餐都返回 `glm-5-4-261123`：`agent-plan`（tier medium）上游 `model_id` 为 `glm-5-4-261101`，`coding-plan`（tier pro）`model_id` 与 `output_name` 相同；两者的 `context_window` 1048576、`max_input_tokens`/`max_completion_tokens` 131072、`input_modalities` text/image/video、`enabled_thinking: true` 完全一致。0.2.19 发布时 coding-plan 尚未返回该模型，本次按新清单补齐。
+- 倍率徽标链路：`resolveConsumption(plan, id)` → `rateBadge()` → `withRateBadges()` 注入 `LlmModelInfo.badge`。用两套真实清单实跑归一后的模型行：GLM 5.4 在两套餐均为 `x3.60` tone `info`、剩余 12 天；`glm-5.3` 为 `x4.50` neutral；`kimi-k2-8-preview` `x4.80`、`deepseek-v4-1-flash` `x1.25` 等既有折扣模型按时间窗生效；`ark-code-latest` 无徽标（动态路由不伪造倍率）。
+- Core 契约核对（本机 `app.asar` 内 `@deepseek-ai/dsh-llm@0.2.2-rc.5`）：`LlmModelBadge = { text: LocalizedText（en 必填）, tone: neutral|info|success|warning }`，注释写明 badge 只由 `listModels()` 的目录发现携带、exact-route resolution 省略；`index.ts` 的 `normalizeModelInfo` 会复制 `badge`。因此徽标必须在适配器外面补，且 `resolveModel` 不得返回它——两点各有测试锁定。
+- 已执行：`node scripts/check.mjs`（62 源文件）、`node scripts/build.mjs`（24 文件）、`node --test test/*.test.mjs` **468 项通过**（新增倍率契约 6 项、徽标注入与不覆盖 2 项、`resolveModel` 不含徽标 1 项）。
+- 未覆盖：未在运行中的 DSH 宿主里确认选择器实际渲染效果（需要重启加载新 bundle 后目视核对）；未调用真实方舟推理；未验证活动结束后徽标自动回常规价的实际刷新时机（依赖 Core 的目录刷新节奏，本地只用注入时间戳的单测覆盖）。
+
 ## 0.2.19 新增 GLM 5.4（Agent Plan）
 
 - 真实账号清单（ArkCli 1.0.64，插件隔离身份 `agent-plan_cn-beijing_personal` / tier medium，2026-11-24）返回 `model_id` `glm-5-4-261101`、`output_name` `glm-5-4-261123`、`context_window` 1048576、`max_input_tokens`/`max_completion_tokens` 131072、`input_modalities` `text`/`image`/`video`、`enabled_thinking: true`。同账号 `coding-plan_cn-beijing_personal`（tier pro）清单只有 `glm-5-3-flash`、`glm-5.3`，未返回 GLM 5.4。
@@ -25,7 +50,7 @@
 - 未覆盖：未在运行中的 DSH 宿主里重启验证（本机 profile 安装的是 npm 发布的 0.2.17，工作区改动需重新构建并安装后生效）；未调用真实方舟生图 / 图生图接口，未验证真实上传图片的端到端编辑。
 - 宿主降级预期：peer 范围仍含 `0.2.1-rc.4`。若该版本不在 `GenerateOptions` 传 `sessionId`，索引只进全局表，`session-latest` 会明确报错（功能不可用，但不会取错图），完整 sha256 与本地路径不受影响；本机只在 `0.2.2-rc.5` 上核过 `sessionId` 传递链路。
 
-## [未发布] 设置页按套餐分区与图片生成单开关
+## 0.2.17 设置页按套餐分区与图片生成单开关（历史记录，分区方案已被 0.2.21 的功能分区取代）
 
 - 设置页四分区改为「Agent 套餐 / 编程套餐 / 账号与登录 / 图片生成」，每套餐一张卡片完整承载启用、账号、额度窗口、模型目录与技术细节；模型列表与高级信息默认折叠。`.vcp-tabs` 固定 `overflow-y:hidden` 并横向可滚，消除标签条多余滚动条。
 - 图片生成由「风险确认 + 工具开关」两道门合并为单个「启用图片生成」开关，一次 `setMedia` 同时写入 `riskAcknowledged` 与 `imageTool`（后端既有合并语义，未改）；计费说明保留在卡片内。
