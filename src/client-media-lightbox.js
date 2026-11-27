@@ -29,5 +29,5 @@ export function MediaLightbox({ viewer, onClose }) {
       h('button', { type: 'button', className: 'vcp-media-lightbox-close', onClick: onClose, 'aria-label': '关闭大图' }, '×')),
     h('div', { ref: viewport, className: 'vcp-media-lightbox-viewport' },
       h('div', { style: { width: `${zoom * 100}%`, height: `${zoom * 100}%` } },
-        h('img', { src: viewer.src, alt: viewer.label, draggable: false }))));
+        h('img', { src: viewer.src, alt: viewer.label, draggable: false, 'data-transparent': viewer.transparent || undefined }))));
 }

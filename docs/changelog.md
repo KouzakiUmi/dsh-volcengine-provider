@@ -2,6 +2,20 @@
 
 [返回主页](../README.md)
 
+## [0.2.22] — 2026-11-28
+
+### Seedream 透明图、图层拆分与文字识别
+
+- Seedream 5.5 支持文生和多参考图生透明 RGBA PNG。图层拆分最多返回 1 张底图和 99 个图层，可指定输出总数和开启富文本 OCR。5.0 Pro / Flash 也可拆分图层，透明生图需一张带 Alpha 的 PNG 参考图。
+- 会话卡片按图层顺序分页，逐层预览和下载，保留边界框以及文字、逐行位置和样式。JPEG 底图与透明 PNG 图层都保存原始字节；不会截断到 4 张。
+- 通过真实 Agent Plan 请求验证透明文生图、独立 PNG 图层和富文本 OCR；[使用示例](media-generation.md) · [验证记录](validation.md)。
+
+### 设置与稳定性
+
+- 空账号直接显示登录区；账号被其他实例移除后，过期的登录或删除确认会关闭。切换账号时保留新账号已随响应返回的额度快照。
+- 更新身份或凭据后，清除旧的目录和额度失败退避。原图下载在断开连接时释放等待资源。
+- 移除 MiniMax M3 在旧模型快照中的倍率徽标；现行 Agent Plan 个人版公开抵扣表已不再列出该项。
+
 ## [0.2.21] — 2026-11-26
 
 ### 设置页按功能分区
@@ -16,9 +30,9 @@
 
 - 会话模型选择器显示消耗倍率：Core 的 `LlmModelInfo.badge` 由适配器在 `listModels` 外面补（`withRateBadges`），因为 `PiAiAdapter.listModels` 只回 provider/id/name/inputModalities，描述符上的 badge 会在该层被丢弃。常规倍率为中性色 `x4.50`，活动期为高亮色并附剩余天数。
 - 未知倍率不挂徽标（不谎报免费），点倍率 0 显示"免费"；`resolveModel` 按 Core 契约不带 badge；徽标只随目录发现下发，不进入请求载荷、路由配置或用户覆盖。
-- 设置页角标与新徽标共用 [同一份契约](src/rate-badge.mjs)，文案由 `3.6×` 统一为 `x3.60`，活动期标注由"限时"改为"活动 N 天"。
+- 设置页角标与新徽标共用 [同一份契约](../src/rate-badge.mjs)，文案由 `3.6×` 统一为 `x3.60`，活动期标注由"限时"改为"活动 N 天"。
 - 编程套餐真实清单现已返回 `glm-5-4-261123`，按同套餐固化值加入快照；Agent 套餐侧的上游 `model_id` 仍是 `glm-5-4-261101`，别名按套餐各自声明。两套餐都是 1M 上下文、131072 输出、视觉输入、low/high/max 三档。
-- Client bundle 的模块拼接抽到 [scripts/client-bundle.mjs](scripts/client-bundle.mjs) 单一事实源；漂移守卫测试直接比对测试源码与构建产物逐字一致。
+- Client bundle 的模块拼接抽到 [scripts/client-bundle.mjs](../scripts/client-bundle.mjs) 单一事实源；漂移守卫测试直接比对测试源码与构建产物逐字一致。
 - 测试：`node scripts/check.mjs`（62 源文件）、`node scripts/build.mjs`（24 文件）、`node --test test/*.test.mjs` 469 项与离线浏览器验证均通过。
 
 ## [0.2.19] — 2026-11-24

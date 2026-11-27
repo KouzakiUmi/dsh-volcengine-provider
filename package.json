@@ -1,8 +1,8 @@
 {
   "name": "dsh-volcengine-provider",
   "displayName": "火山方舟 Provider",
-  "version": "0.2.21",
-  "description": "火山方舟 Agent Plan 与 Coding Plan：OAuth 登录、账号、模型与额度管理。",
+  "version": "0.2.22",
+  "description": "火山方舟 Agent Plan 与 Coding Plan：账号、模型与额度管理，支持 Seedream 透明图片和图层拆分。",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/KouzakiUmi/dsh-volcengine-provider.git"

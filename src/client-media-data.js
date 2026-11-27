@@ -44,6 +44,27 @@ export function textOf(block) {
     .map(part => part.text.trim()).join('\n\n');
 }
 
+export function isLayerResult(block) {
+  return argsOf(block).layer_decomposition === true || block?.meta?.originals?.[0]?.z_index === 0;
+}
+
+export function mediaItemLabel(item) {
+  if (item.zIndex === 0) return '底图';
+  return item.zIndex === undefined ? item.name : `图层 ${item.zIndex}${item.layerName ? ` · ${item.layerName}` : ''}`;
+}
+
+function mediaResultDetails(value, transparentRequested) {
+  const zIndex = value?.z_index;
+  return {
+    ...(Number.isSafeInteger(zIndex) && zIndex >= 0 ? { zIndex } : {}),
+    layerName: typeof value?.name === 'string' ? value.name : '',
+    description: typeof value?.description === 'string' ? value.description : '',
+    transparent: zIndex > 0 || value?.background === 'transparent' || (value?.background === undefined && transparentRequested),
+    bounds: isRecord(value?.bounding_box) ? value.bounding_box : undefined,
+    ocr: typeof value?.text_recognition?.text === 'string' ? value.text_recognition : undefined
+  };
+}
+
 function normalizedImage(part) {
   const value = part?.attachment;
   if (!isRecord(value) || typeof value.attachmentId !== 'string' || !IMAGE_TYPES.has(value.mediaType)) return undefined;
@@ -63,7 +84,7 @@ function originalItem(value) {
   return {
     kind: 'original', id: ref.attachmentId, mediaType: value.mediaType, bytes,
     width: Number(value.width ?? 0), height: Number(value.height ?? 0),
-    name: typeof ref.name === 'string' && ref.name ? ref.name : `图片.${value.mediaType === 'image/jpeg' ? 'jpg' : 'png'}`,
+    name: typeof ref.name === 'string' && ref.name ? ref.name : `图片.${value.mediaType === 'image/jpeg' ? 'jpg' : value.mediaType.slice(6)}`,
     attachment: { attachmentId: ref.attachmentId, name: typeof ref.name === 'string' && ref.name ? ref.name : 'image', bytes }
   };
 }
@@ -84,7 +105,9 @@ export function mediaItems(block) {
   const meta = isRecord(block?.meta) ? block.meta : {};
   const originalValues = Array.isArray(meta.originals) ? meta.originals : [];
   const content = Array.isArray(block?.content) ? block.content : [];
-  const normalizedParts = content.filter(part => isRecord(part) && part.type === 'image');
+  const normalizedParts = isLayerResult(block) && Array.isArray(meta.images)
+    ? meta.images.map(attachment => ({ attachment })) : content.filter(part => isRecord(part) && part.type === 'image');
+  const transparentRequested = argsOf(block).background === 'transparent';
   if (originalValues.length) {
     const items = [];
     const seen = new Set();
@@ -96,9 +119,12 @@ export function mediaItems(block) {
         kind: 'normalized', id: fallback.attachmentId, name: fallback.name, mediaType: fallback.mediaType,
         bytes: fallback.bytes, width: fallback.width, height: fallback.height, attachment: fallback
       } : undefined);
-      if (!item || seen.has(item.id)) continue;
-      seen.add(item.id);
-      items.push(item);
+      if (!item) continue;
+      const details = mediaResultDetails(originalValues[index], transparentRequested);
+      const key = details.zIndex === undefined ? item.id : `layer:${details.zIndex}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      items.push({ ...item, ...details, key });
     }
     return items;
   }
@@ -111,7 +137,7 @@ export function mediaItems(block) {
     if (!ref || seen.has(ref.attachmentId)) continue;
     seen.add(ref.attachmentId);
     images.push({
-      kind: 'normalized', id: ref.attachmentId, name: ref.name, mediaType: ref.mediaType,
+      kind: 'normalized', id: ref.attachmentId, key: ref.attachmentId, name: ref.name, mediaType: ref.mediaType,
       bytes: ref.bytes, width: ref.width, height: ref.height, attachment: ref
     });
   }

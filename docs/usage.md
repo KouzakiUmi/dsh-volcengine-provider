@@ -160,6 +160,10 @@ accounts/<account-id>/sessions/<home-id>/.arkcli/ 每次新登录独立的官方
 
 在设置页「图片生成」分区打开「启用图片生成」开关即可；开关一次同时确认按用量计费并启用工具，关闭即停用，已生成附件保留。默认模型可选择 5.0 Pro、5.5、5.0 Flash，单次调用仍可覆盖。工具按 Agent Plan 所选账号取推理凭据，未选账号、未绑定套餐 profile 或凭据引用无法解析时会明确报错。模型、原图保存、会话卡片与回源路由见[图片生成与渲染](media-generation.md)。
 
+### 怎么用 Seedream 5.5 生成透明图和分层素材？
+
+在会话中说「用 Seedream 5.5 生成透明 PNG」即可指定透明输出；也可以上传一张 PNG 或 JPEG，要求「把这张图拆成独立图层，并识别标题文字」。卡片支持逐层下载原图、查看坐标和富文本 OCR。具体参数以及不同模型的限制见[透明 PNG 与图层拆分](media-generation.md#透明-png-与图层拆分)。
+
 ### 旧路由还在，是重复安装了吗？
 
 不一定。插件新路由为 `volcengine-agent-plan` / `volcengine-coding-plan`；原有 `arkcli-agent-plan` / `arkcli-coding-plan` 保持不变。先并存验收，再自行切换会话模型；插件不删除旧配置。

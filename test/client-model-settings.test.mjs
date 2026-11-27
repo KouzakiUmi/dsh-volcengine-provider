@@ -84,6 +84,8 @@ function createMiniReact() {
     if (typeof previous === 'function') previous();
     pendingEffects.push(() => { instance.cleanups[index] = fn(); });
   }
+  // 替身无 DOM，layout 与 passive effect 时机无差别；提供同形 API 让生产代码可用。
+  const useLayoutEffect = useEffect;
 
   function createElement(type, props, ...children) {
     const next = props ? { ...props } : {};
@@ -132,7 +134,7 @@ function createMiniReact() {
   }
 
   return {
-    createElement, useState, useRef, useCallback, useEffect, render, flushEffects, unmount,
+    createElement, useState, useRef, useCallback, useEffect, useLayoutEffect, render, flushEffects, unmount,
     isDirty: () => dirty,
     clearDirty: () => { dirty = false; }
   };

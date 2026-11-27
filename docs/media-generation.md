@@ -22,18 +22,37 @@
 
 ## `volc_imagine`
 
-同步图片生成与编辑，单次 300 秒超时。
+同步图片生成、编辑与图层拆分，单次 300 秒超时。
 
 | 参数 | 说明 |
 |---|---|
-| `prompt` | 必填，≤8000 字符 |
+| `prompt` | 生成或编辑时必填，≤8000 字符；拆分时可省略，由模型自动识别主要元素 |
 | `model` | 上表三个别名；省略时使用设置页默认模型 |
-| `image` / `images` | 可选参考图（会话图片引用、`session-latest`、本地路径、https URL 或 data URI）；省略为文生图，传入为图生图/多图融合，合计最多 10 张 |
-| `size` | `1K` / `1.5K` / `2K` 档位或 `宽x高` 像素；默认 `2K` |
-| `output_format` | `png` / `jpeg`；默认 `png` |
+| `image` / `images` | 会话图片引用、`session-latest`、本地路径、HTTPS URL 或 data URI；生成最多 10 张参考图，图层拆分必须传一张 PNG/JPEG |
+| `size` | `1K` / `1.5K` / `2K`；生成可传 `宽x高`，默认 `2K`；图层拆分可传 `auto`，默认 `auto` |
+| `output_format` | `png` / `jpeg`，插件默认 `png`；拆分时只控制底图，上层始终是透明 PNG |
+| `background` | `transparent` 输出带 Alpha 的 PNG；`opaque` 请求不透明图；5.5 还可用 `auto`。图层拆分不传此参数 |
+| `layer_decomposition` | `true` 拆分单张图；默认关闭 |
+| `layer_decomposition_options` | 仅 5.5 拆分可用：`max_images` 为含底图的输出总数上限（2–100，方舟默认 30）；`text_recognition: true` 开启规整文字图层的富文本 OCR |
 | `watermark` | 默认 true |
 
 参考图格式为 jpeg/png/webp/bmp/tiff/gif，单文件 <30 MB；本地上传编码为 data URI 随请求发送。生成图片经白名单域名下载，远程签名 URL 不进入任务状态、工具返回值或日志。
+
+### 透明 PNG 与图层拆分
+
+**透明 PNG**：5.5 支持文生图及最多 10 张参考图，输入图无需透明通道。5.0 Pro 和 5.0 Flash 需要一张带 Alpha 的 PNG 参考图。`background: "transparent"` 不能与 `output_format: "jpeg"` 一起使用。
+
+```json
+{"model":"doubao-seedream-5.5","prompt":"一枚红色邮票，主体外为透明背景","background":"transparent"}
+```
+
+**图层拆分**：5.5 最多 1 张底图和 99 个图层；5.0 Pro / Flash 最多 1 张底图和 16 个图层。输入图的总像素需为 262,144–36,000,000，宽高比 1:16–16:1；若会话附件已被宿主转码为 WebP，改用原始 PNG/JPEG 路径或 URL。
+
+```json
+{"model":"doubao-seedream-5.5","image":"session-latest","layer_decomposition":true,"layer_decomposition_options":{"max_images":12,"text_recognition":true}}
+```
+
+`originals` 按 `z_index` 从底图（0）向上排列，保留原始尺寸、名称、描述、底图坐标系的绝对和归一化边界框，以及方舟实际返回的 `text_recognition`（逐行坐标和样式片段）。会话卡片分页显示并逐层下载；文字和样式可在图层详情查看。拆分产物是独立图像与位置数据，卡片不合成或编辑 PSD。
 
 ### 会话图片引用
 
@@ -53,13 +72,15 @@
 - **原始文件附件**：`attachments.saveFile` 逐字节保存方舟返回的 PNG/JPEG，格式、文件名和字节内容不被图片规范化改变。
 - **会话图片附件**：`attachments.saveImage` 保存供模型后续视觉输入使用的图片。当前宿主可能对图片降采样、去元数据并重编码；不透明图片可规范化为 JPEG，含透明通道的图片可规范化为 WebP。
 
-工具按下载字节的文件头核对实际上游格式。实际格式与 `output_format` 不一致时明确失败，不保存格式不符的文件，也不按文件名猜格式。工具结果同时携带两类附件；`meta.originals` 记录原文件引用、真实媒体类型和预览尺寸。
+工具按下载字节核对格式与透明通道。普通图和底图按 `output_format` 核对；上层按透明 PNG 核对。不符合要求的文件不会保存。`meta.originals` 记录原文件引用、真实媒体类型和原图尺寸；拆分时所有图层仍可通过工具结果中的引用继续编辑，只有底图自动进入模型的视觉上下文。
 
 官方参数依据：
 
 - [图片生成教程](https://docs.volcengine.com/docs/ark/image-generation-tutorial?lang=zh)
 - [Doubao Seedream 5.0 pro / flash 教程](https://docs.volcengine.com/docs/ark/seedream-5-0-pro?lang=zh)
 - [Doubao Seedream 5.5 教程](https://docs.volcengine.com/docs/ark/seedream-5-5?lang=zh)
+- [图片生成 API](https://docs.volcengine.com/docs/ark/image-generation-api?lang=zh)
+- [Agent Plan 个人版模型上线公告](https://docs.volcengine.com/docs/ark/agent-plan-personal-model-release?lang=zh)
 - [Agent Plan 个人版功能发布公告](https://docs.volcengine.com/docs/ark/agent-plan-personal-feature-release?lang=zh&mode=pure)
 
 ## 会话内渲染

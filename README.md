@@ -4,13 +4,13 @@
 
 **在 DeepSeek Harness 中接入火山方舟 Agent Plan 与 Coding Plan。**
 
-账号管理、官方 CLI 两段式登录、模型同步和套餐额度，集中在一个设置页面。
+在一个设置页面管理账号、模型和套餐额度，也可在会话中用 Seedream 生成透明图片、拆分图层和识别图层文字。
 
 [![npm](https://img.shields.io/npm/v/dsh-volcengine-provider?color=3b82f6)](https://www.npmjs.com/package/dsh-volcengine-provider)
 [![CI](https://github.com/KouzakiUmi/dsh-volcengine-provider/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/KouzakiUmi/dsh-volcengine-provider/actions/workflows/ci.yml)
 [![MIT](https://img.shields.io/badge/license-MIT-64748b)](LICENSE)
 
-[快速开始](#快速开始) · [功能介绍](#功能介绍) · [使用说明](docs/usage.md) · [更新记录](docs/changelog.md)
+[快速开始](#快速开始) · [功能介绍](#功能介绍) · [使用说明](docs/usage.md) · [更新记录](docs/changelog.md) · [GitHub Releases](https://github.com/KouzakiUmi/dsh-volcengine-provider/releases)
 
 </div>
 
@@ -68,7 +68,7 @@ Agent Plan 与 Coding Plan 各有独立的启用开关、账号选择、模型�
 
 ### 生成并查看图片
 
-在设置页打开「启用图片生成」开关后，向会话注册 Seedream 图片工具，支持 5.0 Pro、5.5、5.0 Flash 默认模型选择及单次调用覆盖。原始 PNG/JPEG 逐字节保存为文件附件，会话视觉输入另用宿主规范化图片；专用卡片提供画廊、大图缩放、原图下载、失败重试和旧结果兼容。查看[图片卡片预览](docs/client-media-preview.png)与[图片设置预览](docs/client-media-settings-preview.png)。详见[图片生成与渲染](docs/media-generation.md)。
+在设置页打开「启用图片生成」后，可使用 Seedream 生成、编辑图片和拆分图层。5.5 支持文生和图生透明 PNG，以及最多 99 个图层和规整文字图层的富文本 OCR。会话卡片可逐层预览、查看坐标和 OCR、下载原始文件。默认模型可在 5.0 Pro、5.5、5.0 Flash 之间切换。查看[图片卡片预览](docs/client-media-preview.png)、[图片设置预览](docs/client-media-settings-preview.png)与[调用示例](docs/media-generation.md)。
 
 ### 查看额度与重置时间
 
@@ -81,7 +81,7 @@ Coding Plan 展示剩余百分比；Agent Plan 同时展示 AFP 已用量、上�
 - **ArkCli**：两段式登录需支持 `arkcli auth login volc-sso --no-browser`；Phase 1 输出、session 接力与 Phase 2 解析已用真实 1.0.37（Windows）核验，真实授权码端到端登录未验收。
 - 当前支持国内个人 Agent Plan / Coding Plan。
 
-0.2.14 已发布到 npm `latest`。已完成隔离测试、目标 Core 加载与离线界面验证；两段式登录的 Phase 1/接力/Phase 2 解析已用真实 ArkCli 1.0.37 核验，真实授权码端到端登录、在线额度、推理调用和生产安装的边界见[验证记录](docs/validation.md)。
+Seedream 5.5 的透明文生图、图层拆分和富文本 OCR 已通过真实 Agent Plan 请求验证。其他模型、登录与宿主的实测范围见[验证记录](docs/validation.md)。
 
 账号删除仅移除插件元数据，已保存的官方 CLI 身份目录会保留。反馈问题时请提供版本、套餐类型和脱敏错误，凭据、授权码及授权链接请勿提交。
 

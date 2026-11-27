@@ -87,12 +87,14 @@ export class ArkController {
   /**
    * 清身份与推理缓存。额度快照默认保留（采集器会按 TTL 刷新）；
    * 凭据引用变化、重新登录、卸载这类身份级事件传 quotas: true 一并作废。
+   * 失败退避表随身份/凭据事件一起清：修正凭据或重新登录后不能让旧的
+   * 退避继续抑制额度（最长 8 分钟）与目录（最长 1 小时）的自动重采。
    */
   clearCaches({ quotas = false, persist = true } = {}) {
     this.cacheGeneration++;
     this.cache.clear(); this.inflight.clear(); this.inferenceCache.clear(); this.inferenceInflight.clear();
     this.identityCache.clear(); this.identityInflight.clear(); this.inferenceFailure.clear();
-    this.expiryCache.clear();
+    this.expiryCache.clear(); this.quotaFailures.clear(); this.catalogFailures.clear();
     if (quotas) {
       this.quotaSnapshots.entries.clear();
       // 卸载时只清内存，不再排队落盘：避免与调用方删除数据目录竞争。

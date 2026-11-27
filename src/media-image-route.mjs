@@ -42,7 +42,9 @@ function readReference(url) {
   const name = String(url.searchParams.get('name') ?? '').slice(0, 200);
   if (!ATTACHMENT_ID.test(attachmentId) || !IMAGE_TYPES.has(mediaType)) return undefined;
   if (!Number.isSafeInteger(bytes) || bytes <= 0 || bytes > MAX_IMAGE_RESULT_BYTES) return undefined;
-  if (!name || /[\x00-\x1f\x7f]/u.test(name)) return undefined;
+  // 只接受不含分隔符与父级引用的 leaf 文件名：与宿主 fileLeafName 同口径，
+  // 纵深防御——不把路径穿越的机会留给下游附件服务实现。
+  if (!name || /[\x00-\x1f\x7f/\\]/u.test(name) || name === '.' || name === '..') return undefined;
   return { ref: { attachmentId, name, bytes }, mediaType };
 }
 
@@ -50,7 +52,31 @@ function safeName(name) {
   return name.replace(/[^\w.-]+/gu, '_').slice(0, 120) || 'image.bin';
 }
 
+/**
+ * 背压等待与中断竞争：客户端断开（close/error）或插件卸载（abort）时，
+ * drain 永远不会触发，必须让这个等待立刻结束，否则 handler 永久挂起，
+ * 泄漏 TCP 连接与宿主 readFileStream 的文件描述符。
+ */
+function awaitBackpressure(response, signal) {
+  return new Promise(resolve => {
+    const finish = () => {
+      response.off('drain', onDrain);
+      response.off('close', onStop);
+      response.off('error', onStop);
+      signal.removeEventListener('abort', onStop);
+      resolve();
+    };
+    const onDrain = () => finish();
+    const onStop = () => finish();
+    response.once('drain', onDrain);
+    response.once('close', onStop);
+    response.once('error', onStop);
+    signal.addEventListener('abort', onStop);
+  });
+}
+
 async function drained(response) {
+  if (response.writableEnded || response.destroyed) return;
   await new Promise((resolve, reject) => {
     response.once('finish', resolve);
     response.once('close', resolve);
@@ -88,7 +114,7 @@ export function registerImageFileRoute(webCtx, options) {
           if (disposed || controller.signal.aborted) break;
           total += chunk.byteLength;
           if (total > parsed.ref.bytes) throw new Error('图片附件超出声明长度');
-          if (!response.write(chunk)) await new Promise(resolve => response.once('drain', resolve));
+          if (!response.write(chunk)) await awaitBackpressure(response, controller.signal);
         }
         if (total !== parsed.ref.bytes && !controller.signal.aborted) throw new Error('图片附件长度不一致');
         response.end();

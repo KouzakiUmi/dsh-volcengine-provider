@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "verifiedAt": "2026-10-30",
+  "verifiedAt": "2026-11-24",
   "models": {
     "doubao-seed-evolving": {
       "ids": ["doubao-seed-evolving"],
@@ -86,10 +86,6 @@
     "kimi-k2.7-code": {
       "ids": ["kimi-k2.7-code"],
       "multiplier": 4.5
-    },
-    "minimax-m3": {
-      "ids": ["minimax-m3"],
-      "multiplier": 2.5
     }
   }
 }

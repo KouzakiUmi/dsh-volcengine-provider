@@ -1,5 +1,13 @@
 # 验证记录
 
+## Seedream 原生透明图与图层拆分
+
+- 契约来源：[Agent Plan 模型上线公告](https://docs.volcengine.com/docs/ark/agent-plan-personal-model-release?lang=zh)、[Seedream 5.5 教程](https://ark.volcengine.com/region:cn-beijing/docs/seedream-5-5)和[图片生成 API](https://docs.volcengine.com/docs/ark/image-generation-api?lang=zh)。插件沿用套餐别名与 `/api/plan/v3/images/generations`，不切换到按量地址。
+- 静态检查、构建（25 个文件）、Node 480 项和 Python 10 项通过。用模拟方舟响应验证文生与多图生 RGBA、100 张拆分产物、混合格式、原字节保存、富文本 OCR、无效组合拦截及下载超时。实际桌面 Core `0.2.2-rc.5` 在离线夹具中接受输入 Schema、校验拆分结果及 OCR 元数据。
+- 用与桌面宿主一致的前端资产运行离线 Chrome 检查：390 px 下图层分页、透明棋盘背景、坐标、OCR 展开、独立下载链接均通过，普通图片大图缩放和 Esc 关闭仍可用。
+- 真实 Agent Plan 调用（2026-11-27）：工作区 `volc_imagine`、桌面 Core `0.2.2-rc.5` Schema 与隔离附件库，使用 `doubao-seedream-5.5` 发出两次请求，均为 HTTP 200。文生返回 1024×1024 RGBA PNG，85.41% 像素全透明；拆分自制文字海报返回 1024×1024 JPEG 底图和 1673×627 RGBA PNG 图层（90.94% 像素全透明），含绝对、归一化边界框，OCR 识别出 `SEED TEST` 并返回字样式。三份原始文件的尺寸、格式、字节数和附件 SHA-256 均经本地回读核对。
+- 本次未安装到当前 DSH Profile；多参考图生 RGBA 和 100 张拆分上限仍由隔离测试覆盖。
+
 ## 0.2.21 设置页按功能分区与倍率徽标
 
 - 标签重构：顶层从「按套餐分」改为「按功能分」（额度 / 模型 / 图片生成 / 账号与登录），每个分区内按套餐渲染可折叠面板；套餐启用与账号选择只在账号与登录分区出现一次。实测窄屏默认高度从重构前的 1112px（单套餐 + 隐藏另一套餐）变为 1281px（两个套餐额度同时可见），即在同一视口里多展示了一个套餐，且去掉了额度分区里的套餐开关与账号选择块。

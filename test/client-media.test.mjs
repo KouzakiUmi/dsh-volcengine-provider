@@ -1,12 +1,11 @@
 // 图片工具卡片的隔离渲染测试：真实 Client 源码 + 最小 React 替身，不是浏览器截图测试。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildClientBundleSyncFromDisk } from '../scripts/client-bundle.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const source = name => readFileSync(join(ROOT, name), 'utf8').replace(/^export /gm, '');
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 
 function miniReact() {
@@ -78,16 +77,12 @@ function miniReact() {
   };
 }
 
-function bundleSource() {
-  return `window.__ModuleLoader__.load({id:'dsh-volcengine-provider',factory:(require)=>{\n'use strict';\n${source('src/media-config.mjs')}\n${source('src/remote.mjs')}\n${source('src/client-media-data.js')}\n${source('src/client-media-lightbox.js')}\n${source('src/client-media.js')}\n${source('src/client.js')}\nreturn {name,inject,apply};\n}});\n`;
-}
-
 function createHarness() {
   const react = miniReact();
   let loaded;
   const previousWindow = globalThis.window;
   globalThis.window = { __ModuleLoader__: { load(spec) { loaded = spec; } } };
-  try { new Function(bundleSource())(); } finally { globalThis.window = previousWindow; }
+  try { new Function(buildClientBundleSyncFromDisk(ROOT))(); } finally { globalThis.window = previousWindow; }
   const exported = loaded.factory(id => id === 'react' ? react : (() => { throw new Error(`unexpected require ${id}`); })());
   const registrations = [];
   const disposers = [];
@@ -244,4 +239,35 @@ test('生成中与失败状态保留明确反馈，不渲染空成功卡片', as
   assert.match(failed.texts(), /图片生成失败/);
   assert.match(failed.texts(), /格式不一致/);
   failed.dispose();
+});
+
+test('图层卡片分页、同内容不同图层不丢失，显示透明预览、坐标、OCR 和分别下载', async () => {
+  const harness = createHarness();
+  const originals = Array.from({ length: 11 }, (_, z_index) => ({
+    ...originalBlock.meta.originals[0], z_index, name: `对象 ${z_index}`,
+    attachment: { ...originalRef, name: z_index ? `layer-${z_index}.png` : 'base.jpg' },
+    mediaType: z_index ? 'image/png' : 'image/jpeg',
+    ...(z_index === 1 ? { bounding_box: { absolute: [1, 2, 3, 4] }, text_recognition: { text: '海报标题', lines: [] } } : {})
+  }));
+  const block = { ...originalBlock, meta: { ...originalBlock.meta, originals } };
+  const props = { owner: { phase: 'result', block } };
+  await harness.mount(props);
+  assert.match(harness.texts(), /1 张底图 · 10 个图层/u);
+  assert.match(harness.texts(), /图层 1 · 对象 1/u);
+  assert.match(harness.texts(), /底图像素坐标：\[1, 2, 3, 4\]/u);
+  assert.match(harness.texts(), /富文本 OCR.*海报标题/su);
+  const images = harness.find(node => node.type === 'img');
+  assert.equal(images.length, 8);
+  assert.equal(images[0].props['data-transparent'], undefined);
+  assert.equal(images[1].props['data-transparent'], true);
+  const files = harness.find(node => node.type === 'a' && node.props.download);
+  assert.equal(files.length, 8);
+  assert.match(files[0].props.href, /mediaType=image%2Fjpeg.*download=1/u);
+  assert.match(files[1].props.href, /name=layer-1\.png.*mediaType=image%2Fpng/u);
+  harness.find(node => node.type === 'button' && node.props.children === '下一页')[0].props.onClick();
+  await harness.mount(props);
+  assert.match(harness.texts(), /第 2 \/ 2 页/u);
+  assert.equal(harness.find(node => node.type === 'img').length, 3);
+  assert.match(harness.texts(), /图层 10 · 对象 10/u);
+  harness.dispose();
 });

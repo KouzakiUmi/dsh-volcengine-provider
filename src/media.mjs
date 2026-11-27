@@ -28,7 +28,7 @@ export function redactSecrets(text) {
 }
 
 /** 读取 JSON 响应并限制体积；错误响应只暴露摘要，不携带响应头与凭证。 */
-export async function arkFetchJson(url, { method = 'GET', apiKey, body, signal, timeoutMs = 120000 } = {}) {
+export async function arkFetchJson(url, { method = 'GET', apiKey, body, signal, timeoutMs = 120000, maxBytes = MAX_JSON_RESPONSE_BYTES } = {}) {
   const parsed = url instanceof URL ? url : new URL(url);
   if (parsed.protocol !== 'https:' || parsed.hostname !== ARK_MEDIA_HOST) {
     throw new Error(`媒体请求目标不在方舟白名单内：${parsed.hostname}`);
@@ -47,8 +47,8 @@ export async function arkFetchJson(url, { method = 'GET', apiKey, body, signal, 
       redirect: 'error',
       signal: AbortSignal.any(links)
     });
-    const text = await response.text();
-    if (text.length > MAX_JSON_RESPONSE_BYTES) throw new ArkApiError('方舟媒体接口响应过大', response.status);
+    const { data: bytes } = await collectMediaBytes(boundedBody(response, maxBytes, () => new ArkApiError('方舟媒体接口响应过大', response.status)));
+    const text = new TextDecoder().decode(bytes);
     let data;
     try { data = text.length ? JSON.parse(text) : {}; }
     catch { throw new ArkApiError(`方舟媒体接口返回非 JSON 内容（HTTP ${response.status}）`, response.status); }
@@ -58,6 +58,7 @@ export async function arkFetchJson(url, { method = 'GET', apiKey, body, signal, 
     }
     return data;
   } catch (error) {
+    signal?.throwIfAborted();
     if (error instanceof ArkApiError) throw error;
     if (error?.name === 'AbortError') throw error;
     throw new ArkApiError(`方舟媒体接口请求失败：${redactSecrets(error?.message ?? error)}`);
@@ -68,66 +69,84 @@ function allowedDownloadHost(hostname) {
   return MEDIA_DOWNLOAD_HOST_SUFFIXES.some(suffix => hostname.endsWith(suffix));
 }
 
+async function* boundedBody(response, maxBytes, tooLarge) {
+  if (!response.body) return;
+  let total = 0;
+  try {
+    if (Number(response.headers.get('content-length')) > maxBytes) throw tooLarge();
+    for await (const chunk of response.body) {
+      total += chunk.byteLength;
+      if (total > maxBytes) throw tooLarge();
+      yield chunk;
+    }
+  } finally { await response.body.cancel().catch(() => {}); }
+}
+
+function parseDownloadUrl(value, base) {
+  try { return new URL(value, base); }
+  catch { throw new Error('方舟返回无效的图片下载地址'); }
+}
+
 /**
  * 以流式字节块下载受白名单保护的远程媒体。签名 URL 只在本函数内存活，
  * 不进入状态、日志或工具输出。redirect 手动跟随且每跳重新校验主机。
  */
 export async function downloadMediaChunks(signedUrl, { signal, timeoutMs = 300000, maxBytes = MAX_IMAGE_RESULT_BYTES, label = '图片' } = {}) {
-  let current = new URL(signedUrl);
-  if (current.protocol !== 'https:') throw new Error(`${label}下载地址必须是 HTTPS`);
+  let current = parseDownloadUrl(signedUrl);
+  const deadline = AbortSignal.timeout(timeoutMs);
+  const downloadSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
   for (let hop = 0; hop <= MAX_DOWNLOAD_REDIRECTS; hop++) {
-    if (!allowedDownloadHost(current.hostname)) throw new Error(`${label}下载地址不在火山引擎白名单内：${current.hostname}`);
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new Error(`${label}下载超时`)), timeoutMs);
+    if (current.protocol !== 'https:') throw new Error(`${label}下载地址必须是 HTTPS`);
+    if (!allowedDownloadHost(current.hostname) || current.username || current.password || current.port) {
+      throw new Error(`${label}下载地址不在火山引擎白名单内`);
+    }
+    let response;
     try {
-      const response = await fetch(current, {
-        method: 'GET',
-        redirect: 'manual',
-        signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
-      });
-      if (response.status >= 300 && response.status < 400) {
-        const location = response.headers.get('location');
-        await response.arrayBuffer().catch(() => {});
-        if (!location) throw new Error(`${label}下载重定向缺少目标`);
-        current = new URL(location, current);
-        if (current.protocol !== 'https:') throw new Error(`${label}下载重定向目标必须是 HTTPS`);
-        continue;
+      response = await fetch(current, { redirect: 'manual', signal: downloadSignal });
+    } catch {
+      signal?.throwIfAborted();
+      throw new Error(deadline.aborted ? `${label}下载超时` : `${label}下载请求失败`);
+    }
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      await response.body?.cancel().catch(() => {});
+      if (!location) throw new Error(`${label}下载重定向缺少目标`);
+      current = parseDownloadUrl(location, current);
+      continue;
+    }
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      throw new Error(`${label}下载失败（HTTP ${response.status}）`);
+    }
+    const declared = Number(response.headers.get('content-length'));
+    const tooLarge = new Error(`${label}超过 ${maxBytes} 字节上限`);
+    const stream = (async function* () {
+      try { yield* boundedBody(response, maxBytes, () => tooLarge); }
+      catch (error) {
+        signal?.throwIfAborted();
+        if (deadline.aborted) throw new Error(`${label}下载超时`);
+        if (error === tooLarge) throw error;
+        throw new Error(`${label}下载过程中断`);
       }
-      if (!response.ok) throw new Error(`${label}下载失败（HTTP ${response.status}）`);
-      const declared = Number(response.headers.get('content-length') ?? 0);
-      if (declared > maxBytes) {
-        await response.arrayBuffer().catch(() => {});
-        throw new Error(`${label}超过 ${maxBytes} 字节上限`);
-      }
-      const stream = (async function* () {
-        let total = 0;
-        try {
-          for await (const chunk of response.body) {
-            total += chunk.byteLength;
-            if (total > maxBytes) throw new Error(`${label}超过 ${maxBytes} 字节上限`);
-            yield chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
-          }
-        } finally { await response.body.cancel().catch(() => {}); }
-      })();
-      const expected = declared > 0 ? declared : undefined;
-      return { stream, bytes: expected };
-    } catch (error) {
-      if (error?.name === 'AbortError') throw error;
-      throw error instanceof Error ? error : new Error(redactSecrets(String(error)));
-    } finally { clearTimeout(timer); }
+    })();
+    return { stream, bytes: declared > 0 ? declared : undefined };
   }
   throw new Error(`${label}下载重定向次数过多`);
 }
 
 export async function downloadMediaBytes(url, options = {}) {
-  const { stream, bytes } = await downloadMediaChunks(url, options);
+  const { stream } = await downloadMediaChunks(url, options);
+  return collectMediaBytes(stream);
+}
+
+async function collectMediaBytes(stream) {
   const chunks = [];
   let total = 0;
   for await (const chunk of stream) { chunks.push(chunk); total += chunk.byteLength; }
   const data = new Uint8Array(total);
   let offset = 0;
   for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.byteLength; }
-  return { data, bytes: bytes ?? total };
+  return { data, bytes: total };
 }
 
 // ---------- 参考素材解析 ----------
@@ -145,6 +164,22 @@ export function sniffMediaType(bytes) {
   if (bytes.length >= 2 && match(bmp)) return 'image/bmp';
   if (bytes.length >= 4 && (match(tiffLe) || match(tiffBe))) return 'image/tiff';
   return undefined;
+}
+
+/** PNG 可通过 RGBA/灰度 Alpha 通道或 tRNS 块声明透明度；完整解码由附件服务校验。 */
+export function pngHasAlpha(bytes) {
+  if (bytes.length < 33 || sniffMediaType(bytes) !== 'image/png') return false;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(8) !== 13 || view.getUint32(12) !== 0x49484452) return false; // IHDR
+  if (bytes[25] === 4 || bytes[25] === 6) return true;
+  for (let offset = 33; offset + 12 <= bytes.length;) {
+    const length = view.getUint32(offset);
+    const type = view.getUint32(offset + 4);
+    if (offset + length + 12 > bytes.length || type === 0x49444154 || type === 0x49454e44) break; // IDAT / IEND
+    if (type === 0x74524e53 && length > 0) return true; // tRNS
+    offset += length + 12;
+  }
+  return false;
 }
 
 export function mediaExtensionFor(mediaType) {

@@ -766,9 +766,19 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
       container.style.cssText = 'max-width:760px;margin:24px auto;padding:0 12px';
       document.body.append(container);
       const root = window.fixtureModules['react-dom/client'].createRoot(container);
-      root.render(window.fixtureModules.react.createElement(window.fixtureMediaComponent, {
-        owner: { phase: 'result', block, loadImage: async () => { throw new Error('原图结果不应读取规范化预览'); } }
+      const renderMedia = result => root.render(window.fixtureModules.react.createElement(window.fixtureMediaComponent, {
+        owner: { phase: 'result', block: result, loadImage: async () => { throw new Error('原图结果不应读取规范化预览'); } }
       }));
+      renderMedia(block);
+      window.renderLayerFixture = () => renderMedia({
+        ...block,
+        call: { name: 'volc_imagine', argsRaw: JSON.stringify({ layer_decomposition: true }) },
+        meta: { ...block.meta, originals: Array.from({ length: 9 }, (_, z_index) => ({
+          ...block.meta.originals[0], z_index, name: `元素 ${z_index}`,
+          attachment: { ...fixtureRef, name: z_index ? `layer-${z_index}.png` : 'base.png' },
+          ...(z_index === 1 ? { bounding_box: { absolute: [0, 0, 1, 1] }, text_recognition: { text: '标题', lines: [] } } : {})
+        })) }
+      });
       window.fixtureDisposers.push(() => { root.unmount(); container.remove(); });
     });
     const mediaCard = page.locator('[data-testid="volc-imagine-card"]');
@@ -793,6 +803,18 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     const mediaScreenshot = path.resolve(process.env.DSH_TEST_MEDIA_SCREENSHOT || 'test-output/client-media-preview.png');
     fs.mkdirSync(path.dirname(mediaScreenshot), { recursive: true });
     await mediaCard.screenshot({ path: mediaScreenshot });
+    await page.evaluate(() => window.renderLayerFixture());
+    await mediaCard.getByText('1 张底图 · 8 个图层', { exact: true }).waitFor();
+    await mediaCard.getByText('图层信息与富文本 OCR', { exact: true }).click();
+    assert.match(await mediaCard.locator('details[open]').innerText(), /底图像素坐标.*标题/s);
+    const transparent = mediaCard.locator('img[data-transparent]').first();
+    assert.match(await transparent.evaluate(node => getComputedStyle(node).backgroundImage), /repeating-conic-gradient/);
+    assert.equal(await mediaCard.locator('img').count(), 8);
+    await mediaCard.getByRole('button', { name: '下一页' }).click();
+    await mediaCard.getByText('第 2 / 2 页', { exact: true }).waitFor();
+    assert.match(await mediaCard.getByRole('link', { name: '下载图层 8' }).getAttribute('href'), /name=layer-8\.png.*download=1/);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+    console.log('Layer card smoke passed: checkerboard, OCR, coordinates, pagination and per-layer download at 390px.');
     await page.setViewportSize({ width: 1200, height: 1000 });
     console.log('Media card smoke passed: original PNG route, native download, lightbox zoom/Escape, 390px layout.');
     console.log('Media screenshot:', mediaScreenshot);

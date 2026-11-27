@@ -2084,7 +2084,8 @@ function VolcengineProviderSection({ client }) {
     return () => { aliveRef.current = false; };
   }, []);
 
-  react.useEffect(() => {
+  // 空账号自动进入账号与登录：用 layout effect 在浏览器绘制前切换，避免首帧先画出额度面板再跳走。
+  react.useLayoutEffect(() => {
     if (tabInitializedRef.current || !snapshot) return;
     tabInitializedRef.current = true;
     if (!snapshot.accounts?.length) setSettingsTab('accounts');
@@ -2126,6 +2127,11 @@ function VolcengineProviderSection({ client }) {
     setSnapshot(value);
     revisionRef.current = value.revision ?? null;
     setEditor(previous => previous?.mode === 'edit' && !(value.accounts ?? []).some(account => account.id === previous.id) ? null : previous);
+    // 外部实例删除了当前账号时，清掉悬挂的删除/登录确认态，避免 mustShowAccounts 恒真把账号区锁在展开态。
+    // NEW_LOGIN_ACCOUNT 是「登录其他账号」哨兵，不对应真实账号，保留。
+    const accountStillExists = id => id === NEW_LOGIN_ACCOUNT || (value.accounts ?? []).some(account => account.id === id);
+    setConfirmDelete(previous => previous !== null && accountStillExists(previous) ? previous : null);
+    setLoginConfirm(previous => previous !== null && accountStillExists(previous) ? previous : null);
     setLoading(false);
     const incoming = value.login ? normalizeLogin(value.login) : null;
     if (incoming) setLogin(incoming);
@@ -2185,7 +2191,6 @@ function VolcengineProviderSection({ client }) {
     try {
       const value = await client.invoke({ op: 'select', revision: snapshot.revision, plan, accountId });
       applySnapshot(value);
-      setQuotas((previous) => ({ ...previous, [plan]: null }));
       setNotice({ ok: true, text: `已切换${PLAN_TITLES[plan]}的账号。` });
     } catch (error) {
       await reportSaveError(error, '切换账号失败');
@@ -2220,7 +2225,6 @@ function VolcengineProviderSection({ client }) {
         current = await client.invoke({ op: 'select', revision: current.revision, plan, accountId });
         applySnapshot(current);
       }
-      setQuotas((previous) => ({ ...previous, 'agent-plan': null, 'coding-plan': null }));
       setNotice({ ok: true, text: '已为两个套餐选择此账号（启用状态未动）可在套餐卡片分别启停。' });
     } catch (error) { await reportSaveError(error, '为两个套餐选择账号失败'); }
   });

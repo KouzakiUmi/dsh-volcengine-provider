@@ -1033,6 +1033,40 @@ test('后台采集失败按次数退避，不在退避期内反复请求', async
 	assert.ok(controller.quotaFailures.get('default:agent-plan'));
 });
 
+test('clearCaches 清理额度与目录失败退避表，身份/凭据事件后立即恢复自动重采', async () => {
+	const { controller, cliCalls } = await setup({
+		models: () => { throw new Error('catalog down'); },
+		responder: () => { throw new Error('network down'); }
+	});
+	// 默认账号需要可采集的 profile，目录采集才会真正调用 CLI。
+	await controller.store.mutate(revision(controller.store.current), next => {
+		next.accounts.find(a => a.id === 'default').cliProfile = 'default-profile';
+		return next;
+	});
+	// 让目录与额度各进入一次失败退避。
+	controller.quotaSnapshots.delete('default:agent-plan');
+	await controller.collectOnce();
+	assert.ok(controller.quotaFailures.get('default:agent-plan'), '额度失败应进入退避');
+	// 目录失败写 catalogFailures（CLI 抛错被归类为非冲突错误）。
+	assert.ok(controller.catalogFailures.get('default:agent-plan'), '目录失败应进入退避');
+	const afterFailure = cliCalls.length;
+	// 退避期内不再请求上游。
+	controller.quotaSnapshots.delete('default:agent-plan');
+	await controller.collectOnce();
+	assert.equal(cliCalls.length, afterFailure, '退避期内不应再请求');
+
+	// 模拟身份级事件（重新登录 / 凭据引用变化 / 编辑保存）：必须清掉退避，
+	// 否则修正后最长 8 分钟额度、最长 1 小时目录都不会自动刷新。
+	controller.clearCaches({ quotas: true });
+	assert.equal(controller.quotaFailures.get('default:agent-plan'), undefined, 'clearCaches 应清额度退避');
+	assert.equal(controller.catalogFailures.get('default:agent-plan'), undefined, 'clearCaches 应清目录退避');
+
+	// 清后退避解除：即使采集仍会失败，也应重新发起上游请求（不再被退避拦截）。
+	controller.quotaSnapshots.delete('default:agent-plan');
+	await controller.collectOnce();
+	assert.ok(cliCalls.length > afterFailure, 'clearCaches 后应重新请求上游');
+});
+
 // ── OAuth 登录态到期元数据 ─────────────────────────────────────────────────────
 
 /** 构造只含 exp 的假 refresh_token JWT。 */

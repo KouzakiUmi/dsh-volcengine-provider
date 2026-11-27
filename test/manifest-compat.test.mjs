@@ -79,6 +79,5 @@ test('Core 范围在 npm 默认 semver 与宿主 includePrerelease 下都匹配�
 });
 
 test('manifest 版本为普通版本，发布到 latest 渠道', () => {
-  assert.equal(manifest.version, '0.2.21');
-  assert.doesNotMatch(manifest.version, /-/);
+  assert.match(manifest.version, /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u);
 });

@@ -1,7 +1,8 @@
 // 图片生成的 Host / Client 共享契约；本文件必须保持浏览器安全，不引入 Node 模块。
+export const SEEDREAM_55 = 'doubao-seedream-5.5';
 export const IMAGE_MODEL_OPTIONS = [
   { id: 'doubao-seedream-5-0-pro', label: 'Doubao Seedream 5.0 Pro' },
-  { id: 'doubao-seedream-5.5', label: 'Doubao Seedream 5.5' },
+  { id: SEEDREAM_55, label: 'Doubao Seedream 5.5' },
   { id: 'doubao-seedream-5.0-flash', label: 'Doubao Seedream 5.0 Flash' }
 ];
 export const SUPPORTED_IMAGE_MODELS = IMAGE_MODEL_OPTIONS.map(option => option.id);

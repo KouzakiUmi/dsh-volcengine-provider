@@ -17,6 +17,7 @@ const { registerVolcImagineTool } = await import('../src/media-image.mjs');
 const { createAttachmentIndex } = await import('../src/attachment-index.mjs');
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+const RGBA = new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGPwd3v6HwAE3AJ6zM4FjgAAAABJRU5ErkJggg==', 'base64'));
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
 const FILE_ID = `sha256:${'a'.repeat(64)}`;
 const PREVIEW_ID = `sha256:${'b'.repeat(64)}`;
@@ -28,20 +29,23 @@ function toolDefinition(options) {
   return definition;
 }
 
-function fixture(t, responseBytes = PNG) {
+function fixture(t, responseBytes = PNG, entries) {
   const requests = [];
   const files = [];
   const previews = [];
   const reads = [];
+  const downloads = [];
   const previousFetch = globalThis.fetch;
   globalThis.fetch = async (url, init = {}) => {
     const text = String(url);
     if (text.includes('/images/generations')) {
       requests.push(JSON.parse(init.body));
-      return new Response(JSON.stringify({ model: requests.at(-1).model, created: 1, data: [{ url: 'https://tos.volces.com/result' }] }), { status: 200 });
+      assert.equal(text, 'https://ark.cn-beijing.volces.com/api/plan/v3/images/generations');
+      return Response.json({ model: requests.at(-1).model, created: 1, data: entries ?? [{ url: 'https://tos.volces.com/result' }] });
     }
-    assert.equal(text, 'https://tos.volces.com/result');
-    return new Response(responseBytes, { status: 200 });
+    assert.equal(new URL(text).hostname, 'tos.volces.com');
+    downloads.push(text);
+    return new Response(typeof responseBytes === 'function' ? responseBytes(text) : responseBytes, { status: 200 });
   };
   t.after(() => { globalThis.fetch = previousFetch; });
   const attachments = {
@@ -71,7 +75,7 @@ function fixture(t, responseBytes = PNG) {
     defaultModel: () => 'doubao-seedream-5.5', resolveAttachments: () => attachments
   };
   const definition = toolDefinition(options);
-  return { definition, options, requests, files, previews, reads };
+  return { definition, options, requests, files, previews, reads, downloads };
 }
 
 const EXEC = { signal: new AbortController().signal, agent: { session: { header: {} } } };
@@ -248,4 +252,102 @@ test('session-latest 取本会话最新一张，同会话两图时用后一张',
   await definition.execute({ prompt: '改最新那张', image: 'session-latest' }, SESSION_EXEC);
   assert.equal(reads.length, 1);
   assert.equal(reads[0].attachmentId, SESSION_IMAGE.attachmentId);
+});
+
+const sourceUrl = 'https://tos.volces.com/source.png';
+const layerArgs = { layer_decomposition: true, image: sourceUrl };
+const layerEntry = z => ({ z_index: z, size: z === 0 ? '2048x1536' : '1024x768', url: `https://tos.volces.com/result-${z}?X-Tos-Signature=fixture-signature`,
+  ...(z > 0 ? { name: `元素 ${z}`, description: '拆出的独立元素', bounding_box: { absolute: [20, 40, 220, 440], normalized: [10, 26, 107, 286] } } : {}) });
+
+test('5.5 文生和多参考图生 RGBA 原图保留 Alpha 与完整字节', async t => {
+  const { definition, requests, files } = fixture(t, RGBA, [{ url: 'https://tos.volces.com/result', background: 'transparent' }]);
+  const args = { prompt: '提取透明素材', background: 'transparent' };
+  const value = await definition.execute(args, EXEC);
+  await definition.execute({ ...args, images: [sourceUrl, `${sourceUrl}?second`] }, EXEC);
+  assert.equal(requests[0].background, 'transparent');
+  assert.equal(requests[0].output_format, 'png');
+  assert.equal('image' in requests[0], false);
+  assert.deepEqual(requests[1].image, [sourceUrl, `${sourceUrl}?second`]);
+  assert.equal(value.originals[0].background, 'transparent');
+  assert.ok(files.every(file => Buffer.from(file.data).equals(RGBA)));
+});
+
+test('5.5 拆分 100 张时完整保存，按顺序返回 JPEG 底图、PNG 图层与富文本 OCR', async t => {
+  const entries = Array.from({ length: 100 }, (_, z) => layerEntry(z));
+  const box = entries[5].bounding_box;
+  const style = { similar_font_family: 'Helvetica Neue', foreground_color: '#193366', bold: true, italic: false, underline: false, strikethrough: true, shadow: false, translucent: false };
+  const ocr = { text: '标题', lines: [{ bounding_box: box, runs: [{ text: '标题', style }] }] };
+  entries[5].text_recognition = { ...ocr, url: 'https://tos.volces.com/?secret=fixture-signature' };
+  const { definition, requests, files, downloads } = fixture(t, url => url.includes('/result-0?') ? JPEG : RGBA, entries.reverse());
+  const value = await definition.execute({ ...layerArgs, output_format: 'jpeg', layer_decomposition_options: { max_images: 100, text_recognition: true } }, EXEC);
+  assert.deepEqual(requests[0], { model: 'doubao-seedream-5.5', image: sourceUrl, layer_decomposition: true,
+    layer_decomposition_options: { max_images: 100, text_recognition: true }, size: 'auto', output_format: 'jpeg', response_format: 'url', watermark: true });
+  assert.equal(files.length, 100);
+  assert.equal(downloads.length, 100);
+  assert.deepEqual(files[0].data, JPEG);
+  assert.deepEqual(files[99].data, RGBA);
+  assert.match(files[0].name, /base\.jpg$/u);
+  assert.match(files[99].name, /layer-99\.png$/u);
+  assert.deepEqual(value.originals.map(item => item.z_index), Array.from({ length: 100 }, (_, z) => z));
+  assert.equal(value.originals[0].width, 2048);
+  assert.equal(value.images[0].width, 2);
+  assert.deepEqual(value.originals[5].text_recognition, ocr);
+  assert.deepEqual(value.originals[5].bounding_box, box);
+  assert.doesNotMatch(JSON.stringify(value), /fixture-signature/u);
+  const content = definition.output.render(layerArgs, value);
+  assert.equal(content.filter(part => part.type === 'image').length, 1);
+  assert.equal(content.filter(part => part.type === 'file').length, 100);
+});
+
+test('5.0 Pro / Flash 拆分可用，输出始终保留底图和透明上层', async t => {
+  const { definition, requests } = fixture(t, RGBA, [layerEntry(0), layerEntry(1)]);
+  for (const model of ['doubao-seedream-5-0-pro', 'doubao-seedream-5.0-flash']) {
+    const value = await definition.execute({ ...layerArgs, model, size: '1.5K', prompt: '拆出文字' }, EXEC);
+    assert.deepEqual(value.originals.map(item => item.z_index), [0, 1]);
+    assert.equal(requests.at(-1).model, model);
+    assert.equal(requests.at(-1).size, '1.5K');
+    assert.equal('layer_decomposition_options' in requests.at(-1), false);
+  }
+});
+
+test('旧模型仅允许单张带 Alpha 的 PNG 参考图生透明图', async t => {
+  const { definition, requests } = fixture(t, RGBA);
+  const args = { model: 'doubao-seedream-5-0-pro', prompt: '微调透明素材', background: 'transparent' };
+  await assert.rejects(definition.execute(args, EXEC), /一张带透明通道的 PNG/u);
+  await assert.rejects(definition.execute({ ...args, image: `data:image/png;base64,${Buffer.from(PNG).toString('base64')}` }, EXEC), /一张带透明通道的 PNG/u);
+  await definition.execute({ ...args, image: `data:image/png;base64,${Buffer.from(RGBA).toString('base64')}` }, EXEC);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].background, 'transparent');
+});
+
+test('不合法的模式组合在付费请求前拦截', async t => {
+  const { definition, requests, options } = fixture(t);
+  options.credentials = () => assert.fail('错误参数不应解析凭据');
+  for (const [args, expected] of [
+    [{}, /prompt/u],
+    [{ ...layerArgs, image: undefined }, /恰好一张/u],
+    [{ ...layerArgs, images: [sourceUrl] }, /恰好一张/u],
+    [{ ...layerArgs, image: 'data:image/gif;base64,R0lGODlh' }, /仅接受 PNG 或 JPEG/u],
+    [{ ...layerArgs, size: '1024x1024' }, /图层拆分的 size/u],
+    [{ ...layerArgs, background: 'auto' }, /不接受 background/u],
+    [{ ...layerArgs, layer_decomposition_options: { max_images: 101 } }, /2–100/u],
+    [{ ...layerArgs, layer_decomposition_options: { max_images: 2.5 } }, /2–100/u],
+    [{ ...layerArgs, model: 'doubao-seedream-5.0-flash', layer_decomposition_options: { text_recognition: true } }, /仅用于 Seedream 5.5/u],
+    [{ prompt: '测试', layer_decomposition_options: {} }, /仅用于 Seedream 5.5 图层拆分/u],
+    [{ prompt: '测试', background: 'transparent', output_format: 'jpeg' }, /要求 output_format=png/u]
+  ]) await assert.rejects(definition.execute(args, EXEC), expected);
+  assert.equal(requests.length, 0);
+});
+
+test('图层缺项不返回部分成功，且在下载前识别错误', async t => {
+  const { definition, files, downloads } = fixture(t, RGBA, [layerEntry(0), layerEntry(0)]);
+  await assert.rejects(definition.execute(layerArgs, EXEC), /图层顺序缺失或重复/u);
+  assert.equal(downloads.length, 0);
+  assert.equal(files.length, 0);
+});
+
+test('无透明通道 PNG 不得作为透明图返回', async t => {
+  const { definition, files } = fixture(t);
+  await assert.rejects(definition.execute({ prompt: '测试', background: 'transparent' }, EXEC), /缺少 PNG 透明通道/u);
+  assert.equal(files.length, 0);
 });

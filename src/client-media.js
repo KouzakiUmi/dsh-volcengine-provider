@@ -9,7 +9,8 @@ const MEDIA_STYLES = `
 .vcp-media-kind{padding:1px 6px;border:1px solid var(--dsw-alias-border-l2,var(--dsw-alias-border-l4));border-radius:999px;color:var(--dsw-alias-label-primary);font-size:10px}
 .vcp-media-progress{width:100%;height:5px}.vcp-media-text{margin:0;max-height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:12px;line-height:1.6}.vcp-media-details{border-top:1px solid var(--dsw-alias-border-l2,var(--dsw-alias-border-l4));padding-top:8px}.vcp-media-details>summary{cursor:pointer;color:var(--dsw-alias-label-secondary);font-size:12px}.vcp-media-details-body{display:grid;gap:10px;padding-top:10px}.vcp-media-detail{display:grid;gap:4px}.vcp-media-detail strong{font-size:12px;color:var(--dsw-alias-label-primary)}.vcp-media-id{font-family:var(--dsw-font-mono,ui-monospace,monospace);font-size:11px;overflow-wrap:anywhere}
 .vcp-media-lightbox{padding:0;border:0;border-radius:12px;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1));color:var(--dsw-alias-label-primary);max-width:96vw;max-height:94vh;overflow:hidden}.vcp-media-lightbox::backdrop{background:var(--dsw-alias-backdrop,rgba(0,0,0,.72))}.vcp-media-lightbox-toolbar{position:absolute;top:8px;left:8px;right:8px;z-index:1;display:flex;align-items:center;gap:6px}.vcp-media-lightbox-toolbar button{min-width:32px;height:32px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:7px;background:var(--dsw-alias-bg-module-platform,var(--dsw-alias-bg-layer-1));color:inherit;cursor:pointer}.vcp-media-lightbox-close{margin-left:auto}.vcp-media-lightbox-viewport{width:min(94vw,1200px);height:min(88vh,800px);overflow:auto}.vcp-media-lightbox-viewport img{display:block;width:100%;height:100%;object-fit:contain}
-@media(max-width:420px){.vcp-media-card{padding:10px;gap:10px}.vcp-media-gallery{grid-template-columns:1fr}.vcp-media-preview{min-height:120px}}
+ .vcp-media-preview img[data-transparent],.vcp-media-lightbox img[data-transparent]{background:repeating-conic-gradient(var(--dsw-alias-border-l3,var(--dsw-alias-border-l4)) 0% 25%,var(--dsw-alias-bg-layer-1) 0% 50%) 0 0/16px 16px}
+ @media(max-width:420px){.vcp-media-card{padding:10px;gap:10px}.vcp-media-gallery{grid-template-columns:1fr}.vcp-media-preview{min-height:120px}}
 @media(prefers-reduced-motion:reduce){.vcp-media-card *{scroll-behavior:auto!important;transition:none!important}}
 `;
 
@@ -69,8 +70,13 @@ function MediaPreview({ item, load, onOpen }) {
   }, [item.id, load, state.retry]);
   if (state.error) return h('button', { type: 'button', className: 'vcp-media-preview', onClick: () => setState(previous => ({ ...previous, error: false, retry: previous.retry + 1 })) }, '图片加载失败，点击重试');
   if (!state.src) return h('div', { className: 'vcp-media-preview', role: 'status' }, '正在加载图片…');
-  return h('button', { type: 'button', className: 'vcp-media-preview', title: '查看大图', 'aria-label': `查看大图：${item.name}`, onClick: () => onOpen({ src: state.src, label: item.name, downloadName: item.name }) },
-    h('img', { src: state.src, alt: item.name, loading: 'lazy', onError: () => setState(previous => ({ ...previous, error: true })) }));
+  const label = mediaItemLabel(item);
+  return h('button', { type: 'button', className: 'vcp-media-preview', title: '查看大图', 'aria-label': `查看大图：${label}`, onClick: () => onOpen(mediaViewer(item, state.src)) },
+    h('img', { src: state.src, alt: label, loading: 'lazy', 'data-transparent': item.transparent || undefined, onError: () => setState(previous => ({ ...previous, error: true })) }));
+}
+
+function mediaViewer(item, src) {
+  return { src, label: mediaItemLabel(item), downloadName: item.name, transparent: item.transparent };
 }
 
 function MediaAction({ label, onClick, primary = false }) {
@@ -98,11 +104,48 @@ function MediaDetails({ block, items }) {
     h('div', { className: 'vcp-media-details-body' },
       prompt ? h('section', { className: 'vcp-media-detail' }, h('strong', null, '提示词'), h('pre', { className: 'vcp-media-text', tabIndex: 0 }, prompt)) : null,
       model ? h('div', { className: 'vcp-media-detail' }, h('strong', null, '模型'), h('span', null, model)) : null,
-      items.map(item => h('div', { key: item.id, className: 'vcp-media-detail' },
-        h('strong', null, item.kind === 'original' ? '原始文件附件' : '会话图片附件'),
+      items.map(item => h('div', { key: item.key, className: 'vcp-media-detail' },
+        h('strong', null, item.zIndex !== undefined ? mediaItemLabel(item) : item.kind === 'original' ? '原始文件附件' : '会话图片附件'),
         h('span', null, `${item.name} · ${imageDimensions(item)}${item.mediaType} · ${formatBytes(item.bytes)}`),
         h('span', { className: 'vcp-media-id' }, `attachmentId: ${item.id}`))),
       text ? h('section', { className: 'vcp-media-detail' }, h('strong', null, '工具结果'), h('pre', { className: 'vcp-media-text', tabIndex: 0 }, text)) : null));
+}
+
+const MEDIA_PAGE_SIZE = 8;
+
+function LayerDetails({ item }) {
+  if (!item.description && !item.bounds && !item.ocr) return null;
+  return h('details', { className: 'vcp-media-details' },
+    h('summary', null, item.ocr ? '图层信息与富文本 OCR' : '图层信息'),
+    item.description ? h('p', { className: 'vcp-media-caption' }, item.description) : null,
+    Array.isArray(item.bounds?.absolute) ? h('p', { className: 'vcp-media-caption' }, `底图像素坐标：[${item.bounds.absolute.join(', ')}]`) : null,
+    Array.isArray(item.bounds?.normalized) ? h('p', { className: 'vcp-media-caption' }, `归一化坐标：[${item.bounds.normalized.join(', ')}]`) : null,
+    item.ocr ? h('pre', { className: 'vcp-media-text', tabIndex: 0 }, JSON.stringify(item.ocr, null, 2)) : null);
+}
+
+function mediaDownload(item, load, label, primary = false) {
+  return item.kind === 'original'
+    ? h('a', { key: `download:${item.key}`, className: 'vcp-media-action', 'data-primary': primary || undefined,
+      href: imageFileUrl(item, true), download: item.attachment.name }, label)
+    : h(MediaAction, { key: `download:${item.key}`, primary, label: '下载预览图', onClick: async () => triggerMediaDownload(await load(item), item.name) });
+}
+
+function MediaGallery({ items, load, onOpen }) {
+  return h('div', { className: 'vcp-media-gallery' }, items.map(item => h('div', { key: item.key, className: 'vcp-media-item' },
+    h(MediaPreview, { item, load, onOpen }),
+    h('div', { className: 'vcp-media-caption' },
+      h('span', { className: 'vcp-media-kind' }, item.zIndex !== undefined ? mediaItemLabel(item) : item.kind === 'original' ? '原图' : '预览（规范化）'),
+      h('span', null, `${imageDimensions(item)}${item.mediaType} · ${formatBytes(item.bytes)}`)),
+    item.zIndex !== undefined ? h('div', { className: 'vcp-media-actions' }, mediaDownload(item, load, item.zIndex === 0 ? '下载底图' : `下载图层 ${item.zIndex}`)) : null,
+    h(LayerDetails, { item }))));
+}
+
+function MediaPagination({ page, last, setPage }) {
+  if (!last) return null;
+  return h('nav', { className: 'vcp-media-actions', 'aria-label': '图层分页' },
+    h('button', { type: 'button', className: 'vcp-media-action', disabled: page === 0, onClick: () => setPage(page - 1) }, '上一页'),
+    h('span', { className: 'vcp-media-caption', 'aria-live': 'polite' }, `第 ${page + 1} / ${last + 1} 页`),
+    h('button', { type: 'button', className: 'vcp-media-action', disabled: page === last, onClick: () => setPage(page + 1) }, '下一页'));
 }
 
 function VolcImagineToolView(rawProps) {
@@ -113,9 +156,14 @@ function VolcImagineToolView(rawProps) {
   const items = settled ? mediaItems(block) : [];
   const fallbackCount = settled ? mediaFallbackCount(block) : 0;
   const prompt = promptOf(block);
+  const layered = isLayerResult(block);
   const load = useMediaUrlLoader(props);
   const [viewer, setViewer] = react.useState(null);
   const [copied, setCopied] = react.useState(false);
+  const [selectedPage, setPage] = react.useState(0);
+  const lastPage = layered ? Math.max(0, Math.ceil(items.length / MEDIA_PAGE_SIZE) - 1) : 0;
+  const page = Math.min(selectedPage, lastPage);
+  const visible = layered ? items.slice(page * MEDIA_PAGE_SIZE, (page + 1) * MEDIA_PAGE_SIZE) : items;
   const closeViewer = react.useCallback(() => setViewer(null), []);
   react.useEffect(() => {
     if (!copied) return undefined;
@@ -123,30 +171,28 @@ function VolcImagineToolView(rawProps) {
     return () => clearTimeout(timer);
   }, [copied]);
   const tone = failed ? 'error' : !settled ? 'busy' : items.length ? 'success' : 'neutral';
-  const title = failed ? '图片生成失败' : settled ? 'Seedream 图片' : prompt ? '正在生成图片…' : '正在接收生图参数…';
-  const status = failed ? '失败' : settled ? items.length ? '已完成' : '无图片' : '生成中';
+  const title = layered ? (failed ? '图层拆分失败' : settled ? 'Seedream 图层拆分' : '正在拆分图层…')
+    : failed ? '图片生成失败' : settled ? 'Seedream 图片' : prompt ? '正在生成图片…' : '正在接收生图参数…';
+  const status = failed ? '失败' : settled ? items.length ? '已完成' : '无图片' : layered ? '拆分中' : '生成中';
   return h('div', { className: 'vcp-media-root', style: { display: 'contents' } },
     h('section', { className: 'vcp-media-card', 'data-testid': 'volc-imagine-card', 'aria-label': title },
       h('header', { className: 'vcp-media-head' },
         h('div', { className: 'vcp-media-heading' }, h('strong', { className: 'vcp-media-title' }, title),
           h('div', { className: 'vcp-media-summary' }, h('span', null, '火山方舟'), mediaModel(block) ? h('span', null, mediaModel(block)) : null,
-            items.length ? h('span', null, items[0].kind === 'original' ? '原始文件' : '会话预览') : null)),
+            items.length ? h('span', null, layered ? `1 张底图 · ${items.length - 1} 个图层` : items[0].kind === 'original' ? '原始文件' : '会话预览') : null)),
         h('span', { className: 'vcp-media-status', 'data-tone': tone, role: 'status' }, status)),
-      !settled ? h('div', null, h('progress', { className: 'vcp-media-progress', 'aria-label': '图片生成进度' })) : null,
+      !settled ? h('div', null, h('progress', { className: 'vcp-media-progress', 'aria-label': layered ? '图层拆分进度' : '图片生成进度' })) : null,
       !settled && prompt ? h('pre', { className: 'vcp-media-text', tabIndex: 0 }, prompt) : null,
       settled && failed ? h('pre', { className: 'vcp-media-text', role: 'alert', tabIndex: 0 }, textOf(block) || '图片工具调用失败。') : null,
       fallbackCount ? h('p', { className: 'vcp-media-caption', role: 'status' }, `${fallbackCount} 张原图不可用，已回退到会话预览。`) : null,
-      settled && !failed && items.length ? h('div', { className: 'vcp-media-gallery' }, items.map(item => h('div', { key: item.id, className: 'vcp-media-item' },
-        h(MediaPreview, { item, load, onOpen: setViewer }),
-        h('div', { className: 'vcp-media-caption' }, h('span', { className: 'vcp-media-kind' }, item.kind === 'original' ? '原图' : '预览（规范化）'), h('span', null, `${imageDimensions(item)}${item.mediaType} · ${formatBytes(item.bytes)}`))))) : null,
+      settled && !failed && items.length ? h(MediaGallery, { items: visible, load, onOpen: setViewer }) : null,
+      settled && !failed ? h(MediaPagination, { page, last: lastPage, setPage }) : null,
       settled && !failed && !items.length ? h('pre', { className: 'vcp-media-text', tabIndex: 0 }, textOf(block) || '工具未返回可显示的图片。') : null,
       settled && !failed && items.length ? h('div', { className: 'vcp-media-actions' },
-        items.map(item => h(MediaAction, { key: `view:${item.id}`, label: items.length === 1 ? '查看大图' : `查看 ${item.name}`, onClick: async () => setViewer({ src: await load(item), label: item.name, downloadName: item.name }) })),
-        items.map(item => item.kind === 'original'
-          ? h('a', { key: `download:${item.id}`, className: 'vcp-media-action', 'data-primary': true, href: imageFileUrl(item, true), download: item.attachment.name }, items.length === 1 ? '下载原图' : `下载 ${item.name}`)
-          : h(MediaAction, { key: `download:${item.id}`, primary: true, label: '下载预览图', onClick: async () => triggerMediaDownload(await load(item), item.name) })),
+        !layered ? items.map(item => h(MediaAction, { key: `view:${item.key}`, label: items.length === 1 ? '查看大图' : `查看 ${item.name}`, onClick: async () => setViewer(mediaViewer(item, await load(item))) })) : null,
+        !layered ? items.map(item => mediaDownload(item, load, items.length === 1 ? '下载原图' : `下载 ${item.name}`, true)) : null,
         prompt ? h(MediaAction, { label: copied ? '已复制提示词' : '复制提示词', onClick: async () => { await navigator.clipboard.writeText(prompt); setCopied(true); } }) : null) : null,
-      settled ? h(MediaDetails, { block, items }) : null),
+      settled ? h(MediaDetails, { block, items: visible }) : null),
     viewer ? h(MediaLightbox, { viewer, onClose: closeViewer }) : null);
 }
 

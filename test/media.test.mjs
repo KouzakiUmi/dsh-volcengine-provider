@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import {
 	defaultMediaState, normalizeMediaState, mediaToolEnabled, assertMediaEnabled,
 	redactSecrets, sniffMediaType, mediaExtensionFor, parseAttachmentSpec, isHttpUrl,
-	resolveImageSources, arkFetchJson, downloadMediaChunks, ArkApiError,
+	resolveImageSources, arkFetchJson, downloadMediaChunks, downloadMediaBytes, ArkApiError,
 	MEDIA_TOOL_KEYS, DEFAULT_IMAGE_MODEL, SUPPORTED_IMAGE_MODELS
 } from '../src/media.mjs';
 import { isTrustedRequest } from '../src/media-image-route.mjs';
@@ -140,6 +140,24 @@ test('arkFetchJson 只放行方舟媒体端点', async () => {
 test('downloadMediaChunks 拒绝非 HTTPS 与非白名单下载地址', async () => {
 	await assert.rejects(downloadMediaChunks('http://tos.volces.com/x.mp4'), /HTTPS/);
 	await assert.rejects(downloadMediaChunks('https://attacker.example.com/x.mp4'), /白名单/);
+});
+
+test('图层 JSON 体积按实际字节限制，不依赖 Content-Length', async t => {
+	t.mock.method(globalThis, 'fetch', async () => new Response('{"name":"透明"}'));
+	await assert.rejects(arkFetchJson('https://ark.cn-beijing.volces.com/x', { maxBytes: 15 }), /响应过大/u);
+});
+
+test('图片下载超时覆盖响应体读取阶段', async t => {
+	t.mock.method(globalThis, 'fetch', async (_url, { signal }) => {
+		const body = new ReadableStream({ start(controller) {
+			controller.enqueue(new Uint8Array([1]));
+			signal.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+		} });
+		return new Response(body);
+	});
+	const keepAlive = setTimeout(() => {}, 1000);
+	try { await assert.rejects(downloadMediaBytes('https://tos.volces.com/layer.png', { timeoutMs: 15 }), /下载超时/u); }
+	finally { clearTimeout(keepAlive); }
 });
 
 // ── resolveImageSources ────────────────────────────────────────────────────
