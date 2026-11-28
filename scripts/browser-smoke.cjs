@@ -82,10 +82,22 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
       window.fixtureCalls = [];
       window.fixtureRequests = [];
       window.fixtureState = state;
+      window.fixtureArkCli = { state: 'ready', source: 'host', platform: 'linux-arm64', version: '1.0.70' };
       const service = { async invoke(request) {
         window.fixtureCalls.push(request.op);
         window.fixtureRequests.push(structuredClone(request));
         if (window.fixtureFailOps && window.fixtureFailOps.has(request.op)) throw new Error('离线测试：故意失败');
+        if (request.op === 'arkCliStatus') return { ok: true, value: structuredClone(window.fixtureArkCli) };
+        if (request.op === 'installArkCli') {
+          if (request.platform !== window.fixtureArkCli.platform || request.version !== window.fixtureArkCli.version) throw new Error('ArkCli 发行信息不匹配');
+          window.fixtureArkCli.state = 'installing';
+          return { ok: true, value: structuredClone(window.fixtureArkCli) };
+        }
+        if (request.op === 'cancelArkCliInstall') {
+          window.fixtureArkCli.state = 'failed';
+          window.fixtureArkCli.message = 'ArkCli 安装已取消。';
+          return { ok: true, value: structuredClone(window.fixtureArkCli) };
+        }
         if (request.op === 'saveAccount') {
           if (request.revision !== state.revision) throw new Error('设置已改变，请刷新后重试');
           state.accounts.push({ ...request.account, authMode: 'references', hasApiKeys: {}, hasQuotaAccess: {} });
@@ -481,15 +493,34 @@ const screenshot = path.resolve(process.env.DSH_TEST_SCREENSHOT || 'test-output/
     await setFixtureTheme('light');
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-mobile.png'), fullPage: true });
     // Empty-account onboarding must work without a technical ID form or any official browser page.
+    await quotaTab.click();
     await page.evaluate(() => {
       window.fixtureState.accounts = [];
       window.fixtureState.active = { 'agent-plan': null, 'coding-plan': null };
       window.fixtureState.enabled = { 'agent-plan': false, 'coding-plan': false };
       window.fixtureState.login = { jobId: null, state: 'idle', message: '' };
+      window.fixtureArkCli.state = 'missing';
     });
     await page.getByRole('button', { name: '刷新状态', exact: true }).click();
     await accountsTab.click();
     await page.getByText('还没有账号。', { exact: false }).waitFor();
+    const webLogin = page.getByRole('button', { name: '网页登录', exact: true });
+    const install = page.getByRole('button', { name: '安装官方 ArkCli', exact: true });
+    await install.waitFor();
+    await page.screenshot({ path: screenshot.replace(/\.png$/, '-arkcli.png'), fullPage: true });
+    const loginCallsBeforeInstall = await page.evaluate(() => window.fixtureCalls.filter(op => op === 'startLogin').length);
+    assert.equal(await webLogin.isDisabled(), true);
+    assert.equal(await page.evaluate(() => window.fixtureCalls.includes('installArkCli')), false, 'Detect must not start installation');
+    await install.click();
+    await page.getByText(/正在下载并校验 ArkCli/).waitFor();
+    await page.getByRole('button', { name: '取消安装', exact: true }).click();
+    await page.getByText('ArkCli 安装已取消。', { exact: true }).waitFor();
+    await page.getByRole('button', { name: '重试安装 ArkCli', exact: true }).click();
+    await page.evaluate(() => Object.assign(window.fixtureArkCli, { state: 'ready', source: 'managed' }));
+    await page.getByText('ArkCli 1.0.70 已安装，可开始网页登录。', { exact: true }).waitFor();
+    assert.equal(await webLogin.isEnabled(), true);
+    assert.equal(await page.evaluate(() => window.fixtureCalls.filter(op => op === 'startLogin').length), loginCallsBeforeInstall, 'Installation must not start login');
+    console.log('ArkCli setup smoke passed: host platform, explicit install, cancel, retry and login availability at 390px.');
     assert.equal(await accountsDisclosure.evaluate(node => node.open), true, '没有账号时账号区应始终展开');
     assert.equal((await disclosureSummary.innerText()).trim(), '添加账号', '没有账号时摘要应提示添加账号');
     await page.evaluate(() => window.scrollTo(0, 0));

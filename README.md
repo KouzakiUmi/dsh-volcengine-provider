@@ -24,12 +24,12 @@ dsh plugin --profile web add dsh-volcengine-provider
 
 `web` 是示例 Profile，请替换为实际目标；Desktop 使用桌面壳集成的 DSH CLI。也可从 [GitHub Actions](https://github.com/KouzakiUmi/dsh-volcengine-provider/actions/workflows/ci.yml) 或 [Releases](https://github.com/KouzakiUmi/dsh-volcengine-provider/releases) 下载插件包安装。
 
-1. 打开 **设置 → 火山方舟 Provider**。没有账号时直接点击 **生成官方登录链接**；已有账号时展开 **管理账号**，再点击 **登录其他账号**。
+1. 打开 **设置 → 火山方舟 Provider → 账号与登录**。如提示未找到 CLI，先点 **安装官方 ArkCli**。随后点击 **网页登录**；已有账号时可展开 **管理账号**，再点击 **登录其他账号**。
 2. 确认后设置页展示官方 CLI 输出的登录链接；在任意设备浏览器打开链接完成官方 SSO，复制页面给出的 base64 授权码，回到设置页粘贴提交，由官方 CLI 完成登录。凭据引用接入则使用 **新增账号**。
 3. 在账号卡片点击 **用于 Agent套餐 / 用于 编程套餐**，或在套餐卡片分别选择账号与启停。查看模型列表，按需拉取官方目录；额度与模型目录由 Host 后台采集，打开设置即显示中间层快照，需要立刻重拉时点 **刷新额度**，需要立即更新模型时点 **拉取模型**。
 4. 在 DSH 模型选择器中选择对应路由，开始使用。
 
-两段式登录需安装支持 `arkcli auth login volc-sso --no-browser` 的官方 [ArkCli](https://github.com/volcengine/ark-cli)（Windows 1.0.37 已实测）。详细配置见[使用说明](docs/usage.md)。
+两段式登录使用当前 DSH Host 上支持 `arkcli auth login volc-sso --no-browser` 的官方 [ArkCli](https://github.com/volcengine/ark-cli)。插件优先复用已有 CLI；一键安装写入插件数据目录，不改全局 PATH。手机或远程连接按实际运行 DSH Host 的环境检测。详细配置见[安装与检测说明](docs/usage.md#找不到-cli)。
 
 ## 功能介绍
 

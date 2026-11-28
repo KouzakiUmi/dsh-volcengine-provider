@@ -17,6 +17,7 @@ export const CLIENT_BUNDLE_MODULES = [
   'src/client-media-data.js',
   'src/client-media-lightbox.js',
   'src/client-media.js',
+  'src/client-arkcli.js',
   'src/client.js'
 ];
 

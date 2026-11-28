@@ -1,5 +1,12 @@
 # 验证记录
 
+## ArkCli 跨平台发现与一键安装
+
+- 从 [Ark CLI 官方 npm 包](https://www.npmjs.com/package/@volcengine/ark-cli/v/1.0.70) 核对 `1.0.70` 的六种平台依赖和原生文件命名；逐平台记录官方 tarball 的 SHA-512。真实 Linux ARM64 安装包通过完整性校验，目标文件为 AArch64 ELF，未声明动态解释器。
+- Windows x64 在工作区隔离目录下载真实官方包，完成摘要校验、原生 `--version` 自检、原子落位和路径发现；`auth login volc-sso --help` 有 `--no-browser`。没有发起授权或使用真实账号。
+- 回归覆盖无 Host PATH 的 npm 子包发现、显式配置优先、不可执行文件跳过、坏摘要与超限拒绝、取消、并发去重和安装后立即重查。离线 Chrome 在 390 px 验证检测缺失、点击安装、取消、重试和登录入口恢复，安装本身不发起登录。
+- 尚未在真实 proot、macOS 或 Windows ARM64 宿主上执行安装自检；当前 DSH Profile 未改动。
+
 ## Seedream 原生透明图与图层拆分
 
 - 契约来源：[Agent Plan 模型上线公告](https://docs.volcengine.com/docs/ark/agent-plan-personal-model-release?lang=zh)、[Seedream 5.5 教程](https://ark.volcengine.com/region:cn-beijing/docs/seedream-5-5)和[图片生成 API](https://docs.volcengine.com/docs/ark/image-generation-api?lang=zh)。插件沿用套餐别名与 `/api/plan/v3/images/generations`，不切换到按量地址。

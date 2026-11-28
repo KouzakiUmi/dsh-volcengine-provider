@@ -2,6 +2,11 @@
 
 [返回主页](../README.md)
 
+## [0.2.23] — 2026-11-28
+
+- ArkCli 支持发现官方 npm 的平台子包及独立安装路径。未找到 CLI 时，可在「账号与登录」为当前 DSH Host 安装校验后的官方固定版本，或重新检测手动安装的副本。安装不改全局 PATH，不触发登录。
+- 按运行 DSH Host 的系统与架构选择安装包，支持 Windows、macOS、Linux 的 x64 和 ARM64。Windows x64 完成真实下载与自检；Linux ARM64 已核对官方包，proot 真机安装尚未验证。见[验证记录](validation.md#arkcli-跨平台发现与一键安装)。
+
 ## [0.2.22] — 2026-11-28
 
 ### Seedream 透明图、图层拆分与文字识别

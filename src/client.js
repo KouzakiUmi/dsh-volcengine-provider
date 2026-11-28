@@ -1835,10 +1835,11 @@ function PlanAccessPanel({ plan, context, busy, onSelect, onToggleProvider, onGo
  * @param {object} props 组件属性
  * @returns {object} 元素树
  */
-function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, busy, onNew, onEdit, onCancelEdit, onChangeDraft, onSave, onRequestDelete, onConfirmDelete, onCancelDelete, onRequestLogin, onConfirmLogin, onCancelLoginConfirm, onCancelLogin, onSubmitLoginCode, onUsePlan, onUseBoth }) {
+function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, busy, arkCliSetup, onNew, onEdit, onCancelEdit, onChangeDraft, onSave, onRequestDelete, onConfirmDelete, onCancelDelete, onRequestLogin, onConfirmLogin, onCancelLoginConfirm, onCancelLogin, onSubmitLoginCode, onUsePlan, onUseBoth }) {
   const accounts = Array.isArray(snapshot?.accounts) ? snapshot.accounts : [];
   const disabled = busy !== null;
   const loginActive = LOGIN_ACTIVE_STATES.includes(login.state);
+  const loginUnavailable = disabled || loginActive || arkCliSetup.blocked;
   const loginUrl = safeLoginUrl(login.url);
   const [loginCode, setLoginCode] = react.useState('');
   const [accountsOpen, setAccountsOpen] = react.useState(false);
@@ -1858,6 +1859,7 @@ function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, bu
       title: '账号与登录',
       action: h('span', { style: style.chip }, `${accounts.length} 个账号`)
     }),
+    h(ArkCliSetup, { setup: arkCliSetup, disabled: disabled || loginActive }),
     h('details', { className: 'vcp-accounts-disclosure', open: mustShowAccounts || accountsOpen,
       onToggle: (event) => {
         const nextOpen = event?.target?.open ?? false;
@@ -1908,7 +1910,7 @@ function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, bu
                 h('p', { style: style.muted }, `AK 引用：${account.accessKeyRef || '未配置'} · SK 引用：${account.secretKeyRef || '未配置'}`)),
             account.cliProfile ? h('p', { style: style.muted }, `ArkCli Profile：${account.cliProfile}`) : null)),
           h('div', { className: 'vcp-actions' },
-            h('button', { type: 'button', style: style.btn, disabled: disabled || loginActive, onClick: () => onRequestLogin(account.id) }, loginActive ? '登录进行中…' : '网页登录'),
+            h('button', { type: 'button', style: style.btn, disabled: loginUnavailable, onClick: () => onRequestLogin(account.id) }, loginActive ? '登录进行中…' : '网页登录'),
             h('button', { type: 'button', style: style.btn, disabled: disabled || loginActive, onClick: () => onEdit(account) }, '编辑'),
             confirmDelete === account.id
               ? h('button', { type: 'button', style: style.danger, disabled: disabled || loginActive, onClick: () => onConfirmDelete(account.id) }, '确认删除')
@@ -1922,29 +1924,29 @@ function AccountPanel({ snapshot, editor, confirmDelete, loginConfirm, login, bu
               h('ul', { style: { margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 } },
                 LOGIN_CONFIRM_NOTES.map((note, index) => h('li', { key: index, style: style.muted }, note))),
               h('div', { className: 'vcp-actions' },
-                h('button', { type: 'button', style: style.primary, disabled: disabled, onClick: () => onConfirmLogin(account.id) }, '确认并生成登录链接'),
+                h('button', { type: 'button', style: style.primary, disabled: loginUnavailable, onClick: () => onConfirmLogin(account.id) }, '确认并生成登录链接'),
                 h('button', { type: 'button', style: style.btn, disabled: disabled, onClick: onCancelLoginConfirm }, '取消')))
             : null)))
       : h('div', { className: 'vcp-empty' },
-        h('p', { style: style.muted }, '还没有账号。可直接网页登录，确认后会自动创建本地账号，无需填写账号 ID 或密钥引用。'),
+        h('p', { style: style.muted }, '还没有账号。网页登录后可绑定本地账号，也可以手动新增凭据引用账号。'),
         h('div', { className: 'vcp-actions' },
-          h('button', { type: 'button', style: style.primary, disabled: disabled || loginActive, onClick: () => onRequestLogin(NEW_LOGIN_ACCOUNT) }, '网页登录')),
+          h('button', { type: 'button', style: style.primary, disabled: loginUnavailable, onClick: () => onRequestLogin(NEW_LOGIN_ACCOUNT) }, '网页登录')),
         loginConfirm === NEW_LOGIN_ACCOUNT ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
           h('strong', null, '创建账号并开始网页登录'),
           h('ul', { style: { margin: 0, paddingLeft: 18 } },
             LOGIN_CONFIRM_NOTES.map((note, index) => h('li', { key: index, style: style.muted }, note))),
           h('div', { style: style.row },
-            h('button', { type: 'button', style: style.primary, disabled: disabled || loginActive, onClick: () => onConfirmLogin(NEW_LOGIN_ACCOUNT) }, '确认并生成登录链接'),
+            h('button', { type: 'button', style: style.primary, disabled: loginUnavailable, onClick: () => onConfirmLogin(NEW_LOGIN_ACCOUNT) }, '确认并生成登录链接'),
             h('button', { type: 'button', style: style.btn, disabled, onClick: onCancelLoginConfirm }, '取消'))) : null),
     h('div', { className: 'vcp-actions' },
-      accounts.length ? h('button', { type: 'button', style: style.primary, disabled: disabled || loginActive, onClick: () => onRequestLogin(NEW_LOGIN_ACCOUNT) }, '登录其他账号') : null,
+      accounts.length ? h('button', { type: 'button', style: style.primary, disabled: loginUnavailable, onClick: () => onRequestLogin(NEW_LOGIN_ACCOUNT) }, '登录其他账号') : null,
       h('button', { type: 'button', style: style.btn, disabled: disabled || loginActive || editor !== null, onClick: onNew }, '新增账号')),
     accounts.length > 0 && loginConfirm === NEW_LOGIN_ACCOUNT ? h('div', { className: 'vcp-confirm' },
       h('strong', null, '创建独立账号并网页登录'),
       h('p', { style: style.muted }, '使用新的本地账号保存登录结果，不覆盖已有账号或更改当前套餐选择。请在官方页面确认实际授权身份，完成后把授权码粘贴回设置页。'),
       h('ul', { style: { margin: 0, paddingLeft: 18 } }, LOGIN_CONFIRM_NOTES.map((note, index) => h('li', { key: index, style: style.muted }, note))),
       h('div', { style: style.row },
-        h('button', { type: 'button', style: style.primary, disabled: disabled || loginActive, onClick: () => onConfirmLogin(NEW_LOGIN_ACCOUNT) }, '确认并生成登录链接'),
+        h('button', { type: 'button', style: style.primary, disabled: loginUnavailable, onClick: () => onConfirmLogin(NEW_LOGIN_ACCOUNT) }, '确认并生成登录链接'),
         h('button', { type: 'button', style: style.btn, disabled, onClick: onCancelLoginConfirm }, '取消'))) : null,
     editor ? h(AccountForm, { editor, busy: busy ?? (loginActive ? 'login-active' : null), onChangeDraft, onSave, onCancel: onCancelEdit }) : null,
     login.state === 'idle' && !login.message && !loginUrl ? null
@@ -2067,6 +2069,7 @@ function VolcengineProviderSection({ client }) {
   const [login, setLogin] = react.useState({ jobId: null, state: 'idle', message: '', url: null, authMode: null });
   // 默认落在额度分区：它是打开设置时最先要看的结论，模型与账号按需切换。
   const [settingsTab, setSettingsTab] = react.useState('quota');
+  const arkCliSetup = useArkCliSetup(client, !loading && settingsTab === 'accounts');
   const settingsTabPrefix = react.useRef(`vcp-tabs-${Math.random().toString(36).slice(2, 9)}`).current;
   const tabInitializedRef = react.useRef(false);
   const pendingNavigationRef = react.useRef(null);
@@ -2392,6 +2395,7 @@ function VolcengineProviderSection({ client }) {
   });
 
   const startLogin = (accountId) => run('login', async () => {
+    if (arkCliSetup.blocked) return;
     if (!snapshot?.revision) return;
     try {
       let revision = snapshot.revision;
@@ -2409,6 +2413,9 @@ function VolcengineProviderSection({ client }) {
       if (aliveRef.current) setLogin(normalizeLogin(value));
     } catch (error) {
       if (!aliveRef.current) return;
+      const message = describeError(error);
+      const cliUnavailable = /未找到官方 ArkCli|arkCliPath|原生可执行文件/.test(message);
+      if (cliUnavailable) void arkCliSetup.refresh();
       const latest = await refresh();
       if (!latest) {
         setLogin({ jobId: null, accountId, state: 'launching', message: '启动结果暂无法确认，正在自动同步登录状态；确认前请勿重复登录或修改账号。' });
@@ -2420,12 +2427,8 @@ function VolcengineProviderSection({ client }) {
       } else {
         setNotice({
           ok: false,
-          text: (() => {
-            const message = describeError(error);
-            return /ArkCli|arkCliPath|原生可执行文件/.test(message)
-              ? `启动登录失败：${message} 请在插件配置中填写 arkCliPath（官方 ArkCli 原生可执行文件绝对路径，Windows 指向 .exe，不是 .cmd/.bat），或确认 PATH 能找到官方 CLI；插件不会自动安装或升级 CLI。已创建的本地账号会保留，配置好 CLI 后可在该账号上重试。`
-              : `启动登录失败：${message}。已创建的本地账号会保留，可在该账号上重试。`;
-          })(),
+          text: cliUnavailable ? `启动登录失败：${message}。设置好 ArkCli 后可在原账号上重试。`
+            : `启动登录失败：${message}。已创建的本地账号会保留，可在该账号上重试。`,
           refresh: true,
           copyText: `火山方舟 Provider 登录诊断\n时间：${new Date().toISOString()}\n错误：${describeError(error)}`,
         })
@@ -2712,7 +2715,7 @@ function VolcengineProviderSection({ client }) {
         })),
         h('div', { className: 'vcp-tab-section', hidden: settingsTab !== 'accounts' },
         h(AccountPanel, {
-          snapshot, editor, confirmDelete, loginConfirm, login, busy,
+          snapshot, editor, confirmDelete, loginConfirm, login, busy, arkCliSetup,
           onNew: openNew, onEdit: openEdit, onCancelEdit: () => setEditor(null),
           onChangeDraft: changeDraft, onSave: saveAccount,
           onRequestDelete: (accountId) => { setLoginConfirm(null); setConfirmDelete(accountId); },

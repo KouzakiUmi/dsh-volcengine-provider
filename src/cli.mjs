@@ -1,25 +1,72 @@
 import { execFile, spawn } from 'node:child_process';
-import { access, mkdir } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access, mkdir, stat } from 'node:fs/promises';
 import { delimiter, dirname, join, isAbsolute } from 'node:path';
 import { createRequire } from 'node:module';
+import { homedir } from 'node:os';
+import { arkCliRelease, ARKCLI_PACKAGE } from './arkcli-release.mjs';
 import { assertPlan } from './state.mjs';
 const require = createRequire(import.meta.url);
 const maxBytes = 2 * 1024 * 1024;
-export async function locateCli(explicit) {
+
+async function executableFile(path) {
+  try {
+    if (!(await stat(path)).isFile()) return false;
+    await access(path, constants.X_OK);
+    return true;
+  } catch (error) {
+    if (['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'ELOOP'].includes(error.code)) return false;
+    throw error;
+  }
+}
+
+function cliUnavailable(code, message) { return Object.assign(new Error(message), { code }); }
+
+function packageManifest(loader, name) {
+  try { return loader.resolve(`${name}/package.json`); }
+  catch (error) {
+    if (error.code !== 'MODULE_NOT_FOUND' && error.code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED') throw error;
+    return null;
+  }
+}
+
+function packageBinaries(manifest, { name, filename }) {
+  const optional = packageManifest(createRequire(manifest), name);
+  return [optional && join(dirname(optional), 'bin', filename), join(dirname(manifest), 'bin', filename)];
+}
+
+export async function locateCli(explicit, { managed, env = process.env, home = homedir(), loader = require } = {}) {
   if (explicit) {
-    if (!isAbsolute(explicit) || /\.(cmd|bat)$/i.test(explicit)) throw new Error('arkCliPath 必须是官方原生可执行文件绝对路径');
-    await access(explicit); return explicit;
+    if (!isAbsolute(explicit) || /\.(cmd|bat)$/i.test(explicit) || !await executableFile(explicit)) {
+      throw cliUnavailable('ARKCLI_CONFIG', 'arkCliPath 必须指向可执行的官方 ArkCli 原生文件（绝对路径）');
+    }
+    return explicit;
   }
-  const filename = process.platform === 'win32' ? 'arkcli-windows-amd64.exe' : `arkcli-${process.platform === 'darwin' ? 'darwin' : 'linux'}-${process.arch === 'arm64' ? 'arm64' : 'amd64'}`;
+  const release = arkCliRelease();
+  const windows = process.platform === 'win32';
+  const command = windows ? 'arkcli.exe' : 'arkcli';
+  const directories = (env.PATH ?? '').split(delimiter).map(part => part.replace(/^"(.*)"$/, '$1')).filter(isAbsolute);
+  const userBin = windows ? null : join(home, '.local', 'bin');
   const candidates = [];
-  try { candidates.push(join(dirname(require.resolve('@volcengine/ark-cli/package.json')), 'bin', filename)); } catch (error) { if (error.code !== 'MODULE_NOT_FOUND' && error.code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED') throw error; }
-  for (const path of (process.env.PATH ?? '').split(delimiter)) {
-    if (!path) continue;
-    candidates.push(join(path, process.platform === 'win32' ? 'arkcli.exe' : 'arkcli'));
-    candidates.push(join(path, 'node_modules', '@volcengine', 'ark-cli', 'bin', filename));
+  if (release) {
+    const wrapper = packageManifest(loader, ARKCLI_PACKAGE);
+    const child = packageManifest(loader, release.name);
+    if (wrapper) candidates.push(...packageBinaries(wrapper, release));
+    if (child) candidates.push(join(dirname(child), 'bin', release.filename));
+    const npmRoots = new Set([
+      ...directories.map(dir => windows ? join(dir, 'node_modules') : join(dirname(dir), 'lib', 'node_modules')),
+      ...[env.npm_config_prefix, env.NPM_CONFIG_PREFIX, !windows && join(home, '.local', 'share', 'arkcli-npm', 'volc'), windows && env.APPDATA && join(env.APPDATA, 'npm')]
+        .filter(path => typeof path === 'string' && isAbsolute(path))
+        .map(prefix => windows ? join(prefix, 'node_modules') : join(prefix, 'lib', 'node_modules'))
+    ]);
+    for (const root of npmRoots) {
+      const manifest = join(root, ARKCLI_PACKAGE, 'package.json');
+      candidates.push(...packageBinaries(manifest, release), join(root, release.name, 'bin', release.filename));
+    }
   }
-  for (const path of candidates) try { await access(path); return path; } catch (error) { if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error; }
-  throw new Error('未找到官方 ArkCli；请安装后设置 arkCliPath（原生可执行文件）');
+  candidates.push(...directories.map(dir => join(dir, command)), userBin && join(userBin, command), managed);
+  for (const path of new Set(candidates)) if (path && await executableFile(path)) return path;
+  throw cliUnavailable('ARKCLI_MISSING', '当前 DSH Host 未找到官方 ArkCli；请在账号设置安装或指定 arkCliPath');
 }
 export function cliEnvironment(home, ambient = process.env) {
   const env = { ...ambient, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: join(home, '.config') };

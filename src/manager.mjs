@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { StateStore, account, assertBudgetCompatibleEfforts, assertModelId, assertPlan, normalizeModelSettings, normalizeIdentity, PLANS, ROUTES, revision } from './state.mjs';
 import { catalogStatus, effectiveModel, getModelRows, normalizeCatalog, overrideKeys } from './catalog.mjs';
-import { ArkCli, locateCli } from './cli.mjs';
+import { ArkCli } from './cli.mjs';
+import { ArkCliRuntime } from './arkcli-runtime.mjs';
 import { ArkOAuth } from './oauth.mjs';
 import { fetchUsage, parseAgentUsage, parseCodingUsage } from './quota.mjs';
 import { defaultMediaState, mediaToolEnabled, normalizeMediaState } from './media.mjs';
@@ -39,17 +40,20 @@ function modelRow(state, accountId, plan, modelId) {
 
 export class ArkController {
   constructor({ statePath, arkCliPath, resolveRef, cliFactory, fetchImpl, spawnImpl = spawn }) {
-    this.store = new StateStore(statePath); this.arkCliPath = arkCliPath;
+    this.store = new StateStore(statePath);
     this.resolveRef = resolveRef; this.cliFactory = cliFactory; this.fetchImpl = fetchImpl;
     this.life = new AbortController(); this.disposed = false; this.cache = new Map(); this.inflight = new Map();
     this.inferenceCache = new Map(); this.inferenceInflight = new Map(); this.cacheGeneration = 0;
     this.identityCache = new Map(); this.identityInflight = new Map();
     this.expiryCache = new Map();
     // 失败负缓存与按账号串行锁：凭据/登录失效时避免反复 spawn ArkCli 拖慢宿主。
-    this.inferenceFailure = new Map(); this.executablePromise = undefined; this.quotaQueue = new Map();
+    this.inferenceFailure = new Map(); this.quotaQueue = new Map();
     // 中间层：Host 定期采集的额度快照（内存 + 同目录原子落盘），Client 只读不触发采集。
     this.quotaSnapshots = new QuotaSnapshotStore({ path: join(dirname(statePath), 'quota-snapshot.json') });
     this.quotaFailures = new Map(); this.catalogFailures = new Map(); this.catalogInflight = new Map();
+    this.arkCliRuntime = new ArkCliRuntime({ statePath, explicit: arkCliPath, signal: this.life.signal, onInstalled: () => {
+      this.inferenceFailure.clear(); this.quotaFailures.clear(); this.catalogFailures.clear();
+    } });
     this.collectorTimer = null; this.collecting = false;
     this.oauth = new ArkOAuth({ spawn: spawnImpl, onSuccess: (id, rev, signal, homeId) => this.bindLogin(id, rev, signal, homeId) });
     this.onChange = async () => {}; this.operations = Promise.resolve();
@@ -68,12 +72,7 @@ export class ArkController {
   async cli(owner, binding = this.store.current.oauth?.[owner.id]) {
     const home = this.homeFor(owner, binding);
     if (this.cliFactory) return this.cliFactory(owner, home);
-    // 定位可执行文件的 PATH/require 探测只做一次；失败不缓存，保证装上 CLI 后能恢复。
-    this.executablePromise ??= locateCli(this.arkCliPath);
-    let executable;
-    try { executable = await this.executablePromise; }
-    catch (error) { this.executablePromise = undefined; throw error; }
-    return new ArkCli({ executable, home });
+    return new ArkCli({ executable: await this.arkCliRuntime.executable(), home });
   }
   /** 同一账号的额度查询串行执行：两个套餐同时刷新时不并发 spawn 多个 ArkCli。 */
   async withQuotaLock(id, task) {
@@ -438,6 +437,9 @@ export class ArkController {
       return read;
     }
     if (op === 'loginStatus') return this.oauth.status();
+    if (op === 'arkCliStatus') return this.arkCliRuntime.status();
+    if (op === 'installArkCli') return this.arkCliRuntime.start(request);
+    if (op === 'cancelArkCliInstall') return this.arkCliRuntime.cancel();
     // 轻量读取中间层：只读内存快照与状态 revision，不触发任何上游请求。
     if (op === 'snapshots') return this.snapshotView();
     if (op === 'cancelLogin') return this.oauth.cancel(request.jobId);
